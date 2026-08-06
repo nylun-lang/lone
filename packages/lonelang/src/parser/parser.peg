@@ -1,0 +1,390 @@
+{
+    package parser
+    import (
+        "strings"
+        "fmt"
+        lt "lonelang/src/types"
+    )
+    
+    func AnySliceToSliceOfType[T any](ref string, v any) []T {
+        
+        s, ok := v.([]any)
+        if !ok {
+            panic(fmt.Sprintf("[AnySliceToSliceOfType][%s]\nError: cannot cast  slice of type %T as []any", ref, v))
+        }
+
+        out := make([]T, len(s))
+
+        for i, e := range s {
+            out[i], ok = e.(T)
+            if !ok {
+                panic(fmt.Sprintf("[AnySliceToSliceOfType][%s]\nError: cannot cast curr el of type %T as %T", ref, e, *new(T)))
+            }
+        }
+
+        return out
+    }
+
+    func AnySliceToString(ref string, chars any) string {
+        var b strings.Builder
+        chars_list, ok := chars.([]any)
+        
+        if !ok {
+            panic(fmt.Sprintf("[AnySliceToString][%s] cannot cast chars of type %T as []any", ref, chars))
+        }
+        
+        for _, c := range chars_list {
+            curr, ok := c.([]byte)
+            if !ok {
+                panic(fmt.Sprintf("[AnySliceToString][%s] cannot cast curr of type %T as string", ref, curr))
+            }
+            b.WriteString(string(curr))
+        }
+        
+        return b.String()
+    }
+
+    func AnyValToType[T any](ref string, v any) T {
+        cast, ok := v.(T)
+        if !ok {
+            panic(fmt.Sprintf("[AnyValToType][%s] expected %T, got %T", ref, *new(T), v))
+        }
+        return cast
+    }
+}
+
+Program 
+    <- mod:ModLine 
+    imp:(ImpLine)*
+    body:(BodyLine)+ 
+   {
+
+        import_list := []lt.ImportDec{}
+        if imp != nil {
+            import_list = AnySliceToSliceOfType[lt.ImportDec]("Program.import_list", imp)
+        }
+
+        body_list := []any{}
+        if body != nil {
+            body_list = AnySliceToSliceOfType[any]("Program.body_list", body)
+        }
+ 
+        m := AnyValToType[lt.ModuleDec]("Program.mod", mod)
+
+        pg := lt.Program{ 
+            Mod: m,
+            Imp: import_list,
+            Body: body_list,
+        }
+
+        return pg, nil
+   }
+
+ModLine <- m:ModStmt _ {
+    return AnyValToType[lt.ModuleDec]("ModLine.m", m), nil
+}
+
+ImpLine <- _ i:ImpStmt _ {
+    return AnyValToType[lt.ImportDec]("ImpLine.i", i), nil
+}
+
+BodyLine <- _ b:(TopLevel) _ {
+    return AnyValToType[any]("BodyLine.b", b), nil
+}
+
+TopLevel <- VarDecStmt / TypeDecStmt
+
+EndOfLine <- "\r\n" / "\n"
+Space <- [ \t]
+_ <- (Space / EndOfLine / Comment)*
+WS <- _ / EndOfLine*
+Comment <- "//" (!EndOfLine .)*
+
+Identifier <- !Keyword [a-zA-Z] [a-zA-Z0-9_]* {
+    return c.text, nil
+}
+
+Keyword
+    <- (
+        k_meta
+      / k_var
+      / k_literal
+      / k_code
+    ) ![a-zA-Z0-9_]
+
+k_meta
+<- "module" / "import"
+
+k_var
+<- "const" / "var" / "type" / "infer"
+
+k_literal
+<- "nil" / "true"/ "false"
+
+k_code
+<- "if" / "else" / "for" / "while" / "match" / "switch" / "fn" / "pub"
+
+Expr <- Literal / ObjectLiteral
+
+Literal <- String / Number / Bool / Nil
+
+String <- '"' content:Char* '"' {
+    text := AnySliceToString("String.text", content)
+    return lt.Literal_String{
+        Text: text,
+    }, nil
+}
+
+Char <- Escape / !'"' .
+
+Escape <- '\\' (
+      '"'
+    / '\\'
+    / 'n'
+    / 'r'
+    / 't'
+)
+
+Nil <- "nil" {
+    return lt.Literal_Nil{}, nil
+}
+
+Bool <- ("true" / "false") {
+
+    val := false
+    txt := string(c.text)
+
+    if txt == "true" {
+        val = true
+    }
+
+    return lt.Literal_Bool{
+       Value: val, 
+    }, nil
+}
+
+Number <- Float / Int
+
+Digits <- [0-9]+ ("_" [0-9]+)*
+
+Float <- Digits "." Digits {     
+    return lt.Literal_Number{
+        Kind: lt.NUM_KIND_FLOAT,
+        Text: string(c.text),
+    }, nil
+}
+
+Int <- Digits {
+    return lt.Literal_Number{
+        Kind: lt.NUM_KIND_INT,
+        Text: string(c.text),
+    }, nil
+}
+
+ModStmt <- "module" _ modname:([a-z]+) {
+    n := AnySliceToString("ModStmt.n", modname)
+    return lt.ModuleDec{
+        Name: n,
+    }, nil
+}
+
+ImpStmt 
+    <- "import" _ fisrt:([a-z]+) rest:(("." [a-z]+)*) {
+        var pathname strings.Builder
+        pathname.WriteString(AnySliceToString("ImpStmt.fisrt", fisrt))
+
+        if rest != nil {
+            for _, r := range AnyValToType[[]any]("ImpStmt.rest", rest) {
+                pair := AnyValToType[[]any]("ImpStmt.pair", r)
+                text := AnySliceToString("ImpStmt.text", pair[1])        
+                pathname.WriteString(".")
+                pathname.WriteString(text)
+            }
+        }
+
+        res_path := pathname.String()
+
+        pathslices := strings.Split(res_path, ".")
+        last := len(pathslices) - 1
+        return lt.ImportDec{
+            Path: res_path,
+            Alias: pathslices[last],
+        }, nil
+    }
+
+TypeRef
+    <- name:Identifier args:TypeArgs? {
+
+        n := AnySliceToString("TypeRef.n", []any{name})
+        a := []lt.TypeRef{}
+
+        if args != nil {
+            a = AnyValToType[[]lt.TypeRef]("TypeRef.args", args)
+        }
+
+        return lt.TypeRef{
+            Name: n,
+            Args: a,
+        }, nil
+    }
+
+TypeArgs
+    <- "<" _ first:TypeRef _ rest:TypeArgTail* _ ">" {
+        
+        types := []lt.TypeRef{
+            AnyValToType[lt.TypeRef]("TypeArgs.first", first),
+        }
+
+        for _, r := range AnySliceToSliceOfType[lt.TypeRef]("TypeArgs.rest", rest) {
+            types = append(types, r)
+        }
+
+        return types, nil
+    }
+
+TypeArgTail
+    <- "," _ t:TypeRef {
+        return AnyValToType[lt.TypeRef]("TypeArgTail.t", t), nil
+    }
+
+TypeDecStmt <- "type" name:Identifier construct:(TypeRef / ObjTypeConstruct)
+
+ObjKindConstruct
+    <- "struct" {
+        return lt.OBJ_KIND_STRUCT, nil
+    }
+     / "state" {
+        return lt.OBJ_KIND_STATE, nil
+    }
+     / "record" {
+        return lt.OBJ_KIND_RECORD, nil
+    }
+
+ObjTypeConstruct
+    <- kind:ObjKindConstruct
+       _
+       "{"
+       _
+       fields:FieldList?
+       _
+       "}"
+    {
+        fieldList := []lt.FieldDec{}
+
+        if fields != nil {
+            fieldList = AnyValToType[[]lt.FieldDec]("ObjTypeConstruct.fieldList", fields)
+        }
+
+        return lt.ObjectType{
+            Kind: AnyValToType[lt.ObjectKind]("ObjTypeConstruct.kind", kind),
+            Fields: fieldList,
+        }, nil
+    }
+
+FieldTypeAssignStmt  
+    <- field_name:Identifier _ field_type:TypeRef {
+        return lt.FieldDec{
+            Name: AnySliceToString("FieldTypeAssignStmt.field_name", []any{field_name}),
+            Type: AnyValToType[lt.TypeRef]("FieldTypeAssignStmt.field_type", field_type),
+        }, nil
+    }
+
+FieldList
+    <- first:FieldTypeAssignStmt
+       rest:FieldTail*
+    {
+        fields := []lt.FieldDec{
+            AnyValToType[lt.FieldDec]("FieldList.first", first),
+        }
+
+        fields = append(fields, AnyValToType[[]lt.FieldDec]("FieldList.fields", rest)...)
+
+        return fields, nil
+    }
+
+FieldTail
+    <- _ f:FieldTypeAssignStmt {
+        return AnyValToType[lt.FieldDec]("FieldTail", f), nil
+    }
+
+VarDecStmt 
+    <-  let_kind:VarKind _ l_name:Identifier _ l_type:TypeRef _ val:AssignStmt?  
+    {
+        let_name := AnySliceToString("VarDecStmt.let_name", []any{l_name})
+        let_type := AnyValToType[lt.TypeRef]("VarDecStmt.let_type", l_type)
+        kind := AnySliceToString("VarDecStmt.kind", []any{let_kind})
+        is_const := false 
+
+        if kind == "const" {
+            is_const = true
+        }
+    
+        vcast, ok := val.(lt.Expr)
+        if !ok {
+            vcast = lt.Literal_Nil{}
+        }
+
+        return lt.VariableDec{
+            Name: let_name,
+            Type: let_type,
+            IsConst: is_const,
+            Value: vcast,
+        }, nil
+    }
+
+VarKind <- "var" / "const" {
+    return c.text, nil
+}
+
+AssignStmt 
+    <- "=" _ expr:Expr {
+        return AnyValToType[lt.Expr]("AssignStmt.expr", expr), nil
+    }
+
+ObjectLiteral 
+    <- obj_name:Identifier? "{" _ f:ObjectLiteralFields? _ "}" {
+        name := ""
+        if obj_name != nil {
+            name = AnySliceToString("ObjectLiteral.name", []any{obj_name})
+        }
+
+        fields := []lt.FieldAssign{}       
+        if f != nil {
+            fields = AnyValToType[[]lt.FieldAssign]("ObjectLiteral.fields", f)
+        }
+
+        return lt.ObjectLiteral{
+            Name: name,
+            Fields: fields,
+        }, nil
+    }
+
+ObjectLiteralFields 
+    <- first:FieldTypeAssignStmt rest:(_ "," _ FieldValAssignStmt)* {
+        first_field := AnyValToType[lt.FieldAssign]("ObjectLiteralFields.first_field", first)
+        fields := []lt.FieldAssign{ first_field }
+
+        for _,r := range AnyValToType[[]any]("ObjectLiteralFields.rest", rest) {
+        tuple := AnyValToType[[]any]("ObjectLiteralFields.tuple", r)
+            fields = append(fields, AnyValToType[lt.FieldAssign]("ObjectLiteralFields.fields", tuple[3]))
+        }
+
+        panic(fmt.Sprintf("%v", fields))
+        return fields, nil
+    }
+
+FieldValAssignStmt 
+    <- "@" field_name:Identifier _ "=" _ field_val:Expr {
+        name := AnySliceToString("FieldValAssignStmt.name", []any{field_name})
+        expr := AnyValToType[lt.Expr]("FieldValAssignStmt.expr", field_val)
+
+        return lt.FieldAssign{
+            Name: name,
+            Expr: expr,
+        }, nil
+    }
+
+
+
+
+

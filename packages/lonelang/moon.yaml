@@ -1,0 +1,34 @@
+project:
+  description: lonelang parser
+
+tasks:
+  gen-parser:
+    type: build
+    script: |
+      touch ./_artefact
+      pigeon -o ./_artefact ./src/parser/parser.peg || rm ./_artefact
+      cat ./_artefact > ./src/parser/parser.go && rm ./_artefact
+    inputs:
+      - "./src/parser/parser.peg"
+
+  compile:
+    type: build
+    command: go build -o out/ .
+
+  build:
+    type: build
+    deps:
+      - ~:gen-parser
+      - ~:compile
+
+  test:
+    type: test
+    command: go test ./src/parser
+    inputs:
+      - ./src/parser/*
+
+  dev:
+    type: run
+    deps:
+      - ~:build
+      - ~:test

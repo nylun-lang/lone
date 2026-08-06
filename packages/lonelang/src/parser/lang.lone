@@ -1,0 +1,43 @@
+//
+
+module main
+
+var x int64 = 10
+var y float32 = 10
+var z int64 = 10_230_39
+var z string = "text"
+var b ptr<opt<bool>> = true
+
+var t infer = {
+    @test = true,
+    @msg = "embeded message",
+}
+
+type u struct(record) {
+    rtes int
+}
+
+type x struct(state) {
+
+}
+
+type y struct(mutex) {
+
+}
+
+
+// Comment 
+
+fn main(p std.init) int32!(error.outOfMemory) {
+    var x uint32 = 40
+    var y uint32 = 16
+    var z infer = try foo()
+    #print(x + y)
+    as ro<#typeof(a)>
+}
+
+ui<std.ui.html5.UiNode> Counter() with (){
+
+}
+
+type inf 
