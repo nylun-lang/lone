@@ -116,7 +116,7 @@ k_meta
 <- "module" / "import"
 
 k_var
-<- "const" / "var" / "type" / "infer"
+<- "const" / "var" / "type"
 
 k_literal
 <- "nil" / "true"/ "false"
@@ -129,21 +129,47 @@ Expr <- Literal / ObjectLiteral
 Literal <- String / Number / Bool / Nil
 
 String <- '"' content:Char* '"' {
-    text := AnySliceToString("String.text", content)
+    var txt strings.Builder
+    // panic(fmt.Sprintf("%v", content)) 
+    
+    for _, b := range AnySliceToSliceOfType[[]byte]("String.s", content) {
+        char := string(b)
+        txt.WriteString(char)
+    }
+
     return lt.Literal_String{
-        Text: text,
+        Text: txt.String(),
     }, nil
 }
 
-Char <- Escape / !'"' .
+Char <- Escape / NormalChar
 
-Escape <- '\\' (
+NormalChar <- cc:(!'"' .) {
+    // panic(fmt.Sprintf("%v", cc)) 
+    return AnyValToType[[]any]("NormalChar.c", cc)[1], nil
+}
+
+Escape <- '\\' cc:(
       '"'
     / '\\'
     / 'n'
     / 'r'
     / 't'
-)
+) {
+    switch AnyValToType[byte]("Escape.c", cc) {
+    case 'n':
+        return []byte{'\n'}, nil
+    case 'r':
+        return []byte{'\r'}, nil
+    case 't':
+        return []byte{'\t'}, nil
+    case '"':
+        return []byte{'"'}, nil
+    case '\\':
+        return []byte{'\\'}, nil
+    }
+    return nil, fmt.Errorf("invalid escape")
+}
 
 Nil <- "nil" {
     return lt.Literal_Nil{}, nil
@@ -342,7 +368,7 @@ AssignStmt
     }
 
 ObjectLiteral 
-    <- obj_name:Identifier? "{" _ f:ObjectLiteralFields? _ "}" {
+    <- obj_name:Identifier? "{" _ f:FieldValList? _ "}" {
         name := ""
         if obj_name != nil {
             name = AnySliceToString("ObjectLiteral.name", []any{obj_name})
@@ -359,17 +385,18 @@ ObjectLiteral
         }, nil
     }
 
-ObjectLiteralFields 
-    <- first:FieldTypeAssignStmt rest:(_ "," _ FieldValAssignStmt)* {
-        first_field := AnyValToType[lt.FieldAssign]("ObjectLiteralFields.first_field", first)
-        fields := []lt.FieldAssign{ first_field }
+FieldValList 
+    <- first:FieldValAssignStmt _ rest:(_ "," _ FieldValAssignStmt)* {
+        
+        fields := []lt.FieldAssign{ 
+            AnyValToType[lt.FieldAssign]("ObjectLiteralFields.first_field", first),
+        }
 
         for _,r := range AnyValToType[[]any]("ObjectLiteralFields.rest", rest) {
         tuple := AnyValToType[[]any]("ObjectLiteralFields.tuple", r)
             fields = append(fields, AnyValToType[lt.FieldAssign]("ObjectLiteralFields.fields", tuple[3]))
         }
 
-        panic(fmt.Sprintf("%v", fields))
         return fields, nil
     }
 

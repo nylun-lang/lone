@@ -13,15 +13,18 @@ var t infer = {
     @msg = "embeded message",
 }
 
-type u struct(record) {
+const u ptr<ro<bool>> = #ptrTo(true)
+const s ref<ro<bool>> = #deref(u)
+
+type u record {
     rtes int
 }
 
-type x struct(state) {
+type x state {
 
 }
 
-type y struct(mutex) {
+type y mutex {
 
 }
 
