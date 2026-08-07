@@ -1,6 +1,7 @@
 //
 
 module main
+import std.ui.html5
 
 var x int64 = 10
 var y float32 = 10
@@ -13,18 +14,29 @@ var t infer = {
     @msg = "embeded message",
 }
 
-const u ptr<ro<bool>> = #ptrTo(true)
-const s ref<ro<bool>> = #deref(u)
+const u ptr<ro<bool>> = #pointerTo(true)
+const s ref<ro<bool>> = #dereference(u)
 
+// data object, cannot have method
 type u record {
     rtes int
 }
 
+// readonly, the unique way to mod it is to add a method that manipulate it
 type x state {
 
 }
 
+// alike a state but but cannot be read, dev needs to impl dedicated get/set fn, each of em impl internal lock mechanish on methode that read/mutate 
 type y mutex {
+
+}
+
+fn (read y) y() {
+
+}
+
+fn (mut y) y() {
 
 }
 
@@ -36,11 +48,19 @@ fn main(p std.init) int32!(error.outOfMemory) {
     var y uint32 = 16
     var z infer = try foo()
     #print(x + y)
-    as ro<#typeof(a)>
+
+    #lone(|| {})
 }
 
 ui<std.ui.html5.UiNode> Counter() with (){
-
+    .init({ @callback = || foo() })
+    .render({ @throttle = #unitHertzPerSec(30) }) {
+        .div({ @id = "container" }) {
+            .If(true) {
+                .text("Awesome")
+            }
+        }
+    }
 }
 
 type inf 
