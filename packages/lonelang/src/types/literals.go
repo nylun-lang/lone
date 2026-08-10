@@ -50,7 +50,6 @@ func (Literal_Nil) IsExpr()    {}
 func (Literal_Nil) IsLiteral() {}
 
 type Literal_Unitialised struct{}
-
 func (Literal_Unitialised) IsExpr()    {}
 func (Literal_Unitialised) IsLiteral() {}
 

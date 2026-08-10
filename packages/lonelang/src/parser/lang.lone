@@ -3,6 +3,18 @@
 module main
 import std.ui.html5
 
+const z = 0
+
+let x int = 1
+let y ro<ref<ro<int>>> = &x
+let z int = *y
+
+type foo record {
+    x opt<int>
+    y ro<int>
+    z ref<bool>
+}
+
 var x int64 = 10
 var y float32 = 10
 var z int64 = 10_230_39
@@ -40,19 +52,18 @@ fn (mut y) y() {
 
 }
 
-
 // Comment 
 
 fn main(p std.init) int32!(error.outOfMemory) {
     var x uint32 = 40
     var y uint32 = 16
-    var z infer = try foo()
+    let z = try foo()
     #print(x + y)
 
     #lone(|| {})
 }
 
-ui<std.ui.html5.UiNode> Counter() with (){
+ui<html5.UiNode> Counter() with (){
     .init({ @callback = || foo() })
     .render({ @throttle = #unitHertzPerSec(30) }) {
         .div({ @id = "container" }) {

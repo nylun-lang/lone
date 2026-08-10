@@ -116,10 +116,10 @@ k_meta
 <- "module" / "import"
 
 k_var
-<- "const" / "var" / "type"
+<- "const" / "let" / "type"
 
 k_literal
-<- "nil" / "true"/ "false"
+<- "nil" / "undefined" / "true"/ "false"
 
 k_code
 <- "if" / "else" / "for" / "while" / "match" / "switch" / "fn" / "pub"
@@ -171,7 +171,8 @@ Escape <- '\\' cc:(
     return nil, fmt.Errorf("invalid escape")
 }
 
-Nil <- "nil" {
+
+None <- "none" {
     return lt.Literal_Nil{}, nil
 }
 
@@ -339,12 +340,12 @@ VarDecStmt
         let_name := AnySliceToString("VarDecStmt.let_name", []any{l_name})
         let_type := AnyValToType[lt.TypeRef]("VarDecStmt.let_type", l_type)
         kind := AnySliceToString("VarDecStmt.kind", []any{let_kind})
-        is_const := false 
+        is_const := false
 
         if kind == "const" {
             is_const = true
         }
-    
+
         vcast, ok := val.(lt.Expr)
         if !ok {
             vcast = lt.Literal_Nil{}
@@ -354,11 +355,34 @@ VarDecStmt
             Name: let_name,
             Type: let_type,
             IsConst: is_const,
-            Value: vcast,
+            Initial: vcast,
         }, nil
     }
 
-VarKind <- "var" / "const" {
+VarDec 
+    <- var_kind:VarKind _ var_name:Identifier _ var_type:TypeRef? 
+    {
+        v_kind := AnySliceToString("VarDec.v_kind", []any{var_kind})
+        v_name := AnySliceToString("VarDec.v_name", []any{var_name})
+        v_type := lt.BUILTIN_TYPEOF_INFER
+        is_const := false
+
+        if kind == "const" {
+            is_const = true
+        }
+
+        if var_type != nil {
+            v_type = AnyValToType[lt.TypeRef]("VarDec.v_type", var_type)
+        }
+
+        return lt.VariableDec{
+            Name: v_name,
+            Type: v_type,
+            Const: is_const,
+        }
+    }
+
+VarKind <- "let" / "const" {
     return c.text, nil
 }
 
