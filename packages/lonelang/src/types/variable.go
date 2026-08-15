@@ -1,15 +1,27 @@
 package types
 
 type VariableDec struct {
-	Name    string  `json:"name"`
-	Type    TypeRef `json:"type"`
-	IsConst bool    `json:"is_const"`
-	Value   Expr    `json:"value"`
+	Name  string  `json:"name"`
+	Type  TypeRef `json:"type"`
+	Const bool    `json:"is_const"`
+	Value Expr    `json:"value"`
+}
+
+type TypeDec struct {
+	Name  string `json:"name"`
+	Value any    `json:"type"`
+	IsObj bool   `json:"is_obj"`
 }
 
 type TypeRef struct {
-	Name string    `json:"name"`
-	Args []TypeRef `json:"args"`
+	Name     string    `json:"name"`
+	Args     []TypeRef `json:"args"`
+	Modifier TypeRefModifier
+}
+
+type TypeRefModifier struct {
+	ReadOnly    bool
+	LiteralOnly bool
 }
 
 type ObjectKind uint8

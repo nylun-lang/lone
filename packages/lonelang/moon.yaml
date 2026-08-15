@@ -23,7 +23,7 @@ tasks:
 
   test:
     type: test
-    command: go test ./src/parser
+    command: go test -v ./src/parser
     inputs:
       - ./src/parser/*
 

@@ -110,6 +110,8 @@ Keyword
       / k_var
       / k_literal
       / k_code
+      / k_type_modifier
+      / k_type_object
     ) ![a-zA-Z0-9_]
 
 k_meta
@@ -117,6 +119,12 @@ k_meta
 
 k_var
 <- "const" / "let" / "type"
+
+k_type_modifier
+<- "ro" / "lit"
+
+k_type_object
+<- "state" / "record" / "struct"
 
 k_literal
 <- "nil" / "undefined" / "true"/ "false"
@@ -126,7 +134,7 @@ k_code
 
 Expr <- Literal / ObjectLiteral
 
-Literal <- String / Number / Bool / Nil
+Literal <- String / Number / Bool / None
 
 String <- '"' content:Char* '"' {
     var txt strings.Builder
@@ -240,7 +248,7 @@ ImpStmt
     }
 
 TypeRef
-    <- name:Identifier args:TypeArgs? {
+    <- modif:(TypeRefModifier) _ name:Identifier args:TypeArgs? {
 
         n := AnySliceToString("TypeRef.n", []any{name})
         a := []lt.TypeRef{}
@@ -249,11 +257,34 @@ TypeRef
             a = AnyValToType[[]lt.TypeRef]("TypeRef.args", args)
         }
 
-        return lt.TypeRef{
+        res := lt.TypeRef{
             Name: n,
             Args: a,
-        }, nil
+            Modifier: AnyValToType[lt.TypeRefModifier]("TypeRef.res.Modif", modif),
+        }
+
+        return res, nil
     }
+
+TypeRefModifier <- mods:(k_type_modifier _)* {
+    m := AnyValToType[[]any]("TypeRefModifier.m", mods)
+    t := lt.TypeRefModifier{
+            ReadOnly: false,
+            LiteralOnly: false,
+        }
+
+    for _,pair := range m {
+        curr_mod := AnyValToType[[]any]("TypeRefModifier.curr_mod", pair)[0]
+        str := string(AnyValToType[[]byte]("TypeRefModifier.str", curr_mod))
+        if str == "ro" {
+            t.ReadOnly = true
+        } else if str == "lit" {
+            t.LiteralOnly = true
+        }
+    }
+
+    return t, nil
+}
 
 TypeArgs
     <- "<" _ first:TypeRef _ rest:TypeArgTail* _ ">" {
@@ -274,7 +305,20 @@ TypeArgTail
         return AnyValToType[lt.TypeRef]("TypeArgTail.t", t), nil
     }
 
-TypeDecStmt <- "type" name:Identifier construct:(TypeRef / ObjTypeConstruct)
+TypeDecStmt <- "type" _ name:Identifier _ "=" _ construct:(TypeRef / ObjTypeConstruct) {
+    is_obj := false
+    if _, ok := construct.(lt.ObjectType); ok {
+        is_obj = ok
+    }
+
+    n := string(AnyValToType[[]byte]("TypeDec.n", name))
+    
+    return lt.TypeDec{
+        Name: n,
+        Value: construct,
+        IsObj: is_obj,
+    }, nil
+}
 
 ObjKindConstruct
     <- "struct" {
@@ -288,23 +332,16 @@ ObjKindConstruct
     }
 
 ObjTypeConstruct
-    <- kind:ObjKindConstruct
-       _
-       "{"
-       _
-       fields:FieldList?
-       _
-       "}"
+    <- kind:ObjKindConstruct _ "{" _ fields:FieldTypeList? _ "}"
     {
-        fieldList := []lt.FieldDec{}
-
+        FieldTypeList := []lt.FieldDec{}
         if fields != nil {
-            fieldList = AnyValToType[[]lt.FieldDec]("ObjTypeConstruct.fieldList", fields)
+            FieldTypeList = AnyValToType[[]lt.FieldDec]("ObjTypeConstruct.FieldTypeList", fields)
         }
 
         return lt.ObjectType{
             Kind: AnyValToType[lt.ObjectKind]("ObjTypeConstruct.kind", kind),
-            Fields: fieldList,
+            Fields: FieldTypeList,
         }, nil
     }
 
@@ -316,75 +353,62 @@ FieldTypeAssignStmt
         }, nil
     }
 
-FieldList
-    <- first:FieldTypeAssignStmt
-       rest:FieldTail*
+FieldTypeList
+    <- list:(_ FieldTypeAssignStmt)*
     {
-        fields := []lt.FieldDec{
-            AnyValToType[lt.FieldDec]("FieldList.first", first),
+        fields := []lt.FieldDec{}
+        for _, tuple := range AnyValToType[[]any]("FieldTypeList.tuple", list) {
+            pair := AnyValToType[[]any]("FieldTypeList.pair", tuple)
+            field := AnyValToType[lt.FieldDec]("FieldTypeList.field", pair[1])
+            fields = append(fields, field)
         }
-
-        fields = append(fields, AnyValToType[[]lt.FieldDec]("FieldList.fields", rest)...)
-
         return fields, nil
     }
 
-FieldTail
-    <- _ f:FieldTypeAssignStmt {
-        return AnyValToType[lt.FieldDec]("FieldTail", f), nil
-    }
-
 VarDecStmt 
-    <-  let_kind:VarKind _ l_name:Identifier _ l_type:TypeRef _ val:AssignStmt?  
+    <-  dec:(ConstDec / LetDec) _ val:AssignStmt?  
     {
-        let_name := AnySliceToString("VarDecStmt.let_name", []any{l_name})
-        let_type := AnyValToType[lt.TypeRef]("VarDecStmt.let_type", l_type)
-        kind := AnySliceToString("VarDecStmt.kind", []any{let_kind})
-        is_const := false
 
-        if kind == "const" {
-            is_const = true
-        }
-
+        var_dec := AnyValToType[lt.VariableDec]("VarDecStmt.var_dec", dec)
         vcast, ok := val.(lt.Expr)
         if !ok {
             vcast = lt.Literal_Nil{}
         }
 
-        return lt.VariableDec{
-            Name: let_name,
-            Type: let_type,
-            IsConst: is_const,
-            Initial: vcast,
-        }, nil
+        var_dec.Value = vcast
+        return var_dec, nil
     }
 
-VarDec 
-    <- var_kind:VarKind _ var_name:Identifier _ var_type:TypeRef? 
+ConstDec 
+    <- "const" _ var_name:Identifier
     {
-        v_kind := AnySliceToString("VarDec.v_kind", []any{var_kind})
         v_name := AnySliceToString("VarDec.v_name", []any{var_name})
-        v_type := lt.BUILTIN_TYPEOF_INFER
-        is_const := false
-
-        if kind == "const" {
-            is_const = true
-        }
-
-        if var_type != nil {
-            v_type = AnyValToType[lt.TypeRef]("VarDec.v_type", var_type)
-        }
+        v_type := lt.TypeRef{
+                Name: "infer",
+                Modifier: lt.TypeRefModifier{
+                    ReadOnly: true,
+                    LiteralOnly: true,
+                },
+            }
 
         return lt.VariableDec{
             Name: v_name,
             Type: v_type,
-            Const: is_const,
-        }
+            Const: true,
+        }, nil
     }
 
-VarKind <- "let" / "const" {
-    return c.text, nil
-}
+LetDec 
+    <- "let" _ var_name:Identifier _ var_type:TypeRef
+    {
+        v_name := AnySliceToString("LetDec.v_name", []any{var_name})
+        v_type := AnyValToType[lt.TypeRef]("LetDec.v_type", var_type)
+        return lt.VariableDec{
+            Name: v_name,
+            Type: v_type,
+            Const: false,
+        }, nil
+    }
 
 AssignStmt 
     <- "=" _ expr:Expr {
@@ -410,22 +434,23 @@ ObjectLiteral
     }
 
 FieldValList 
-    <- first:FieldValAssignStmt _ rest:(_ "," _ FieldValAssignStmt)* {
+    <- list:(_ FieldValAssignStmt)* {
         
-        fields := []lt.FieldAssign{ 
-            AnyValToType[lt.FieldAssign]("ObjectLiteralFields.first_field", first),
-        }
+        fields := []lt.FieldAssign{}
 
-        for _,r := range AnyValToType[[]any]("ObjectLiteralFields.rest", rest) {
-        tuple := AnyValToType[[]any]("ObjectLiteralFields.tuple", r)
-            fields = append(fields, AnyValToType[lt.FieldAssign]("ObjectLiteralFields.fields", tuple[3]))
+        for _,r := range AnyValToType[[]any]("ObjectLiteralFields.l", list) {
+            tuple := AnyValToType[[]any]("ObjectLiteralFields.tuple", r)
+            fields = append(
+                fields, 
+                AnyValToType[lt.FieldAssign]("ObjectLiteralFields.fields", tuple[1]),
+            )
         }
 
         return fields, nil
     }
 
 FieldValAssignStmt 
-    <- "@" field_name:Identifier _ "=" _ field_val:Expr {
+    <- "@" field_name:Identifier _ field_val:Expr {
         name := AnySliceToString("FieldValAssignStmt.name", []any{field_name})
         expr := AnyValToType[lt.Expr]("FieldValAssignStmt.expr", field_val)
 
