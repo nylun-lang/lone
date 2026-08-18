@@ -1,0 +1,119 @@
+import std.ui.html5
+import std.strings { split, join }
+import std.plateform.dom 
+
+type Line = record {
+    start uint
+    end uint
+}
+
+type SourceText = state {
+    lines []Line
+    text  string
+}
+
+fn (_ SourceText::new) create || SourceText {
+    let src infer = #empty(SourceText)
+    src.lines = #append(src.lines, Line{ @start 0 @end 0 })
+}
+
+fn (_ SourceText::type) serialize |t SourceText| string {
+    let txt string = ""
+    let lines []string = split(s.text, "\n")
+    for _, l = range lines {
+        txt = #append(txt, fmt.Sprintf("%s", l))
+    }
+    return txt
+}
+
+fn (s SourceText::mut) extendLine |by int = 1| {
+    s.lines[-1].end += by
+}
+
+fn (s SourceText::mut) pushLine || {
+
+    let start int = 0 
+    let end int = 0
+
+    if #len(s.lines) != 0 {
+        let prev Line = s.lines[-1]
+        let offset int = prev.end + 1
+        start = offset
+        end = offset
+    }
+
+    s.lines = #append(s.lines, Line{ @start start @end end })
+
+}
+
+fn (s SourceText::mut) popLine || bool {
+    let lines infer = try #popLast(s.lines)
+    if lines.ok {
+        s.lines = lines.val
+    }
+    return lines.ok
+}
+
+
+fn (s SourceText::mut) pushText |str string| {
+    s.text = #append(s.text, str)
+}
+
+
+fn (s SourceText::mut) popText || bool {
+    let text infer = try #popLast(s.text)
+    if text.ok {
+        s.text = text.val
+    }
+    return text.ok
+}
+
+fn (s SourceText::mut) handleKey |e dom.Event| bool {
+    match e.key {
+        "Enter" => {
+            source.pushText("\n")
+            source.extendLine()
+            source.pushLine()
+        }
+        "Backspace" => {
+            source.popText()
+            if s.lines[-1].end == 0 {
+                source.popLine()
+            } else {
+                source.extendLine(-1)
+            }
+        }
+        _ => {
+            source.pushText(e.key)
+            source.extendLine()
+        }
+    }
+}
+
+ui<html5.UiNode> Editor |title string| with (|| {
+    let source infer = SourceText::create()
+}) {
+    .render({ @throttle #unitHertzPerSec(30) }) {
+        .div({ @id "container" @class "flex" }) {
+            .div({ 
+                @id "editor"
+                @onkeydown |e infer| source.handleKey(e.key)
+            }) {
+                .Dyn(|| infer {
+                    return .text(SourceText::serialize(source))
+                })
+            }
+            .div({ @id "preview" }) {
+                .Dyn(|| {
+                    let root infer = .div{}
+                    let stack infer = #make([]html5.UiNode)
+                    for _, l = range source.lines {
+                        let text ro []string = source.text[l.start, l.end]
+                        root.children = #append(root.children, .span{.text(join(text))})
+                    }
+                    return root
+                })
+            }
+        }
+    }
+}

@@ -1,0 +1,132 @@
+import std.math
+import std.ui.html5
+import std.plateform.dom
+import std.fmt
+
+type Pos = (x int y int)
+
+type Node = record {
+    id    uint
+    pos   Pos
+    title string
+}
+
+type Edge = record {
+    from uint
+    to uint
+}
+
+type Graph = record {
+    nodes []Node
+    edges []Edges
+}
+
+type App = struct {
+    graph Graph
+    history []Graph
+}
+
+fn (_ App::new) create() App {
+    return #empty(App)
+}
+
+fn (a App::mut) appendNode(v Node) {
+    return a.graph.node = #append(a.graph.node, v)
+}
+
+fn computeOnScrennPos(t ptr<opt<dom.HTMLElement>>, cursor Pos) Pos {
+    let coord infer = *t.getBoundingClientRec()
+    let cX infer = cursor[0] - cord.left
+    let cY infer = cursor[1] - cord.top
+    return (cX, cY)
+}
+
+
+ui<html5.UiNode> GraphEditor() with (|| infer {
+
+    computed show_tip bool |v bool = false| {
+        return match v {
+            true => "hidden",
+            false => "show"
+        }
+    }
+
+    const (
+        canva_el = "mycanva"
+        node_rad = 20
+    )
+
+    let (
+        app infer = App::create()
+        target ptr<opt<dom.HTMLElement>> = none
+        lastClick Pos = (0,0)
+    )
+
+}) {
+    
+    .onmounted({
+        @callback || {
+            target = must dom.GetElementById(mycanva) or fmt.Errorf("Could not get canva in document")
+        }
+    })
+
+    .render{
+        .div({ @class "flex-h" }) {
+            
+            .div({ 
+                @class fmt.Sprintf("absolute %s", show_tip) 
+                @onmouseleave || { show_tip = false }
+            }) {
+                .button({ @onclick || app.addNode(Node{
+                        @title ""
+                        @id 0
+                        @pos lastClick
+                    }) 
+                }) {
+                    .text("Add Node")
+                }
+            }
+
+            .canvas({
+                @id canva_el
+                @frame_rate 30
+                @ondoubleclick |e infer| { 
+                    let cusor Pos = (e.clientX, e.clientY)
+                    let realCursor Pos = computeOnScrenPos(target, cursor)
+                    lastClick = realCursor
+                    show_tip = true
+                }
+
+                @callback |self infer| {
+                    let ctx ro infer = self.getContext("2d")
+                    let edges ro []ro Edge = app.graph.edges
+                    let nodes ro []ro Node = app.graph.nodes
+
+                    for _, edge = range edges {
+                        let start int = nodes[edge.from]
+                        let end int = nodes[edge.to]
+                        ctx.beginPath()
+                        ctx.moveTo(start.pos[0], start.pos[1])
+                        ctx.lineTo(end.pos[0], end.pos[1])
+                        ctx.stroke()
+                    }
+
+                    for _, node = range nodes {
+                        ctx.beginPath()
+                        ctx.ellipse(
+                            node.pos[0],
+                            node.pos[1],
+                            node_rad,
+                            node_rad,
+                            0,
+                            0,
+                            math.PI * 2
+                        )
+                        ctx.stroke()
+                    }
+                }
+            })
+        }
+    }
+}
+
