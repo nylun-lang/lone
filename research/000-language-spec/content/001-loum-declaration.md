@@ -65,7 +65,7 @@ A render could techincaly be notified of changes occuring in specfic index and r
 ## Hypthosis
 
 ```lone
----fa:doc
+---fa:fa:fa:doc
 greet the user
 ---
 ui <html5.HTML5> Greet | name string | with {

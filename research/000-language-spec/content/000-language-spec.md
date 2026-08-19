@@ -60,23 +60,32 @@ Lone Language Specification
         - [Named Object](#named-object)
     - [Comments](#comments)
       - [Simple comment](#simple-comment)
-      - [Compiler hint](#compiler-hint)
-        - [Doc Hint](#doc-hint)
-        - [Embed Hint](#embed-hint)
+      - [Compiler Directive](#compiler-directive)
+        - [Doc Directive](#doc-directive)
+        - [Embed Directive](#embed-directive)
     - [Keywords](#keywords)
   - [3. Syntax](#3-syntax)
     - [Declarations](#declarations)
       - [Variable](#variable)
-      - [Type](#type)
+      - [Type [WIP]](#type-wip)
         - [Type Ref](#type-ref)
           - [Modifiers](#modifiers)
           - [Construct](#construct)
           - [Base Type](#base-type)
-      - [Function](#function)
-      - [Expressions](#expressions)
+      - [Function [WIP]](#function-wip)
       - [UI](#ui)
-        - [Simple Loum Declaration](#simple-loum-declaration)
-        - [Complex Loum Declaration](#complex-loum-declaration)
+        - [Vocabulary](#vocabulary)
+          - [Loum](#loum)
+          - [Loum Node Type](#loum-node-type)
+          - [Loum Node Space](#loum-node-space)
+          - [Loum Tree](#loum-tree)
+          - [Loum Declaration](#loum-declaration)
+        - [Loum Syntax](#loum-syntax)
+          - [Simple Loum Declaration](#simple-loum-declaration)
+          - [Complex Loum Declaration](#complex-loum-declaration)
+          - [Control Flow](#control-flow)
+          - [Loum Node Space](#loum-node-space-1)
+    - [Expressions](#expressions)
 <!--toc:end-->
 
 ## 1. Design principles
@@ -169,11 +178,11 @@ The `none` keyword express literal absence of value
 
 #### Object literal
 
-Object are instantiated as etheir anonymous or named object
+Object are instantiated as ether anonymous or named object
 
 ##### Anon Object
 
-Anon object intervain when creating a `record` (dumb data)
+Anon object intervein when creating a `record` (dumb data)
 
 ```lone
 let mike infer = {
@@ -197,8 +206,7 @@ let color infer = Color{
 
 ### Comments
 
-In Lone comment fall into two categories, simple comments and compiler hint
-comment.
+In Lone, comments falls in two categories, simple comments and compiler directive.
 
 #### Simple comment
 
@@ -210,16 +218,31 @@ comment
 ---
 ```
 
-#### Compiler hint
+#### Compiler Directive
 
-Currently the planned hint are `doc`, `embed`.
-
-##### Doc Hint
-
-A doc comment, document a symbol or entity in the code.
+A compiler directive is just a `simple comment` affixed of the namespace prefix `fa:<directive>`.
 
 ```lone
----doc 
+--fa:<directive> INLINE_CONTENT
+---fa:<directive>
+MULTILINE_CONTENT
+---
+```
+
+> [!NOTE] The Lone compiler is named `Falone`
+
+The currently planned directive are:
+
+- doc
+- embed
+
+
+##### Doc Directive
+
+A doc directive, document a symbol in the code, and can be used to generate
+
+```lone
+---fa:doc 
 create an asci colored text for the shell
 
 @param R, G, B
@@ -229,7 +252,7 @@ in the text output
 @param text
 The text being colored
 
-@exemple build
+@example build
 color(1, 1, 200, "hello world")
 ---
 fn color | R, G, B int text string | string {
@@ -238,23 +261,19 @@ fn color | R, G, B int text string | string {
 ```
 
 ```lone
---doc A really important constant
+--fa:doc A really important constant
 const FOO = "BAR"
 ```
 
-> [!NOTE] It's content may require dedicated grammar
+> [!NOTE] It's content may be subject dedicated/stricter grammar/layout
 
-##### Embed Hint
+##### Embed Directive
 
 Inspired by Go's directive `//go:embed` it's meant as for embedding file in
 output binary.
 
 ```lone
----embed
-@path <filepath>
-@mode 0
-@perm "read,write"
----
+--fa:embed "asset/bin/foo"
 let file infer
 ```
 
@@ -327,7 +346,7 @@ let x infer = 1
 let y ro infer = foo()
 ```
 
-#### Type
+#### Type [WIP]
 
 In Lone, a type define what a value is, As well as how the compiler interact
 with it.
@@ -347,6 +366,7 @@ type constructor.
 
 ```lone
 let x ro T = foo() -- x is a readonly T
+let y lit ro int = 1 -- y is literal readonly runtime integer, but that's redundant, use const instead
 ```
 
 ###### Construct
@@ -355,12 +375,9 @@ let x ro T = foo() -- x is a readonly T
 | :---------: | -------------------------- |
 |  `opt<T>`   | `T` may be `none`          |
 | `res<T, E>` | `T` may be `E` error       |
-|  `ref<T>`   | managed memory holdind `T` |
+|  `ref<T>`   | managed memory holding `T` |
 |  `ptr<T>`   | unsafe memory holding `T`  |
 
-```lone
-let x ro T = foo() -- x is a readonly T
-```
 
 ###### Base Type
 
@@ -379,7 +396,7 @@ let x ro T = foo() -- x is a readonly T
 | float, float32 | 32 bit floating point number       |
 |    float64     | 64 bit floating point number       |
 
-#### Function
+#### Function [WIP]
 
 Named function
 
@@ -389,25 +406,57 @@ fn greet |text string| string {
 }
 ```
 
-#### Expressions
-
 #### UI
 
-**Loum** — Lone UI Model, pronounced _loom_. Is Lone's built-in syntax for
-declaring and composing UI trees.
+##### Vocabulary
+
+###### Loum
+
+**Loum** — Lone UI Model, pronounced _loom_, is a subset of Lone for
+declaring and composing UI trees.  
+
+###### Loum Node Type
+
+A **Loum node type** describes the dumb data and shape of a UI element 
+such as text, container or a button within a Loum tree, it does
+not provide reactivity or managed state.
+
+###### Loum Node Space
+
+A Loum node space defines the node types available within a UI model
+and the data associated with each node, or in simpler words it's the
+vocabulary from which a Loum tree may be composed.
+
+###### Loum Tree
+
+A Loum tree is a composition is of Loum nodes representing
+a UI structure.
+
+The structure of the Loom tree is statically described by its Loum
+declaration, Runtime state may determine which nodes are active or how many instances of 
+a known node shape exist, but it cannot produce new shapes. 
+
+###### Loum Declaration
+
+A Loum declaration describe a topology of a Loum tree from node types defined
+by a Loum node space.
+
+The topology describes what shapes can exists and where they can occur within the tree.
 
 > [!IMPORTANT]+
 > A `Loum` declaration describes a static UI tree in memory.
 > The tree itself is composed of ordinary data structures; 
-> reactivity, when present, is provided by an associated context
+> reactivity, when present, is provided by an associated _context_
 > rather than the node themselves.
 
-##### Simple Loum Declaration
+##### Loum Syntax
+
+###### Simple Loum Declaration
 
 ```lone
 import std.ui.html5
 
----doc
+---fa:doc
 create an html div greeting the user with a provided name
 
 @param name
@@ -422,9 +471,9 @@ ui<html5.HTML5> Greet |name string| {
 }
 ```
 
-> Greet is a Loum declaration producing a tree of `html5.HTML5` node.
+> Greet is a Loum declaration producing a tree of Loum nodes defined in `html5.HTML5`.
 
-##### Complex Loum Declaration
+###### Complex Loum Declaration
 
 More complex or reactive Loum declarations can be defined by attaching a context
 to the UI tree through a `with {}` scope.
@@ -489,3 +538,105 @@ ui <html5.HTML5> Counter |start int| with {
     }
 }
 ```
+
+###### Control Flow
+
+**Loum DOES NOT allow arbitrary nor dynamic node injection**.
+
+There is no mechanism for constructing an arbitrary Loum node
+from ordinary Lone code:
+
+```pseudocode
+parent.addChildren(...)
+```
+
+Will never be a Loum construct.
+
+> **A good UI is a dumb UI**
+
+Instead of dynamically constructing it's structure, a Loum tree explicitly declares all of it's possible node.
+
+Control flows may then determine witch of these nodes are active or how many instances of a known shape exist.
+
+```lone
+import std.ui.html5 { HTML5 }
+
+ui <HTML5> Greet | grumpy bool | {
+    .render{
+        if (grumpy) {
+            .text("Good morning")
+        } else {
+            .text("Greetings fellow human")
+        }
+    }
+}
+```
+
+The supported control flow constructs within a Loom tree are :
+
+- **if/else**: conditionally select
+- **switch**: select based on cases
+- **for**: create multiple instances of statically declared nodes
+
+```lone
+ui <HTML5> Users |users []User| {
+    .render {
+        .div {
+            for user in users {
+                .div({ @class "user" }) {
+                    .text(user.name)
+                }
+            }
+        }
+    }
+}
+```
+
+> [NOTE]+
+> None of these control flow constructs allows the program to invent new shape at runtime.
+>
+> The complete `topology` of a Loum tree is statically known. The compiler `falone`,
+> never has to run lone code in order to discover Loum structures.
+
+###### Loum Node Space
+
+If you where to look at the content of the `std.ui.html5` library, you would see something similar to :
+
+```lone
+import std.platform.dom { Event }
+
+loum HTML5 {
+    
+    node _base {
+        attr {
+            id    opt<string>
+            class opt<string>
+            onclick fn |e Event| void   
+        }
+        children true
+    }
+
+    node div extends _base {}
+    
+    node select extends _base {
+        children {
+            accept { optgroup, option }
+        }
+    }
+
+    node text(content string)
+}
+```
+
+
+
+
+
+
+
+
+
+
+
+### Expressions
+
