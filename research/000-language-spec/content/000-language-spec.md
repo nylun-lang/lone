@@ -44,6 +44,7 @@ Lone Language Specification
 # Lone Language Specification
 
 <!--toc:start-->
+
 - [Lone Language Specification](#lone-language-specification)
   - [1. Design principles](#1-design-principles)
     - [Principle](#principle)
@@ -86,6 +87,7 @@ Lone Language Specification
           - [Control Flow](#control-flow)
           - [Loum Node Space](#loum-node-space-1)
     - [Expressions](#expressions)
+
 <!--toc:end-->
 
 ## 1. Design principles
@@ -118,6 +120,9 @@ misunderstand
 
 - **Invariant L7 — No implicit built in** Every built in symbol/fn must be
   distinguishable from user defined code.
+
+- **Invariant F1 — Syntax level feedback** Punctuation shallnot rescue
+  readability that grammar already provide
 
 - **Invariant UI1 — Declared topology is stable** A UI declaration establishes a
   persistent topology known to the compiler, except at explicitly declared
@@ -206,7 +211,8 @@ let color infer = Color{
 
 ### Comments
 
-In Lone, comments falls in two categories, simple comments and compiler directive.
+In Lone, comments falls in two categories, simple comments and compiler
+directive.
 
 #### Simple comment
 
@@ -220,7 +226,8 @@ comment
 
 #### Compiler Directive
 
-A compiler directive is just a `simple comment` affixed of the namespace prefix `fa:<directive>`.
+A compiler directive is just a `simple comment` affixed of the namespace prefix
+`fa:<directive>`.
 
 ```lone
 --fa:<directive> INLINE_CONTENT
@@ -235,7 +242,6 @@ The currently planned directive are:
 
 - doc
 - embed
-
 
 ##### Doc Directive
 
@@ -378,7 +384,6 @@ let y lit ro int = 1 -- y is literal readonly runtime integer, but that's redund
 |  `ref<T>`   | managed memory holding `T` |
 |  `ptr<T>`   | unsafe memory holding `T`  |
 
-
 ###### Base Type
 
 |     Symbol     | Purpose                            |
@@ -395,6 +400,55 @@ let y lit ro int = 1 -- y is literal readonly runtime integer, but that's redund
 |      bool      | boolean                            |
 | float, float32 | 32 bit floating point number       |
 |    float64     | 64 bit floating point number       |
+|      any       | value of any type                  |
+
+
+###### Any vs Infer
+
+###### Type & Data struct
+
+Lone admits three kind of data structures. 3 kind of data structures.
+
+**The Record**
+
+A **record** is a dumb data structure
+
+```lone
+type User = record {
+    name string
+    pass opt<string>
+}
+
+let X User = {
+    @name "mike"
+}
+```
+
+**The Struct**
+
+A **struct** is a data structures with behavior bolted on top.
+
+```lone
+type Color = struct {
+    R, G, B int
+}
+
+let y infer = Color{
+    @R 100 
+    @G 100
+    @B 255
+}
+```
+
+**The State**
+
+A state is a data that cannot be modified outside of mutable method.
+
+| Name   | Quirks                                              |
+| ------ | --------------------------------------------------- |
+| record | pure data structure that has no method bolted on it |
+| struct | data structure that can be                          |
+| state  |                                                     |
 
 #### Function [WIP]
 
@@ -412,42 +466,40 @@ fn greet |text string| string {
 
 ###### Loum
 
-**Loum** — Lone UI Model, pronounced _loom_, is a subset of Lone for
-declaring and composing UI trees.  
+**Loum** — Lone UI Model, pronounced _loom_, is a subset of Lone for declaring
+and composing UI trees.
 
 ###### Loum Node Type
 
-A **Loum node type** describes the dumb data and shape of a UI element 
-such as text, container or a button within a Loum tree, it does
-not provide reactivity or managed state.
+A **Loum node type** describes the dumb data and shape of a UI element such as
+text, container or a button within a Loum tree, it does not provide reactivity
+or managed state.
 
 ###### Loum Node Space
 
-A Loum node space defines the node types available within a UI model
-and the data associated with each node, or in simpler words it's the
-vocabulary from which a Loum tree may be composed.
+A Loum node space defines the node types available within a UI model and the
+data associated with each node, or in simpler words it's the vocabulary from
+which a Loum tree may be composed.
 
 ###### Loum Tree
 
-A Loum tree is a composition is of Loum nodes representing
-a UI structure.
+A Loum tree is a composition is of Loum nodes representing a UI structure.
 
-The structure of the Loom tree is statically described by its Loum
-declaration, Runtime state may determine which nodes are active or how many instances of 
-a known node shape exist, but it cannot produce new shapes. 
+The structure of the Loom tree is statically described by its Loum declaration,
+Runtime state may determine which nodes are active or how many instances of a
+known node shape exist, but it cannot produce new shapes.
 
 ###### Loum Declaration
 
-A Loum declaration describe a topology of a Loum tree from node types defined
-by a Loum node space.
+A Loum declaration describe a topology of a Loum tree from node types defined by
+a Loum node space.
 
-The topology describes what shapes can exists and where they can occur within the tree.
+The topology describes what shapes can exists and where they can occur within
+the tree.
 
-> [!IMPORTANT]+
-> A `Loum` declaration describes a static UI tree in memory.
-> The tree itself is composed of ordinary data structures; 
-> reactivity, when present, is provided by an associated _context_
-> rather than the node themselves.
+> [!IMPORTANT]+ A `Loum` declaration describes a static UI tree in memory. The
+> tree itself is composed of ordinary data structures; reactivity, when present,
+> is provided by an associated _context_ rather than the node themselves.
 
 ##### Loum Syntax
 
@@ -471,7 +523,8 @@ ui<html5.HTML5> Greet |name string| {
 }
 ```
 
-> Greet is a Loum declaration producing a tree of Loum nodes defined in `html5.HTML5`.
+> Greet is a Loum declaration producing a tree of Loum nodes defined in
+> `html5.HTML5`.
 
 ###### Complex Loum Declaration
 
@@ -543,8 +596,8 @@ ui <html5.HTML5> Counter |start int| with {
 
 **Loum DOES NOT allow arbitrary nor dynamic node injection**.
 
-There is no mechanism for constructing an arbitrary Loum node
-from ordinary Lone code:
+There is no mechanism for constructing an arbitrary Loum node from ordinary Lone
+code:
 
 ```pseudocode
 parent.addChildren(...)
@@ -554,9 +607,11 @@ Will never be a Loum construct.
 
 > **A good UI is a dumb UI**
 
-Instead of dynamically constructing it's structure, a Loum tree explicitly declares all of it's possible node.
+Instead of dynamically constructing it's structure, a Loum tree explicitly
+declares all of it's possible node.
 
-Control flows may then determine witch of these nodes are active or how many instances of a known shape exist.
+Control flows may then determine witch of these nodes are active or how many
+instances of a known shape exist.
 
 ```lone
 import std.ui.html5 { HTML5 }
@@ -592,18 +647,21 @@ ui <HTML5> Users |users []User| {
 }
 ```
 
-> [NOTE]+
-> None of these control flow constructs allows the program to invent new shape at runtime.
+> [NOTE]+ None of these control flow constructs allows the program to invent new
+> shape at runtime.
 >
-> The complete `topology` of a Loum tree is statically known. The compiler `falone`,
-> never has to run lone code in order to discover Loum structures.
+> The complete `topology` of a Loum tree is statically known. The compiler
+> `falone`, never has to run lone code in order to discover Loum structures.
 
 ###### Loum Node Space
 
-If you where to look at the content of the `std.ui.html5` library, you would see something similar to :
+If you where to look at the content of the `std.ui.html5` library, you would see
+something similar to :
 
 ```lone
 import std.platform.dom { Event }
+
+type BaseAttr = record 
 
 loum HTML5 {
     
@@ -628,15 +686,171 @@ loum HTML5 {
 }
 ```
 
-
-
-
-
-
-
-
-
-
-
 ### Expressions
 
+#### Match Expressions
+
+Option Type
+
+"opt<T>" represents a value that may either contain a value of type "T" or represent the absence of a value.
+
+opt<T>
+├── value of T
+└── none
+
+An "opt<T>" is a distinct type. A value of type "T" may be used to initialize an "opt<T>", while "none" represents the absence of a value.
+
+let a opt<int> = 42
+let b opt<int> = none
+
+The value contained by an "opt<T>" cannot be used as a "T" without explicitly handling the optional case.
+
+Lone uses "match" to unpack an option:
+
+```lone
+match a {
+    value int => print(value)
+    none => print("nothing")
+}
+```
+
+"none" is a value pattern, while "value int" is a typed pattern that both verifies the value's type and binds it to "value".
+
+Match Patterns
+
+A "match" branch accepts either a value pattern or a typed pattern.
+
+A value pattern consists of a single expression:
+
+```lone
+match x {
+    10 => ...
+    SOME_VALUE => ...
+    none => ...
+}
+```
+
+The expression is evaluated and compared against the value being matched.
+
+A typed pattern consists of an identifier followed by a named type:
+
+```lone
+match x {
+    value int => ...
+    text string => ...
+    user User => ...
+}
+```
+
+The typed pattern matches when the value has the specified type and binds that value to the identifier for the duration of the branch.
+
+This distinction is intentional:
+
+```plaintext
+X       → value pattern
+X T     → typed pattern
+```
+
+A type alone is therefore not a valid match pattern. For example:
+
+```lone
+match x {
+    int => ...        // invalid
+    value int => ...  // valid
+}
+```
+
+This keeps type matching syntactically distinct from value matching and avoids requiring the parser to determine whether a single identifier represents a type, variable, constant, or other value.
+
+Type patterns are restricted to named types. Arbitrary type expressions are not valid typed patterns.
+
+```lone
+value int   => ...    // valid
+value User  => ...    // valid
+value opt<int> => ... // invalid
+```
+
+The pattern grammar is therefore conceptually:
+
+```plaintext
+pattern
+    = value-pattern
+    | typed-pattern
+
+value-pattern
+    = expression
+
+typed-pattern
+    = identifier named-type
+```
+
+
+### Formating
+
+Lone is designed to be a compact language with a hopefully self-explanatory
+grammar. The syntax should carry as much meaning as possible without requiring
+punctuation to tell the reader what is already clear from the structure.
+
+As a consequence, Lone makes relatively little use of punctuation such as commas
+and equal signs. They are used where they carry meaningful syntactic
+information, rather than simply to separate things that the grammar can already
+distinguish.
+
+For example, function parameters do not require commas:
+
+```lone
+fn foo |a int b string c bool| void
+```
+
+The grammar already makes the boundaries clear: a parameter consists of an
+identifier followed by its type.
+
+This compactness has an intentional consequence: **Lone can become ugly and**
+**difficult to read when too much information is written inline.** This is not
+considered a flaw, but a feature. The syntax allows compact code, while its
+increasing visual density naturally signals when it should be expanded.
+
+Consider:
+
+```lone
+fn foo |a opt<ref<Foo>> b, c res<Thing, Error> d string| infer {
+    --- content ---
+}
+```
+
+This is valid, but difficult to scan horizontally.
+
+The formatting rule is therefore simple:
+
+> If a declaration becomes difficult to scan horizontally, give each declaration
+> its own line.
+
+```lone
+fn foo |
+    a opt<ref<Foo>>
+    b, c res<Thing, Error>
+    d fn |int| string
+| infer {
+    --- content ---
+}
+```
+
+This principle applies to any declaration, including object declarations:
+
+```lone
+let x infer = User{
+    @name "mike"
+    @pass 1234
+    @mail none
+}
+```
+
+rather than forcing the same structure onto one line:
+
+```lone
+let x infer = User{ @name "mike" @pass 1234 @mail none }
+```
+
+The language therefore does not need additional punctuation merely to make dense
+inline code easier to read. When the compact form becomes difficult to scan,
+formatting should expose the structure instead of adding syntactic noise.
