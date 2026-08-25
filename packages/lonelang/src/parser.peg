@@ -445,7 +445,7 @@ TYPE_COMPOSITE
     }
 
 TYPE_DEC_STMT 
-    <- KW_TYPE _ name:IDENTIFIER _ construct:(TYPE_REF / TYPE_COMPOSITE) {
+    <- KW_TYPE _ name:IDENTIFIER _ "=" _ construct:(TYPE_REF / TYPE_COMPOSITE) {
         dec := ir.TypeDec{
             Name: string(AnyValToType[[]byte]("", name)),
             Value: construct,
