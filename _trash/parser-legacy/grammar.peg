@@ -1,0 +1,430 @@
+{
+    package parser
+    import (
+        "fmt"
+        ir "lonelang/src/irtypes"
+    )
+
+    func gpanic(rule string, text string) {
+        panic(fmt.Sprintf("[Grammar Error] Rule=%s; %s", rule, text))
+    }
+
+    func currentPosition(c *current) ir.Position {
+        return ir.Position{
+            Col: c.pos.col,
+            Line: c.pos.line,
+        }
+    }
+
+    func AnyValToType[T any](ref string, v any) T {
+        cast, ok := v.(T)
+        if !ok {
+            panic(fmt.Sprintf("[AnyValToType][%s] expected %T, got %T", ref, *new(T), v))
+        }
+        return cast
+    }
+
+    func AnySliceToSliceOfType[T any](ref string, v any) []T {
+        
+        s, ok := v.([]any)
+        if !ok {
+            panic(fmt.Sprintf("[AnySliceToSliceOfType][%s]\nError: cannot cast  slice of type %T as []any", ref, v))
+        }
+
+        out := make([]T, len(s))
+
+        for i, e := range s {
+            out[i], ok = e.(T)
+            if !ok {
+                panic(fmt.Sprintf("[AnySliceToSliceOfType][%s]\nError: cannot cast curr el of type %T as %T", ref, e, *new(T)))
+            }
+        }
+
+        return out
+    }
+
+    func AnySliceToString(ref string, chars any) string {
+        var b strings.Builder
+        chars_list, ok := chars.([]any)
+        
+        if !ok {
+            panic(fmt.Sprintf("[AnySliceToString][%s] cannot cast chars of type %T as []any", ref, chars))
+        }
+        
+        for _, c := range chars_list {
+            curr, ok := c.([]byte)
+            if !ok {
+                panic(fmt.Sprintf("[AnySliceToString][%s] cannot cast curr of type %T as string", ref, curr))
+            }
+            b.WriteString(string(curr))
+        }
+        
+        return b.String()
+    }
+}
+
+
+
+PROGRAM <- _ IMPORT_LINES _ BODY_LINES _
+
+IMPORT_LINES <- (_ IMPORT_STMT)*
+
+BODY_LINES <- (_ TOP_LEVEL)*
+
+TOP_LEVEL <- BIND_DEC_STMT
+
+
+
+KW_LET     <- "let"
+KW_CONST   <- "const"
+KW_TMODIFIER    <- "ro" / "lit"
+KW_TSTRUCT <- "struct" / "state" / "record"
+KW_TYPE    <- "type"
+KW_IF      <- "if"
+KW_ELSE    <- "else"
+KW_FOR     <- "for"
+KW_BREAK   <- "break"
+KW_BOOL    <- "true" / "false"
+KW_NONE    <- "none"
+KW_MATCH   <- "match"
+KW_FN      <- "fn"
+KW_RETURN  <- "return"
+KW_IMPORT  <- "import"
+KW_AS      <- "as"
+
+KEYWORD <- 
+    KW_LET   
+    / KW_CONST
+    / KW_TMODIFIER  
+    / KW_TSTRUCT
+    / KW_TYPE  
+    / KW_IF    
+    / KW_ELSE  
+    / KW_FOR   
+    / KW_BREAK 
+    / KW_BOOL  
+    / KW_NONE  
+    / KW_MATCH 
+    / KW_FN    
+    / KW_RETURN
+    / KW_IMPORT
+    / KW_AS
+
+IDENTIFIER <- !KEYWORD [a-zA-Z_] [a-zA-Z0-9_]* {
+    return c.text, nil
+}
+
+EOL <- "\r\n" / "\n"
+SPACE <- [ \t]
+
+inline_comment 
+<- "--" ("fa:" IDENTIFIER)? (!EOL .)*
+
+multiline_comment 
+<- "---" ("fa:" IDENTIFIER)? (!"---" .)*
+
+COMMENT <- (inline_comment / multiline_comment)
+
+_ <- (SPACE / EOL / COMMENT)*
+
+
+
+Imp_path <- IDENTIFIER (":" IDENTIFIER)*
+
+Imp_alias <- KW_AS _ IDENTIFIER
+
+Import_classic <- Imp_path _ Imp_alias?
+
+Imp_picker <- "{" _ (":" IDENTIFIER _ Imp_alias?)* _ "}"
+
+Import_specific <- Imp_path _ Imp_picker
+
+Import_style <- Import_specific / Import_classic
+
+IMPORT_STMT <- KW_IMPORT _ Import_style
+
+
+
+Digits <- [0-9]+ ("_" [0-9]+)*
+
+Float <- Digits "." Digits {   
+    val, err := strconv.ParseFloat(string(c.text), 64)
+
+    if err != nil {
+        gpanic("Float", "cannot parse c.text as float")
+    }
+
+    return ir.Literal{
+        Kind: ir.LITERAL_FLOAT,
+        Value: val,
+        Pos: ir.Position{
+            Col: c.pos.col,
+            Line: c.pos.line,
+        },
+    }, nil
+}
+
+Int <- Digits {
+    val, err := strconv.Atoi(string(c.text))
+
+    if err != nil {
+        gpanic("Int", "cannot parse c.text as integer")
+    }
+
+    return ir.Literal{
+        Kind: ir.LITERAL_INT,
+        Value: val,
+        Pos: ir.Position{
+            Col: c.pos.col,
+            Line: c.pos.line,
+        },
+    }, nil
+}
+
+NUMBER <- Float / Int
+
+BOOL <- KW_BOOL {
+    val := false
+    txt := string(c.text)
+
+    if txt == "true" {
+        val = true
+    }
+
+    return ir.Literal{
+        Kind: ir.LITERAL_BOOL,
+        Value: val, 
+        Pos: ir.Position{
+            Col: c.pos.col,
+            Line: c.pos.line,
+        },
+    }, nil
+}
+
+NONE <- KW_NONE {
+    return ir.Literal{
+        Kind: ir.LITERAL_NONE,
+        Value: nil,
+        Pos: ir.Position{
+            Col: c.pos.col,
+            Line: c.pos.line,
+        },
+    }, nil
+}
+
+Escape <- '\\' cc:(
+      '"'
+    / '\\'
+    / 'n'
+    / 'r'
+    / 't'
+) {
+    switch AnyValToType[byte]("Escape.c", cc) {
+    case 'n':
+        return []byte{'\n'}, nil
+    case 'r':
+        return []byte{'\r'}, nil
+    case 't':
+        return []byte{'\t'}, nil
+    case '"':
+        return []byte{'"'}, nil
+    case '\\':
+        return []byte{'\\'}, nil
+    }
+    return nil, fmt.Errorf("invalid escape")
+}
+
+Inline_normal_char <- cc:(!('"' / EOL ) .) {
+    return AnyValToType[[]any]("Normal_char.c", cc)[1], nil
+}
+
+Inline_char <- Escape / Inline_normal_char
+
+STRING <- '"' content:Inline_char* '"' {
+    var txt strings.Builder
+    
+    for _, b := range AnySliceToSliceOfType[[]byte]("STRING.s", content) {
+        char := string(b)
+        txt.WriteString(char)
+    }
+
+    return ir.Literal{
+        Kind: ir.LITERAL_STRING,
+        Value: txt.String(),
+        Pos: ir.Position{
+            Col: c.pos.col,
+            Line: c.pos.line,
+        },
+    }, nil
+}
+
+LITERAL <- NUMBER / BOOL / NONE / STRING
+
+
+
+Field_val_list 
+    <- list:(_ Field_val_assign)* {
+        
+        fields := []ir.FieldAssign{}
+
+        for _,r := range AnyValToType[[]any]("Field_val_list.l", list) {
+            tuple := AnyValToType[[]any]("Field_val_list.tuple", r)
+            fields = append(
+                fields, 
+                AnyValToType[ir.FieldAssign]("Field_val_list.fields", tuple[1]),
+            )
+        }
+
+        return fields, nil
+    }
+
+Field_val_assign 
+    <- "@" field_name:IDENTIFIER _ field_val:EXPR {
+        name := AnySliceToString("Field_val_assign.name", []any{field_name})
+        expr := AnyValToType[ir.Expr]("Field_val_assign.expr", field_val)
+
+        return ir.FieldAssign{
+            Name: name,
+            Expr: expr,
+        }, nil
+    }
+
+OBJECT_LITERAL 
+    <- obj_name:IDENTIFIER? "{" _ f:Field_val_list _ "}" {
+        
+        name := ""
+        if obj_name != nil {
+            name = AnySliceToString("ObjectLiteral.name", []any{obj_name})
+        }
+
+        fields = AnyValToType[[]ir.FieldAssign]("ObjectLiteral.fields", f)
+
+        return lt.ObjectLiteral{
+            Name: name,
+            Fields: fields,
+            Pos: currentPosition(c),
+        }, nil
+    }
+
+
+
+EXPR <- LITERAL / OBJECT_LITERAL
+
+
+
+Type_ref_modifier <- mods:(KW_TMODIFIER _)* {
+    m := AnyValToType[[]any]("Type_ref_modifier.m", mods)
+    t := ir.TypeRefModifier{
+            ReadOnly: false,
+            LiteralOnly: false,
+        }
+
+    for _, pair := range m {
+        curr_mod := AnyValToType[[]any]("Type_ref_modifier.curr_mod", pair)[0]
+        str := string(AnyValToType[[]byte]("Type_ref_modifier.str", curr_mod))
+        if str == "ro" {
+            t.ReadOnly = true
+        } else if str == "lit" {
+            t.LiteralOnly = true
+        }
+    }
+
+    return t, nil
+}
+
+Type_args
+    <- "<" _ first:TYPE_REF _ rest:Type_arg_tail* _ ">" {
+        
+        types := []ir.TypeRef{
+            AnyValToType[ir.TypeRef]("Type_args.first", first),
+        }
+
+        for _, r := range AnySliceToSliceOfType[ir.TypeRef]("Type_args.rest", rest) {
+            types = append(types, r)
+        }
+
+        return types, nil
+    }
+
+Type_arg_tail
+    <- "," _ t:TYPE_REF {
+        return AnyValToType[ir.TypeRef]("Type_arg_tail.t", t), nil
+    }
+
+
+TYPE_REF
+    <- modifier:Type_ref_modifier _ name:IDENTIFIER _ args:Type_args? {
+
+        n := AnySliceToString("TYPE_REF.n", []any{name})
+        a := []ir.TypeRef{}
+
+        if args != nil {
+            a = AnyValToType[[]ir.TypeRef]("TYPE_REF.args", args)
+        }
+
+        res := ir.TypeRef{
+            Name: n,
+            Args: a,
+            Modifier: AnyValToType[ir.TypeRefModifier]("TYPE_REF.res.Modifier", modifier),
+            Pos: currentPosition(c),
+        }
+
+        return res, nil
+    }
+
+
+
+Let_dec <- KW_LET _ name:IDENTIFIER _ type_ref:TYPE_REF {
+        let_name := AnySliceToString("Let_dec.let_name", []any{name})
+        let_type := AnyValToType[ir.TypeRef]("Let_dec.l_type", type_ref)
+        return ir.VariableDec{
+            Name: let_name,
+            Type: let_type,
+            Const: false,
+            Pos: currentPosition(c),
+        }, nil
+    }
+
+Const_dec <- KW_CONST _ name:IDENTIFIER {
+        const_name := AnySliceToString("Const_dec.const_name", []any{name})
+        const_type := ir.TypeRef{
+                Name: "infer",
+                Modifier: ir.TypeRefModifier{
+                    ReadOnly: true,
+                    LiteralOnly: true,
+                },
+            }
+
+        return ir.VariableDec{
+            Name: const_name,
+            Type: const_type,
+            Const: true,
+            Pos: currentPosition(c),
+        }, nil
+    }
+
+Bind_dec <- Let_dec / Const_dec
+
+Bind_assign
+    <- "=" _ expr:EXPR {
+        return AnyValToType[ir.Expr]("Bind_assign.expr", expr), nil
+    }
+
+BIND_DEC_STMT <- dec:Bind_dec _ val:Bind_assign? {
+        
+        var_dec := AnyValToType[ir.VariableDec]("BIND_DEC_STMT.var_dec", dec)
+        var_dec.Value = ir.Literal{
+            Kind: ir.LITERAL_UNINITIALIZED,
+            Value: nil,
+        }
+
+        if val != nil {
+            vcast, ok := val.(ir.Expr)
+            if !ok {
+                gpanic("BIND_DEC_STMT", "cannot parse received 'Bind_assign' as 'ir.Expr' ")
+            }
+            var_dec.Value = vcast
+        }
+        
+        return var_dec, nil
+    }

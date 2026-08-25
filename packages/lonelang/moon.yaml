@@ -5,11 +5,12 @@ tasks:
   gen-parser:
     type: build
     script: |
-      touch ./_artefact
-      pigeon -o ./_artefact ./src/parser/parser.peg || rm ./_artefact
-      cat ./_artefact > ./src/parser/parser.go && rm ./_artefact
-    inputs:
-      - "./src/parser/parser.peg"
+      IR_ARTEFACT="./_artefact"
+      PEG_GRAMMAR="./src/parser.peg"
+      PARSER_OUTFILE="./src/parser/parser.go"
+      touch "$IR_ARTEFACT"
+      pigeon -o "$IR_ARTEFACT" "$PEG_GRAMMAR" || rm "$IR_ARTEFACT"
+      cat "$IR_ARTEFACT" > "$PARSER_OUTFILE" && rm "$IR_ARTEFACT"
 
   compile:
     type: build
