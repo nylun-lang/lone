@@ -40,8 +40,13 @@ Lone Language Specification
     ├── WASM representation
     └── runtime requirementss
 ```
+<div align=center>
+    <img src="../../../assets/lone-banner.png" align="center"/>
+    <h1>System & UI Design</h1>
+</div>
 
 # Lone Language Specification
+
 
 <!--toc:start-->
 
@@ -261,7 +266,10 @@ The text being colored
 @example build
 color(1, 1, 200, "hello world")
 ---
-fn color | R, G, B int text string | string {
+fn color | 
+    R, G, B int 
+    text string 
+| string {
     return #fmt("\x1b[38;2;{};{};{}m{} \x1b[0m", R, G, B, text)
 }
 ```
@@ -402,6 +410,11 @@ let y lit ro int = 1 -- y is literal readonly runtime integer, but that's redund
 |    float64     | 64 bit floating point number       |
 |      any       | value of any type                  |
 
+###### Fn Type
+
+```lone
+type len = fn |a1 string| int
+```
 
 ###### Any vs Infer
 
@@ -690,7 +703,7 @@ loum HTML5 {
 
 #### Match Expressions
 
-Option Type
+##### Option Type
 
 "opt<T>" represents a value that may either contain a value of type "T" or represent the absence of a value.
 
@@ -716,7 +729,7 @@ match a {
 
 "none" is a value pattern, while "value int" is a typed pattern that both verifies the value's type and binds it to "value".
 
-Match Patterns
+##### Match Patterns
 
 A "match" branch accepts either a value pattern or a typed pattern.
 

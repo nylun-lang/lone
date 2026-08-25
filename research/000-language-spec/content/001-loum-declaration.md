@@ -65,12 +65,15 @@ A render could techincaly be notified of changes occuring in specfic index and r
 ## Hypthosis
 
 ```lone
----fa:fa:fa:doc
+---fa:doc
 greet the user
 ---
 ui <html5.HTML5> Greet | name string | with {
-    computed n | prev, curr string = name | {
-
+    anchor c Counter from | 
+        prev, curr string = name 
+        | {
+            jkjkjkj
+            
     }
 }
 ```

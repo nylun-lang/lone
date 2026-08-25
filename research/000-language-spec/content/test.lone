@@ -1,0 +1,28 @@
+import std.math.rand { random, max }
+import std.io { readline }
+
+fn main || {
+
+    let fact ro float32 = random()
+    let guess ro int32 =  max(0, fact * 100)
+    let x ref<string> = &w
+
+    Thread::create<T>(|c infer | {
+        for even in chan.In {
+            chan.pushOut(x)
+        }
+    })
+
+    handle.push()
+
+    match x {
+        _ string => foo9
+        value []u8 => {
+
+        }
+    }
+
+
+
+
+}
