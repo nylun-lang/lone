@@ -698,6 +698,89 @@ loum HTML5 {
     node text(content string)
 }
 ```
+### Lone type system
+
+#### Enum & Error
+
+Enum and error are two side of same coint. in memory they both just integers.
+
+```lone
+type Foo = enum {
+    fancy
+    good
+    mid
+    lame
+}
+```
+
+```lone
+type BarErr = error {
+    OutOfLuck
+    LuckyAsHeck
+}
+```
+
+#### Trait
+
+A define a set of behavior independent of the associated YET NOT PART of a type.
+
+```lone
+type BasicAritmetic<T> where { 
+    T satifies Add<T>
+    T satifies Sub<T>
+    T satifies Div<T>
+    T satifies Mul<T>
+} = trait {}
+```
+
+In Lone a trait implementation for a specific type belong to the pkg in which it's declared.
+> the type and it's trait impl must be in the same pkg
+
+```lone
+import std:math {
+    :type Ordering
+    :pkg
+}
+
+type Foo = []int
+
+impl Comparable<Foo> for Foo {
+    fn less |a Foo b Foo| Foo {}
+    fn greater |a Foo b Foo| Foo {}
+    fn equal |a Foo b Foo| Foo {}
+    fn ordering |a Foo b Foo| Ordering {}
+}
+```
+
+In lone, **a trait can only be used by materializing it**, for it does not belong to the type that impl it
+
+```lone
+fn foo<T>
+    where {
+        T satifies Serializable
+    }
+    |param T| string {
+        -- materialize the trait impl of T
+        let serializer infer = Serialize|T|
+        return serializer::serialize(param)
+    }
+```
+
+#### Alias
+
+An alias is another name for a `T` type, it allows one to redefine trait & metods
+implememtation but still require an identical signature as the `T` being aliased
+
+```lone
+type U = alias int
+
+-- reimpl the add trait for U
+impl Add<U> for U {
+    fn add |a U b U| U {
+        --- ... --
+    }
+}
+```
 
 ### Expressions
 
@@ -797,6 +880,59 @@ typed-pattern
     = identifier named-type
 ```
 
+###### Must / Fail / TryElse Expression
+
+Lone **DOES NOT** implement a concrete datastructure for result type.
+res<T, E> is mearly a conveniant projection of the returned type of a function.
+
+```lone
+-- foo has return type of res<int,BarError>
+fn foo ||  int!(BarError) { --- ... --- }
+```
+
+`must`, `try/else` and `fail` are control flow for conveniantly dealing with result.
+
+**Fail**
+
+**In Lone, one does not return an error. You Fail with an error**
+
+```lone
+fn foo || int!(BarError) {
+    let x int = bar()
+    if x == 0 {
+        fail BarError("This was an inside job")
+    }
+    return x
+}
+```
+
+**Must**
+
+`must`, is an early failure propagation mechanism
+
+```lone
+fn foo ||  int!(BarError) { --- ... --- }
+
+fn bar || infer!infer { 
+    -- if foo produce an error, propagate the error back to the caller
+    let x int = must foo()
+    --- ... ---
+}
+```
+
+**TryElse**
+
+`tryelse`, is an early failure recovery or control mechanish
+
+```lone
+fn foo ||  int!(BarError) { --- ... --- }
+
+fn bar || infer { 
+    -- if foo produceu an error, exec the else clause.
+    let x int = try foo() else { break 1 }
+    --- ... ---
+}
+```
 
 ### Formating
 
