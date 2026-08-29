@@ -483,7 +483,24 @@ POSTFIX_EXPR
     }, nil
 }
 
-EXPR <- POSTFIX_EXPR
+UNARY_OP
+<- "-"
+/ "+"
+/ "!"
+/ "&"
+/ "*"
+
+UNARY_EXPR
+<- op:UNARY_OP _ expr:UNARY_EXPR {
+    return ir.UnaryExpr{
+        Op:   ir.UnaryOp(string(AnyValToType[[]byte]("UNARY_EXPR.op", op))),
+        Expr: AnyValToType[ir.Expr]("UNARY_EXPR.expr", expr),
+        Pos:  currentPosition(c),
+    }, nil
+}
+/ POSTFIX_EXPR
+
+EXPR <- UNARY_EXPR
 
 Type_ref_modifier <- mods:(KW_TMODIFIER _)* {
     m := AnyValToType[[]any]("Type_ref_modifier.m", mods)
