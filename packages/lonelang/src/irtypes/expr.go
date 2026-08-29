@@ -18,6 +18,69 @@ type Expr interface {
 }
 
 // =====================
+// POSTFIX EXPR
+// =====================
+
+type SuffixKind int
+
+const (
+	SUFFIX_KIND_MEMBER = iota
+	SUFFIX_KIND_ASSOCIATED
+	SUFFIX_KIND_NAMESPACE
+	SUFFIX_KIND_CALL
+)
+
+type Suffix interface {
+	IsSuffix() SuffixKind
+}
+
+type PostFixExpr struct {
+	Base   Expr
+	Suffix []Suffix
+	Pos    Position
+}
+
+func (PostFixExpr) IsExpr() ExprKind {
+	return EXPR_NAME_REFERENCE
+}
+
+type SuffixCall struct {
+	Args []Expr
+	Pos  Position
+}
+
+func (SuffixCall) IsSuffix() SuffixKind {
+	return SUFFIX_KIND_CALL
+}
+
+type SuffixMemberAccess struct {
+	Name string
+	Pos  Position
+}
+
+func (SuffixMemberAccess) IsSuffix() SuffixKind {
+	return SUFFIX_KIND_MEMBER
+}
+
+type SuffixAssociatedAccess struct {
+	Name string
+	Pos  Position
+}
+
+func (SuffixAssociatedAccess) IsSuffix() SuffixKind {
+	return SUFFIX_KIND_ASSOCIATED
+}
+
+type SuffixNamespaceAccess struct {
+	Name string
+	Pos  Position
+}
+
+func (SuffixNamespaceAccess) IsSuffix() SuffixKind {
+	return SUFFIX_KIND_NAMESPACE
+}
+
+// =====================
 // NAMEREF EXPR
 // =====================
 

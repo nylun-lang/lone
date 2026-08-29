@@ -415,7 +415,75 @@ PRIMARY_EXPR
 / NAME_REF
 / "(" _ expr:EXPR _ ")" { return expr, nil }
 
-EXPR <- PRIMARY_EXPR
+EXPR_LIST
+<- first:EXPR rest:("," _ EXPR)* {
+    args := []ir.Expr{
+        AnyValToType[ir.Expr]("EXPR_LIST.first", first),
+    }
+
+    for _, part := range AnyValToType[[]any]("EXPR_LIST.rest", rest) {
+        tuple := AnyValToType[[]any]("EXPR_LIST.part", part)
+
+        args = append(
+            args,
+            AnyValToType[ir.Expr]("EXPR_LIST.arg", tuple[2]),
+        )
+    }
+
+    return args, nil
+}
+
+Call
+<- "(" _ args:EXPR_LIST? _ ")" {
+    call_args := []ir.Expr{}
+
+    if args != nil {
+        call_args = AnyValToType[[]ir.Expr]("Call.args", args)
+    }
+
+    return ir.SuffixCall{
+        Args: call_args,
+        Pos: currentPosition(c),
+    }, nil
+}
+
+Member_access <- "." name:IDENTIFIER {
+    return ir.SuffixMemberAccess{
+        Name: string(AnyValToType[[]byte]("Member_access.name", name)),
+        Pos: currentPosition(c),
+    }, nil
+}
+
+Namespace_access <- ":" name:IDENTIFIER {
+    return ir.SuffixNamespaceAccess{
+        Name: string(AnyValToType[[]byte]("Namespace_access.name", name)),
+        Pos: currentPosition(c),
+    }, nil
+}
+
+Associated_access <- "::" name:IDENTIFIER {
+    return ir.SuffixAssociatedAccess{
+        Name: string(AnyValToType[[]byte]("Associated_access.name", name)),
+        Pos: currentPosition(c),
+    }, nil
+}
+
+Postfix_suffix <- 
+    Member_access
+    / Namespace_access
+    / Associated_access
+    / Call
+
+POSTFIX_EXPR
+<- base:PRIMARY_EXPR suffix:Postfix_suffix* {
+    return ir.PostFixExpr{
+        Base: AnyValToType[ir.Expr]("POSTFIX_EXPR.base", base),
+        Suffix: AnySliceToSliceOfType[ir.Suffix]("POSTFIX_EXPR.suffix", suffix),
+        Pos: currentPosition(c),
+    }, nil
+}
+
+EXPR <- POSTFIX_EXPR
 
 Type_ref_modifier <- mods:(KW_TMODIFIER _)* {
     m := AnyValToType[[]any]("Type_ref_modifier.m", mods)
