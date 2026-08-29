@@ -1,0 +1,3 @@
+let x infer = a >= b
+let y infer = c <= e
+let z infer = f < i
