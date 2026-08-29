@@ -9,11 +9,39 @@ type ExprKind int
 const (
 	EXPR_LITERAL = iota
 	EXPR_OBJ_LITERAL
-	EXPR_UNINITIALIZED
+	EXPR_TRAIT_MATERIALIZATION
+	EXPR_NAME_REFERENCE
 )
 
 type Expr interface {
 	IsExpr() ExprKind
+}
+
+// =====================
+// NAMEREF EXPR
+// =====================
+
+type NameRef struct {
+	Name string
+	Pos  Position
+}
+
+func (NameRef) IsExpr() ExprKind {
+	return EXPR_NAME_REFERENCE
+}
+
+// =====================
+// TRAIT MAT EXPR
+// =====================
+
+type TraitMat struct {
+	TraitName string
+	TypeName  string
+	Pos       Position
+}
+
+func (TraitMat) IsExpr() ExprKind {
+	return EXPR_TRAIT_MATERIALIZATION
 }
 
 // =====================
@@ -37,7 +65,7 @@ type Literal struct {
 	Pos   Position
 }
 
-func (l Literal) IsExpr() ExprKind {
+func (Literal) IsExpr() ExprKind {
 	return EXPR_LITERAL
 }
 

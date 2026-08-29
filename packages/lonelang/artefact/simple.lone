@@ -1,0 +1,21 @@
+import std:color as col
+import std:color {
+    :rgb
+}
+
+
+type Color = struct {
+    R int
+    G int
+    B int
+}
+
+let puprle infer = Color{ 
+    @R 100
+    @G 100
+    @B 255
+}
+
+const foo = 1
+
+let c infer = Comparable|User|

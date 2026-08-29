@@ -68,7 +68,7 @@
 
 PROGRAM <- _ IMPORT_LINES _ BODY_LINES _
 
-IMPORT_LINES <- (_ IMPORT_STMT)*
+IMPORT_LINES <- (_ IMPORT_STMT)* 
 
 BODY_LINES <- (_ TOP_LEVEL)*
 
@@ -130,19 +130,101 @@ _ <- (SPACE / EOL / COMMENT)*
 
 
 
-Imp_path <- IDENTIFIER (":" IDENTIFIER)*
+Imp_path <- first:IDENTIFIER rest:(":" IDENTIFIER)* {
+    imp_path := []string{
+        string(AnyValToType[[]byte]("Imp_path.first", first)),
+    }
 
-Imp_alias <- KW_AS _ IDENTIFIER
+    if rest != nil {
+        for _,pair := range AnyValToType[[]any]("Imp_path.pair", rest) {
+            chunk := AnyValToType[[]any]("Imp_path.chunk", pair)[1]
+            imp_path = append(
+                imp_path,
+                string(AnyValToType[[]byte]("Imp_path.chunk_string", chunk)),       
+            )
+        }
+    }
 
-Import_classic <- Imp_path _ Imp_alias?
+    return imp_path, nil
+}
 
-Imp_picker <- "{" _ (":" IDENTIFIER _ Imp_alias?)* _ "}"
+Imp_alias <- KW_AS _ alias:IDENTIFIER { return alias, nil }
 
-Import_specific <- Imp_path _ Imp_picker
+Import_classic <- imp:Imp_path _ alias:Imp_alias? {
 
-Import_style <- Import_specific / Import_classic
+    imp_path_str := AnyValToType[[]string](
+        "Import_classic",
+        imp,
+    )
 
-IMPORT_STMT <- KW_IMPORT _ Import_style
+    name := imp_path_str[len(imp_path_str)-1]
+    if alias != nil {
+        name = string(
+            AnyValToType[[]byte]("Import_classic.name", alias),
+        )
+    }
+
+    return ir.ClassicImport{
+        Path: imp_path_str,
+        Name: name,
+    }, nil
+}
+
+Imp_picker <- "{" _ items:(":" IDENTIFIER _ Imp_alias?)* _ "}" {
+    picked := []ir.ImportPick{}
+    
+    for _, item := range AnyValToType[[]any]("Imp_picker.item", items) {
+        chunk := AnyValToType[[]any]("Imp_picker.chunk", item)
+        name := string(AnyValToType[[]byte]("Imp_picker.name", chunk[1]))
+        var alias string
+
+        if chunk[3] != nil {
+            alias = string(AnyValToType[[]byte]("Imp_picker.alias", chunk[3]))
+        }
+
+        picked = append(picked, ir.ImportPick{
+            Name: name,
+            Alias: alias,
+        })
+    }
+
+    return picked, nil
+}
+
+Import_specific <- imp:Imp_path _ picked:Imp_picker {
+    
+    imp_path_str := AnyValToType[[]string](
+        "Import_specific",
+        imp,
+    )
+
+    imp_picked := AnyValToType[[]ir.ImportPick](
+        "Import_specific",
+        picked,
+    )
+
+    return ir.SpecificImport{
+        Path: imp_path_str,
+        Pick: imp_picked,
+    }, nil
+
+}
+
+IMPORT_STMT <- KW_IMPORT _ imp:(Import_specific / Import_classic) {
+
+    imp_stmt := ir.ImportStmt{ 
+        Value: imp,
+        Pos: currentPosition(c),
+    }
+
+    if _, is_classic := imp.(ir.ClassicImport); is_classic {
+        imp_stmt.Kind = ir.IMP_KIND_CLASSIC
+    } else {
+        imp_stmt.Kind = ir.IMP_KIND_SPECIFIC
+    }
+
+    return imp_stmt, nil
+}
 
 
 
@@ -307,24 +389,33 @@ OBJECT_LITERAL
         }, nil
     }
 
-AssignmentOp <- "="
+TRAIT_MATERIALIZATION
+<- trait_name:IDENTIFIER "|" type_name:IDENTIFIER "|" {
+    tr_name := AnyValToType[[]byte]("TRAIT_MATERIALIZATION.tr_name", trait_name)
+    tp_name := AnyValToType[[]byte]("TRAIT_MATERIALIZATION.tp_name", type_name)
+    return ir.TraitMat{
+        TraitName: string(tr_name),
+        TypeName: string(tp_name),
+        Pos: currentPosition(c),
+    }, nil
+}
 
-AssigmentExpr
-<- LogicalOrExpr (AssignmentOp LogicalOrExpr)?
+NAME_REF
+<- IDENTIFIER {
+    return ir.NameRef{ 
+        Name: string(c.text),
+        Pos: currentPosition(c),
+    }, nil
+}
 
-LogicalOrExpr
-<- LogicalAndExpr ("||" LogicalAndExpr)*
+PRIMARY_EXPR
+<- LITERAL
+/ OBJECT_LITERAL
+/ TRAIT_MATERIALIZATION
+/ NAME_REF
+/ "(" _ expr:EXPR _ ")" { return expr, nil }
 
-LogicalAndExpr
-<- EqualityExpr ("&&" EqualityExpr)*
-
-EqualityExpr
-<- RelationalExpr (("==" / "!=") RelationalExpr)*
-
-
-EXPR <- LITERAL / OBJECT_LITERAL
-
-
+EXPR <- PRIMARY_EXPR
 
 Type_ref_modifier <- mods:(KW_TMODIFIER _)* {
     m := AnyValToType[[]any]("Type_ref_modifier.m", mods)
@@ -434,7 +525,9 @@ TYPE_COMPOSITE
         
         composite_fieds := AnyValToType[[]ir.CompositeTypeField]("TYPE_COMPOSITE.composite_fieds", fields)
         
-        composite_kind := AnyValToType[ir.CompositeTypeKind]("TYPE_COMPOSITE.composite_kind", kind) 
+        composite_kind := ir.CompositeTypeKind(
+            AnyValToType[int]("TYPE_COMPOSITE.composite_kind", kind),
+        ) 
         
         return ir.CompositeType{
             Kind: composite_kind,
@@ -462,8 +555,6 @@ TYPE_DEC_STMT
 
         return dec, nil
     }
-
-
 
 Let_dec <- KW_LET _ name:IDENTIFIER _ type_ref:TYPE_REF {
         let_name := AnySliceToString("Let_dec.let_name", []any{name})
