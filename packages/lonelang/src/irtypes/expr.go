@@ -26,17 +26,26 @@ type Expr interface {
 type BinaryOp string
 
 const (
-	BINARY_OP_PLUS  BinaryOp = "+"
-	BINARY_OP_MINUS BinaryOp = "-"
-	BIARY_OP_TIME   BinaryOp = "*"
-	BINARY_OP_DIV   BinaryOp = "/"
-	BINARY_OP_MOD   BinaryOp = "*"
+	BINARY_OP_PLUS       BinaryOp = "+"
+	BINARY_OP_MINUS      BinaryOp = "-"
+	BINARY_OP_TIME       BinaryOp = "*"
+	BINARY_OP_DIV        BinaryOp = "/"
+	BINARY_OP_MOD        BinaryOp = "*"
+	BINARY_OP_AND        BinaryOp = "&&"
+	BINARY_OP_OR         BinaryOp = "||"
+	BINARY_OP_LESS       BinaryOp = ">"
+	BINARY_OP_LESS_EQ    BinaryOp = ">="
+	BINARY_OP_EQ         BinaryOp = "=="
+	BINARY_OP_NOT_EQ     BinaryOp = "!="
+	BINARY_OP_GREATER    BinaryOp = "<"
+	BINARY_OP_GREATER_EQ BinaryOp = "<="
 )
 
 type BinaryExpr struct {
-	Op   BinaryOp
-	Expr Expr
-	Pos  Position
+	Op    BinaryOp
+	Left  Expr
+	Right Expr
+	Pos   Position
 }
 
 func (BinaryExpr) IsExpr() ExprKind {

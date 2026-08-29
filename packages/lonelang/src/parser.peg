@@ -500,7 +500,32 @@ UNARY_EXPR
 }
 / POSTFIX_EXPR
 
-EXPR <- UNARY_EXPR
+MUL_BINARY_EXPR 
+<- left:UNARY_EXPR right:(_ op:("*" / "/") _ UNARY_EXPR)? {
+    l := AnyValToType[ir.Expr]("MUL_BINARY_EXPR.l", left)
+    if right == nil {
+        return l, nil
+    }
+
+    rpart := AnyValToType[[]any]("MUL_BINARY_EXPR.rpart", right)
+    r := AnyValToType[ir.Expr]("MUL_BINARY_EXPR.r", rpart[3])
+    operator := ir.BinaryOp(
+        string(
+            AnyValToType[[]byte]("MUL_BINARY_EXPR.operator", rpart[1]),
+        ),
+    )
+
+    expr := ir.BinaryExpr{
+        Op: operator,
+        Left: l,
+        Right: r,
+        Pos: currentPosition(c),
+    }
+
+    return expr, nil
+}
+
+EXPR <- MUL_BINARY_EXPR
 
 Type_ref_modifier <- mods:(KW_TMODIFIER _)* {
     m := AnyValToType[[]any]("Type_ref_modifier.m", mods)

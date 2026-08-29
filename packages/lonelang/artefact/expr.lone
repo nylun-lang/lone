@@ -1,0 +1,2 @@
+let x infer = 1 
+let y infer = (4 * 2) / 3
