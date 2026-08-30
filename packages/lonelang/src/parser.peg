@@ -606,7 +606,6 @@ LOGICAL_OR_BINARY_EXPR
     return expr, nil
 }
 
-
 EXPR <- LOGICAL_OR_BINARY_EXPR
 
 Type_ref_modifier <- mods:(KW_TMODIFIER _)* {
@@ -648,28 +647,60 @@ Type_arg_tail
         return AnyValToType[ir.TypeRef]("Type_arg_tail.t", t), nil
     }
 
+Type_ref_form 
+    <- form:("[" EXPR? "]" TYPE_REF / IDENTIFIER _ Type_args?) {
+        f := AnyValToType[[]any]("Type_ref_form.f", form)
+        if len(f) == 4 {
+            var size ir.Expr = ir.Literal{ 
+                Kind: ir.LITERAL_DYNAMIC_SIZE,
+                Pos: currentPosition(c),
+            }
+
+            if defsize, ok := f[1].(ir.Expr); ok {
+                size = defsize
+            }
+
+            item_type := AnyValToType[ir.TypeRef]("Type_ref_form.item_type", f[3])
+           
+            t := ir.ListType{
+                Size: size,
+                ItemType: item_type,
+            }
+
+            return t, nil
+        }
+
+        name := string(AnyValToType[[]byte]("Type_ref_form.name", f[0]))
+        args := []ir.TypeRef{}
+
+        if f[2] != nil {
+            args =  AnyValToType[[]ir.TypeRef]("Type_ref_form.args", f[2])
+        }
+
+        t := ir.RawType{
+            Name: name,
+            Args: args,
+        }
+
+        return t, nil
+    }
 
 TYPE_REF
-    <- modifier:Type_ref_modifier _ name:IDENTIFIER _ args:Type_args? {
+    <- modifier:Type_ref_modifier _ is_opt:"?"? form:Type_ref_form {
 
-        n := AnySliceToString("TYPE_REF.n", []any{name})
-        a := []ir.TypeRef{}
-
-        if args != nil {
-            a = AnyValToType[[]ir.TypeRef]("TYPE_REF.args", args)
+        modif := AnyValToType[ir.TypeRefModifier]("TYPE_REF.res.Modifier", modifier)
+        if is_opt != nil {
+            modif.Optional = true
         }
 
         res := ir.TypeRef{
-            Name: n,
-            Args: a,
-            Modifier: AnyValToType[ir.TypeRefModifier]("TYPE_REF.res.Modifier", modifier),
+            Content: form,
+            Modifier: modif,
             Pos: currentPosition(c),
         }
 
         return res, nil
-    }
-
-
+    } / "(" _ t:TYPE_REF _ ")" { return t, nil }
 
 
 Type_composite_kind <- KW_TSTRUCT {
@@ -762,11 +793,13 @@ Let_dec <- KW_LET _ name:IDENTIFIER _ type_ref:TYPE_REF {
 Const_dec <- KW_CONST _ name:IDENTIFIER {
         const_name := AnySliceToString("Const_dec.const_name", []any{name})
         const_type := ir.TypeRef{
-                Name: "infer",
+                Content: ir.RawType{ Name: "infer" },
                 Modifier: ir.TypeRefModifier{
+                    Optional: false,
                     ReadOnly: true,
                     LiteralOnly: true,
                 },
+                Pos: currentPosition(c),
             }
 
         return ir.VariableDec{

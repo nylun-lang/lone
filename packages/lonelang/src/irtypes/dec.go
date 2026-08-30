@@ -33,13 +33,23 @@ type TypeDec struct {
 // TYPE REF
 
 type TypeRef struct {
-	Name     string    `json:"name"`
-	Args     []TypeRef `json:"args"`
+	Content  any
 	Modifier TypeRefModifier
 	Pos      Position
 }
 
+type RawType struct {
+	Name string    `json:"name"`
+	Args []TypeRef `json:"args"`
+}
+
+type ListType struct {
+	Size     Expr    `json:"size"`
+	ItemType TypeRef `json:"item_type"`
+}
+
 type TypeRefModifier struct {
+	Optional    bool
 	ReadOnly    bool
 	LiteralOnly bool
 }

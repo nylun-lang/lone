@@ -1,0 +1,4 @@
+let x ro ?int = none
+let y ro []ro int
+let z ?ref<ro []?int>
+let w ro [](ro ?ref<int>)
