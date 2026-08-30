@@ -40,6 +40,7 @@ Lone Language Specification
     ├── WASM representation
     └── runtime requirementss
 ```
+
 <div align=center>
     <img src="../../../assets/lone-banner.png" align="center"/>
     <h1>System & UI Design</h1>
@@ -47,9 +48,7 @@ Lone Language Specification
 
 # Lone Language Specification
 
-
 <!--toc:start-->
-
 - [Lone Language Specification](#lone-language-specification)
   - [1. Design principles](#1-design-principles)
     - [Principle](#principle)
@@ -78,6 +77,10 @@ Lone Language Specification
           - [Modifiers](#modifiers)
           - [Construct](#construct)
           - [Base Type](#base-type)
+          - [Fn Type](#fn-type)
+          - [Any vs Infer](#any-vs-infer)
+          - [Type & Data structure](#type-data-structure)
+          - [Type & Associated Fn](#type-associated-fn)
       - [Function [WIP]](#function-wip)
       - [UI](#ui)
         - [Vocabulary](#vocabulary)
@@ -90,9 +93,22 @@ Lone Language Specification
           - [Simple Loum Declaration](#simple-loum-declaration)
           - [Complex Loum Declaration](#complex-loum-declaration)
           - [Control Flow](#control-flow)
-          - [Loum Node Space](#loum-node-space-1)
+          - [Loum Node Space [WIP]](#loum-node-space-wip)
+    - [Lone type system](#lone-type-system)
+      - [Enum & Error](#enum-error)
+      - [Materialization](#materialization)
+        - [Type Mat](#type-mat)
+        - [Trait](#trait)
+      - [Alias](#alias)
     - [Expressions](#expressions)
-
+      - [Match Expressions](#match-expressions)
+        - [Option Type](#option-type)
+        - [Match Patterns](#match-patterns)
+      - [Must / Fail / TryElse Expression](#must-fail-tryelse-expression)
+      - [Rune Operators [WIP]](#rune-operators-wip)
+      - [Comptime Expressions [WIP]](#comptime-expressions-wip)
+    - [Loops [WIP]](#loops-wip)
+    - [Formatting](#formatting)
 <!--toc:end-->
 
 ## 1. Design principles
@@ -126,8 +142,11 @@ misunderstand
 - **Invariant L7 — No implicit built in** Every built in symbol/fn must be
   distinguishable from user defined code.
 
-- **Invariant F1 — Syntax level feedback** Punctuation shallnot rescue
+- **Invariant F1 — Syntax level feedback** Punctuation shall not rescue
   readability that grammar already provide
+
+- **Invariant F2 — Progressive Information** Lone should progressively display
+  information, from left to right whenever possible.
 
 - **Invariant UI1 — Declared topology is stable** A UI declaration establishes a
   persistent topology known to the compiler, except at explicitly declared
@@ -387,10 +406,22 @@ let y lit ro int = 1 -- y is literal readonly runtime integer, but that's redund
 
 |   Symbol    | Purpose                    |
 | :---------: | -------------------------- |
-|  `opt<T>`   | `T` may be `none`          |
+|    `?T`     | `T` may be `none`          |
+| `[size]T` | Array of T element           |
 | `res<T, E>` | `T` may be `E` error       |
 |  `ref<T>`   | managed memory holding `T` |
 |  `ptr<T>`   | unsafe memory holding `T`  |
+
+```lone
+-- optional int
+let x ?int = none
+
+-- optional array of readonly optional integer
+let y ?[]ro ?int
+
+-- ref to readonly optional array of map of string => readonly int 
+let z ref<ro ?[]map<string, ro int>>
+```
 
 ###### Base Type
 
@@ -418,7 +449,7 @@ type len = fn |a1 string| int
 
 ###### Any vs Infer
 
-###### Type & Data struct
+###### Type & Data structure
 
 Lone admits three kind of data structures. 3 kind of data structures.
 
@@ -429,7 +460,7 @@ A **record** is a dumb data structure
 ```lone
 type User = record {
     name string
-    pass opt<string>
+    pass ?string
 }
 
 let X User = {
@@ -444,24 +475,62 @@ A **struct** is a data structures with behavior bolted on top.
 ```lone
 type Color = struct {
     R, G, B int
+
+    fn createFromInt | R, G, B int | Color {
+        return Color{
+            @R R
+            @G G
+            @B B
+        }
+    }
 }
 
-let y infer = Color{
-    @R 100 
-    @G 100
-    @B 255
-}
+let y infer = Color::createFromInt(100, 100, 255)
 ```
 
 **The State**
 
-A state is a data that cannot be modified outside of mutable method.
+A state is a data that cannot be modified outside it's construct.
 
-| Name   | Quirks                                              |
-| ------ | --------------------------------------------------- |
-| record | pure data structure that has no method bolted on it |
-| struct | data structure that can be                          |
-| state  |                                                     |
+> **`MyState.foo = bar` is illegal outside MyState type definition**
+
+```lone 
+type Counter = state {
+    value int
+
+    fn increment |
+        self    ref<Self> 
+        new_val int
+    | void {
+        self.value = new_val 
+    }
+}
+```
+
+
+###### Type & Associated Fn
+
+A given `T` type data structure may possess associated function.
+How they are accessed depends on how they use 
+the `self` argument parameter and the self type.
+
+**Without self**
+
+The fn live on the type `T::foo(bar)`
+
+**With self**
+
+The fn live in the instance of `T`:
+
+`my_var.foo(bar)`
+
+**Self Access Model**
+
+The self parameter is special
+
+`self Self` - you want a mutable copy of the instance of Self
+`self ref<ro Self>` - you want a references to an immutable binding to the instance of Self
+`self ref<Self>` - you want a reference to a mutable binding to the instance of Self
 
 #### Function [WIP]
 
@@ -573,19 +642,21 @@ import std.ui.html5
 type Count = state {
     value int
     _step int
-}
 
-fn (c Count::new) createFrom | start, step int | Counter {
-    return Counter{ 
-        @value start
-        @_step step
+    fn createFrom | start, step int | Self {
+        return Counter{ 
+            @value start
+            @_step step
+        }
     }
-}
-fn (c Count::mut) decrement || {
-    c.value -= c._step
-}
-fn (c Count::mut) increment || {
-    c.value += c._step
+
+    fn decrement |self ref<Self>| void {
+        self.value -= c._step
+    }
+
+    fn increment |self ref<Self>| void {
+        self.value += c._step
+    }
 }
 
 ui <html5.HTML5> Counter |start int| with {
@@ -666,15 +737,13 @@ ui <HTML5> Users |users []User| {
 > The complete `topology` of a Loum tree is statically known. The compiler
 > `falone`, never has to run lone code in order to discover Loum structures.
 
-###### Loum Node Space
+###### Loum Node Space [WIP]
 
 If you where to look at the content of the `std.ui.html5` library, you would see
 something similar to :
 
 ```lone
-import std.platform.dom { Event }
-
-type BaseAttr = record 
+import std:platform:dom { :Event }
 
 loum HTML5 {
     
@@ -698,6 +767,7 @@ loum HTML5 {
     node text(content string)
 }
 ```
+
 ### Lone type system
 
 #### Enum & Error
@@ -720,20 +790,46 @@ type BarErr = error {
 }
 ```
 
-#### Trait
+#### Materialization
+
+Lone define the concept of materialization as a compile time operation that produce
+a type or runtime value.
+
+Lone conceive two form of materialization `type materialization` `trait materialization`
+
+##### Type Mat
+
+In case of type declarations, lone generic admit a second kind of parameters.
+`generic materialization parameters`
+
+```lone
+type Matrix<D>|R, C| where {
+    D    is any
+    D satisfies Add, Sub, Mul, ScalarMul
+    R, C is int
+} = struct {
+   data [N * M]D
+}
+
+type T32 = Tensor<float64>|2, 2|
+```
+
+##### Trait
 
 A define a set of behavior independent of the associated YET NOT PART of a type.
 
 ```lone
-type BasicAritmetic<T> where { 
-    T satifies Add<T>
-    T satifies Sub<T>
-    T satifies Div<T>
-    T satifies Mul<T>
+type BasicArithmetic<T> where { 
+    T satisfies Add<T>
+    T satisfies Sub<T>
+    T satisfies Div<T>
+    T satisfies Mul<T>
 } = trait {}
 ```
 
-In Lone a trait implementation for a specific type belong to the pkg in which it's declared.
+In Lone a trait implementation for a specific type belong to the pkg in which
+it's declared.
+
 > the type and it's trait impl must be in the same pkg
 
 ```lone
@@ -752,7 +848,8 @@ impl Comparable<Foo> for Foo {
 }
 ```
 
-In lone, **a trait can only be used by materializing it**, for it does not belong to the type that impl it
+In lone, **a trait can only be used by materializing it**, for it does not
+belong to the type that impl it
 
 ```lone
 fn foo<T>
@@ -768,8 +865,9 @@ fn foo<T>
 
 #### Alias
 
-An alias is another name for a `T` type, it allows one to redefine trait & metods
-implememtation but still require an identical signature as the `T` being aliased
+An alias is another name for a `T` type, it allows one to redefine trait &
+methods implementation but still require an identical signature as the `T` being
+aliased
 
 ```lone
 type U = alias int
@@ -788,20 +886,18 @@ impl Add<U> for U {
 
 ##### Option Type
 
-"opt<T>" represents a value that may either contain a value of type "T" or represent the absence of a value.
+`?T` represents a value that may either contain a value of type `T` or `none` 
+to represent the absence of a value.
 
-opt<T>
-├── value of T
-└── none
+```lone
+let a ?int = 42
+let b ?int = none
+```
 
-An "opt<T>" is a distinct type. A value of type "T" may be used to initialize an "opt<T>", while "none" represents the absence of a value.
+The value contained by a `?T` binding, cannot be used as `T` without explicitly
+handling the optional case.
 
-let a opt<int> = 42
-let b opt<int> = none
-
-The value contained by an "opt<T>" cannot be used as a "T" without explicitly handling the optional case.
-
-Lone uses "match" to unpack an option:
+Lone uses `match` to unpack an option:
 
 ```lone
 match a {
@@ -810,7 +906,7 @@ match a {
 }
 ```
 
-"none" is a value pattern, while "value int" is a typed pattern that both verifies the value's type and binds it to "value".
+`none` is a value pattern, while `value int` is a typed pattern that verifies the value's type and binds it to `value`.
 
 ##### Match Patterns
 
@@ -838,7 +934,8 @@ match x {
 }
 ```
 
-The typed pattern matches when the value has the specified type and binds that value to the identifier for the duration of the branch.
+The typed pattern matches when the value has the specified type and binds that
+value to the identifier for the duration of the branch.
 
 This distinction is intentional:
 
@@ -851,19 +948,22 @@ A type alone is therefore not a valid match pattern. For example:
 
 ```lone
 match x {
-    int => ...        // invalid
-    value int => ...  // valid
+    int => ...        -- invalid
+    value int => ...  -- valid
 }
 ```
 
-This keeps type matching syntactically distinct from value matching and avoids requiring the parser to determine whether a single identifier represents a type, variable, constant, or other value.
+This keeps type matching syntactically distinct from value matching and avoids
+requiring the parser to determine whether a single identifier represents a type,
+variable, constant, or other value.
 
-Type patterns are restricted to named types. Arbitrary type expressions are not valid typed patterns.
+Type patterns are restricted to named types. Arbitrary type expressions are not
+valid typed patterns.
 
 ```lone
-value int   => ...    // valid
-value User  => ...    // valid
-value opt<int> => ... // invalid
+value int   => ...    -- valid
+value User  => ...    -- valid
+value opt<int> => ... -- invalid
 ```
 
 The pattern grammar is therefore conceptually:
@@ -880,17 +980,18 @@ typed-pattern
     = identifier named-type
 ```
 
-###### Must / Fail / TryElse Expression
+#### Must / Fail / TryElse Expression
 
-Lone **DOES NOT** implement a concrete datastructure for result type.
-res<T, E> is mearly a conveniant projection of the returned type of a function.
+Lone **DOES NOT** implement a concrete datastructure for result type. res<T, E>
+is mearly a conveniant projection of the returned type of a function.
 
 ```lone
 -- foo has return type of res<int,BarError>
 fn foo ||  int!(BarError) { --- ... --- }
 ```
 
-`must`, `try/else` and `fail` are control flow for conveniantly dealing with result.
+`must`, `try/else` and `fail` are control flow for conveniantly dealing with
+result.
 
 **Fail**
 
@@ -920,21 +1021,27 @@ fn bar || infer!infer {
 }
 ```
 
-**TryElse**
+**Try/Else**
 
-`tryelse`, is an early failure recovery or control mechanish
+`try/else`, is an early failure recovery or control mechanism
 
 ```lone
 fn foo ||  int!(BarError) { --- ... --- }
 
 fn bar || infer { 
-    -- if foo produceu an error, exec the else clause.
+    -- if foo produce an error, exec the else clause.
     let x int = try foo() else { break 1 }
     --- ... ---
 }
 ```
 
-### Formating
+#### Rune Operators [WIP]
+
+#### Comptime Expressions [WIP]
+
+### Loops [WIP]
+
+### Formatting
 
 Lone is designed to be a compact language with a hopefully self-explanatory
 grammar. The syntax should carry as much meaning as possible without requiring
@@ -994,7 +1101,7 @@ let x infer = User{
 }
 ```
 
-rather than forcing the same structure onto one line:
+Rather than forcing the same structure onto one line:
 
 ```lone
 let x infer = User{ @name "mike" @pass 1234 @mail none }
