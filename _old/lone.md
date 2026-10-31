@@ -49,6 +49,7 @@ Lone Language Specification
 # Lone Language Specification
 
 <!--toc:start-->
+
 - [Lone Language Specification](#lone-language-specification)
   - [1. Design principles](#1-design-principles)
     - [Principle](#principle)
@@ -72,16 +73,16 @@ Lone Language Specification
   - [3. Syntax](#3-syntax)
     - [Declarations](#declarations)
       - [Variable](#variable)
-      - [Type [WIP]](#type-wip)
+      - [Type \[WIP\]](#type-wip)
         - [Type Ref](#type-ref)
           - [Modifiers](#modifiers)
           - [Construct](#construct)
           - [Base Type](#base-type)
           - [Fn Type](#fn-type)
           - [Any vs Infer](#any-vs-infer)
-          - [Type & Data structure](#type-data-structure)
-          - [Type & Associated Fn](#type-associated-fn)
-      - [Function [WIP]](#function-wip)
+          - [Type \& Data structure](#type--data-structure)
+          - [Type \& Associated Fn](#type--associated-fn)
+      - [Function \[WIP\]](#function-wip)
       - [UI](#ui)
         - [Vocabulary](#vocabulary)
           - [Loum](#loum)
@@ -93,22 +94,13 @@ Lone Language Specification
           - [Simple Loum Declaration](#simple-loum-declaration)
           - [Complex Loum Declaration](#complex-loum-declaration)
           - [Control Flow](#control-flow)
-          - [Loum Node Space [WIP]](#loum-node-space-wip)
+          - [Loum Node Space \[WIP\]](#loum-node-space-wip)
     - [Lone type system](#lone-type-system)
-      - [Enum & Error](#enum-error)
+      - [Enum \& Error](#enum--error)
       - [Materialization](#materialization)
         - [Type Mat](#type-mat)
         - [Trait](#trait)
-      - [Alias](#alias)
-    - [Expressions](#expressions)
-      - [Match Expressions](#match-expressions)
-        - [Option Type](#option-type)
-        - [Match Patterns](#match-patterns)
-      - [Must / Fail / TryElse Expression](#must-fail-tryelse-expression)
-      - [Rune Operators [WIP]](#rune-operators-wip)
-      - [Comptime Expressions [WIP]](#comptime-expressions-wip)
-    - [Loops [WIP]](#loops-wip)
-    - [Formatting](#formatting)
+
 <!--toc:end-->
 
 ## 1. Design principles
@@ -124,34 +116,24 @@ misunderstand
 
 - **Invariant L1 — Explicit declaration** Every variable has an explicitly
   declared or inferred type.
-
 - **Invariant L2 — No implicit imports** Names outside the current scope are not
   implicitly introduced.
-
 - **Invariant L3 — Lexical scope** Names introduced in a lexical scope are
   accessible according to the language's lexical scoping rules.
-
 - **Invariant L4 — Explicit mutability** Mutation requires a mutable binding.
-
-- **Invariant L5 — ref<T> is managed** A ref<T> refers to an independently-lived
+- **Invariant L5 — ref<T></t> is managed** A ref<T></t> refers to an independently-lived
   object whose lifetime is governed by the reference-management system.
-
-- **Invariant L6 — ptr<T> is unsafe** Raw pointers do not participate in the
+- **Invariant L6 — ptr<T></t> is unsafe** Raw pointers do not participate in the
   managed reference lifetime model.
-
 - **Invariant L7 — No implicit built in** Every built in symbol/fn must be
   distinguishable from user defined code.
-
 - **Invariant F1 — Syntax level feedback** Punctuation shall not rescue
   readability that grammar already provide
-
 - **Invariant F2 — Progressive Information** Lone should progressively display
   information, from left to right whenever possible.
-
 - **Invariant UI1 — Declared topology is stable** A UI declaration establishes a
   persistent topology known to the compiler, except at explicitly declared
   dynamic branches.
-
 - **Invariant UI2 — Dynamic branches are local** A dynamic branch may replace
   its children without reconstructing unrelated portions of the UI graph
 
@@ -314,23 +296,23 @@ let file infer
 
 ### Keywords
 
-|  Keywords   | Purpose                       |
+|  Keywords  | Purpose                       |
 | :---------: | ----------------------------- |
-|     fn      | function declarations keyword |
-|    loum     | ui type declarations keyword  |
-|  ui, with   | ui declarations keyword       |
+|     fn     | function declarations keyword |
+|    loum    | ui type declarations keyword  |
+|  ui, with  | ui declarations keyword       |
 |     let     | let declarations keyword      |
 |    const    | const declarations keyword    |
-|    type     | type declarations             |
+|    type    | type declarations             |
 |    state    | state type construct          |
-|   struct    | struct type construct         |
-|   record    | record type construct         |
-|     ro      | readonly type modifier        |
+|   struct   | struct type construct         |
+|   record   | record type construct         |
+|     ro     | readonly type modifier        |
 |     lit     | literal type modifier         |
 | true, false | boolean literal               |
-|    none     | none literal                  |
-|     if      | if statement                  |
-|    else     | else clause                   |
+|    none    | none literal                  |
+|     if     | if statement                  |
+|    else    | else clause                   |
 |     for     | for loop                      |
 |    range    | range operator                |
 |    while    | while loop                    |
@@ -392,10 +374,10 @@ type constructor.
 
 ###### Modifiers
 
-| Symbol | Purpose                                       |
-| :----: | --------------------------------------------- |
-|   ro   | set a `T` as immutable                        |
-|  lit   | require `T` to be a literal known in the code |
+| Symbol | Purpose                                        |
+| :----: | ---------------------------------------------- |
+|   ro   | set a`T` as immutable                        |
+|  lit  | require`T` to be a literal known in the code |
 
 ```lone
 let x ro T = foo() -- x is a readonly T
@@ -404,13 +386,13 @@ let y lit ro int = 1 -- y is literal readonly runtime integer, but that's redund
 
 ###### Construct
 
-|   Symbol    | Purpose                    |
-| :---------: | -------------------------- |
-|    `?T`     | `T` may be `none`          |
-| `[size]T` | Array of T element           |
-| `res<T, E>` | `T` may be `E` error       |
-|  `ref<T>`   | managed memory holding `T` |
-|  `ptr<T>`   | unsafe memory holding `T`  |
+|    Symbol    | Purpose                     |
+| :-----------: | --------------------------- |
+|    `?T`    | `T` may be `none`       |
+|  `[size]T`  | Array of T element          |
+| `res<T, E>` | `T` may be `E` error    |
+|  `ref<T>`  | managed memory holding`T` |
+|  `ptr<T>`  | unsafe memory holding`T`  |
 
 ```lone
 -- optional int
@@ -427,19 +409,19 @@ let z ref<ro ?[]map<string, ro int>>
 
 |     Symbol     | Purpose                            |
 | :------------: | ---------------------------------- |
-|   int, int32   | 32 bit signed integer              |
+|     int, int32   | 32 bit signed integer              |
 |      int8      | 8 bit signed integer               |
-|     int16      | 16 bit signed integer              |
-|     int64      | 64 bit signed integer              |
+|     int16     | 16 bit signed integer              |
+|     int64     | 64 bit signed integer              |
 |  uint, uint32  | 32 bit unsigned integer            |
-|     uint8      | 8 bit unsigned integer             |
+|     uint8     | 8 bit unsigned integer             |
 |     uint16     | 16 bit unsigned integer            |
 |     uint64     | 64 bit unsigned integer            |
 |     string     | chain of character, []u8 in memory |
 |      bool      | boolean                            |
 | float, float32 | 32 bit floating point number       |
-|    float64     | 64 bit floating point number       |
-|      any       | value of any type                  |
+|    float64    | 64 bit floating point number       |
+|      any      | value of any type                  |
 
 ###### Fn Type
 
@@ -494,7 +476,7 @@ A state is a data that cannot be modified outside it's construct.
 
 > **`MyState.foo = bar` is illegal outside MyState type definition**
 
-```lone 
+```lone
 type Counter = state {
     value int
 
@@ -507,11 +489,10 @@ type Counter = state {
 }
 ```
 
-
 ###### Type & Associated Fn
 
 A given `T` type data structure may possess associated function.
-How they are accessed depends on how they use 
+How they are accessed depends on how they use
 the `self` argument parameter and the self type.
 
 **Without self**
@@ -579,7 +560,7 @@ a Loum node space.
 The topology describes what shapes can exists and where they can occur within
 the tree.
 
-> [!IMPORTANT]+ A `Loum` declaration describes a static UI tree in memory. The
+> [!IMPORTANT] ❗ + A `Loum` declaration describes a static UI tree in memory. The
 > tree itself is composed of ordinary data structures; reactivity, when present,
 > is provided by an associated _context_ rather than the node themselves.
 
@@ -746,7 +727,7 @@ something similar to :
 import std:platform:dom { :Event }
 
 loum HTML5 {
-    
+  
     node _base {
         attr {
             id    opt<string>
@@ -757,7 +738,7 @@ loum HTML5 {
     }
 
     node div extends _base {}
-    
+  
     node select extends _base {
         children {
             accept { optgroup, option }
@@ -851,262 +832,4 @@ impl Comparable<Foo> for Foo {
 In lone, **a trait can only be used by materializing it**, for it does not
 belong to the type that impl it
 
-```lone
-fn foo<T>
-    where {
-        T satifies Serializable
-    }
-    |param T| string {
-        -- materialize the trait impl of T
-        let serializer infer = Serialize|T|
-        return serializer::serialize(param)
-    }
-```
-
-#### Alias
-
-An alias is another name for a `T` type, it allows one to redefine trait &
-methods implementation but still require an identical signature as the `T` being
-aliased
-
-```lone
-type U = alias int
-
--- reimpl the add trait for U
-impl Add<U> for U {
-    fn add |a U b U| U {
-        --- ... --
-    }
-}
-```
-
-### Expressions
-
-#### Match Expressions
-
-##### Option Type
-
-`?T` represents a value that may either contain a value of type `T` or `none` 
-to represent the absence of a value.
-
-```lone
-let a ?int = 42
-let b ?int = none
-```
-
-The value contained by a `?T` binding, cannot be used as `T` without explicitly
-handling the optional case.
-
-Lone uses `match` to unpack an option:
-
-```lone
-match a {
-    value int => print(value)
-    none => print("nothing")
-}
-```
-
-`none` is a value pattern, while `value int` is a typed pattern that verifies the value's type and binds it to `value`.
-
-##### Match Patterns
-
-A "match" branch accepts either a value pattern or a typed pattern.
-
-A value pattern consists of a single expression:
-
-```lone
-match x {
-    10 => ...
-    SOME_VALUE => ...
-    none => ...
-}
-```
-
-The expression is evaluated and compared against the value being matched.
-
-A typed pattern consists of an identifier followed by a named type:
-
-```lone
-match x {
-    value int => ...
-    text string => ...
-    user User => ...
-}
-```
-
-The typed pattern matches when the value has the specified type and binds that
-value to the identifier for the duration of the branch.
-
-This distinction is intentional:
-
-```plaintext
-X       → value pattern
-X T     → typed pattern
-```
-
-A type alone is therefore not a valid match pattern. For example:
-
-```lone
-match x {
-    int => ...        -- invalid
-    value int => ...  -- valid
-}
-```
-
-This keeps type matching syntactically distinct from value matching and avoids
-requiring the parser to determine whether a single identifier represents a type,
-variable, constant, or other value.
-
-Type patterns are restricted to named types. Arbitrary type expressions are not
-valid typed patterns.
-
-```lone
-value int   => ...    -- valid
-value User  => ...    -- valid
-value opt<int> => ... -- invalid
-```
-
-The pattern grammar is therefore conceptually:
-
-```plaintext
-pattern
-    = value-pattern
-    | typed-pattern
-
-value-pattern
-    = expression
-
-typed-pattern
-    = identifier named-type
-```
-
-#### Must / Fail / TryElse Expression
-
-Lone **DOES NOT** implement a concrete datastructure for result type. res<T, E>
-is mearly a conveniant projection of the returned type of a function.
-
-```lone
--- foo has return type of res<int,BarError>
-fn foo ||  int!(BarError) { --- ... --- }
-```
-
-`must`, `try/else` and `fail` are control flow for conveniantly dealing with
-result.
-
-**Fail**
-
-**In Lone, one does not return an error. You Fail with an error**
-
-```lone
-fn foo || int!(BarError) {
-    let x int = bar()
-    if x == 0 {
-        fail BarError("This was an inside job")
-    }
-    return x
-}
-```
-
-**Must**
-
-`must`, is an early failure propagation mechanism
-
-```lone
-fn foo ||  int!(BarError) { --- ... --- }
-
-fn bar || infer!infer { 
-    -- if foo produce an error, propagate the error back to the caller
-    let x int = must foo()
-    --- ... ---
-}
-```
-
-**Try/Else**
-
-`try/else`, is an early failure recovery or control mechanism
-
-```lone
-fn foo ||  int!(BarError) { --- ... --- }
-
-fn bar || infer { 
-    -- if foo produce an error, exec the else clause.
-    let x int = try foo() else { break 1 }
-    --- ... ---
-}
-```
-
-#### Rune Operators [WIP]
-
-#### Comptime Expressions [WIP]
-
-### Loops [WIP]
-
-### Formatting
-
-Lone is designed to be a compact language with a hopefully self-explanatory
-grammar. The syntax should carry as much meaning as possible without requiring
-punctuation to tell the reader what is already clear from the structure.
-
-As a consequence, Lone makes relatively little use of punctuation such as commas
-and equal signs. They are used where they carry meaningful syntactic
-information, rather than simply to separate things that the grammar can already
-distinguish.
-
-For example, function parameters do not require commas:
-
-```lone
-fn foo |a int b string c bool| void
-```
-
-The grammar already makes the boundaries clear: a parameter consists of an
-identifier followed by its type.
-
-This compactness has an intentional consequence: **Lone can become ugly and**
-**difficult to read when too much information is written inline.** This is not
-considered a flaw, but a feature. The syntax allows compact code, while its
-increasing visual density naturally signals when it should be expanded.
-
-Consider:
-
-```lone
-fn foo |a opt<ref<Foo>> b, c res<Thing, Error> d string| infer {
-    --- content ---
-}
-```
-
-This is valid, but difficult to scan horizontally.
-
-The formatting rule is therefore simple:
-
-> If a declaration becomes difficult to scan horizontally, give each declaration
-> its own line.
-
-```lone
-fn foo |
-    a opt<ref<Foo>>
-    b, c res<Thing, Error>
-    d fn |int| string
-| infer {
-    --- content ---
-}
-```
-
-This principle applies to any declaration, including object declarations:
-
-```lone
-let x infer = User{
-    @name "mike"
-    @pass 1234
-    @mail none
-}
-```
-
-Rather than forcing the same structure onto one line:
-
-```lone
-let x infer = User{ @name "mike" @pass 1234 @mail none }
-```
-
-The language therefore does not need additional punctuation merely to make dense
-inline code easier to read. When the compact form becomes difficult to scan,
-formatting should expose the structure instead of adding syntactic noise.
+`

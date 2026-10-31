@@ -1,0 +1,5 @@
+gen-parser:
+    go tool pigeon -o ./parser/generated-parser.go ./parser/parser.peg
+
+parse file:
+    go run ./cmd/parse.go {{file}}
