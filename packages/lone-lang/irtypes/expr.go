@@ -5,6 +5,7 @@ type ExprKind int
 const (
 	EXPR_LITERAL ExprKind = iota
 	EXPR_OBJ_LITERAL
+	EXPR_LIST_LITERAL
 	EXPR_TRAIT_MATERIALIZATION
 	EXPR_NAME_REFERENCE
 	EXPR_UNARY_OP
@@ -70,4 +71,17 @@ func (ObjectLiteral) IsExpr() ExprKind {
 type FieldAssign struct {
 	Name string `json:"name"`
 	Expr Expr   `json:"expr"`
+}
+
+// =====================
+// LIST LITERAL EXPR
+// =====================
+
+type ListLiteral struct {
+	Content []Expr
+	Pos     Position
+}
+
+func (ListLiteral) IsExpr() ExprKind {
+	return EXPR_LIST_LITERAL
 }
