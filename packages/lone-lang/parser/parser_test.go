@@ -752,3 +752,46 @@ var res = loop: while true {
 		t.Errorf("expected break loop: 42, got %+v", breakStmt)
 	}
 }
+
+func TestDropStmt(t *testing.T) {
+	code := `
+fn compute() i32 {
+	return 42
+}
+
+fn main() void {
+	drop compute()
+	drop 100
+}
+`
+	ast, err := parser.Parse("test_drop.lone", []byte(code))
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+
+	rawList := ast.([]any)
+	if len(rawList) != 2 {
+		t.Fatalf("expected 2 declarations, got %d", len(rawList))
+	}
+
+	mainFn := rawList[1].([]any)[1].(ir.FN_DEC)
+	if len(mainFn.Body.Stmts) != 2 {
+		t.Fatalf("expected 2 stmts in mainFn, got %d", len(mainFn.Body.Stmts))
+	}
+
+	drop1, ok := mainFn.Body.Stmts[0].(ir.DropStmt)
+	if !ok {
+		t.Fatalf("expected DropStmt for stmt 0, got %T", mainFn.Body.Stmts[0])
+	}
+	if drop1.Expr == nil {
+		t.Errorf("expected non-nil expr in drop1")
+	}
+
+	drop2, ok := mainFn.Body.Stmts[1].(ir.DropStmt)
+	if !ok {
+		t.Fatalf("expected DropStmt for stmt 1, got %T", mainFn.Body.Stmts[1])
+	}
+	if drop2.Expr == nil {
+		t.Errorf("expected non-nil expr in drop2")
+	}
+}

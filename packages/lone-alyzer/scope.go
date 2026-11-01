@@ -27,6 +27,7 @@ const (
 type Symbol struct {
 	Name  string
 	Kind  SymbolKind
+	Type  Type
 	Scope *Scope
 	Node  any // original AST node reference
 }

@@ -118,7 +118,7 @@ PROGRAM <- decls:(_ TOP_LEVEL)* _ EOF {
 
 EOF <- !.
 
-TOP_LEVEL <- BIND_DEC / FN_DEC / IF_STMT / WHILE_STMT / LABEL_DEC
+TOP_LEVEL <- BIND_DEC / FN_DEC / IF_STMT / WHILE_STMT / LABEL_DEC / DROP_STMT
 
 
 KW_FN <- "fn" ![a-zA-Z0-9_]
@@ -133,6 +133,7 @@ KW_BREAK <- "break" ![a-zA-Z0-9_]
 KW_IF <- "if" ![a-zA-Z0-9_]
 KW_ELSE <- "else" ![a-zA-Z0-9_]
 KW_WHILE <- "while" ![a-zA-Z0-9_]
+KW_DROP <- "drop" ![a-zA-Z0-9_]
 
 KEYWORD <- 
     KW_VAR /
@@ -146,7 +147,8 @@ KEYWORD <-
     KW_BREAK /
     KW_IF /
     KW_ELSE /
-    KW_WHILE
+    KW_WHILE /
+    KW_DROP
 
 FN_NAME <- "#"? IDENTIFIER {
     return string(c.text), nil
@@ -351,6 +353,7 @@ PRIMARY_EXPR <-
     / IF_STMT
     / WHILE_STMT
     / BREAK_STMT
+    / DROP_STMT
     / LITERAL 
     / NAME_REF 
     / OBJECT_LITERAL
@@ -764,7 +767,14 @@ WHILE_STMT <- KW_WHILE _ cond:EXPR _ body:BLOCK {
     }, nil
 }
 
-STMT <- BIND_DEC / RETURN_STMT / BREAK_STMT / IF_STMT / WHILE_STMT / EXPR
+DROP_STMT <- KW_DROP _ expr:EXPR {
+    return ir.DropStmt{
+        Expr: AnyValToType[ir.Expr]("DROP_STMT.expr", expr),
+        Pos: currentPosition(c),
+    }, nil
+}
+
+STMT <- BIND_DEC / RETURN_STMT / BREAK_STMT / DROP_STMT / IF_STMT / WHILE_STMT / EXPR
 
 BLOCK <- "{" _ stmts:(_ STMT)* _ "}" {
     var stmt_list []any = []any{}

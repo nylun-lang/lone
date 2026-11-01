@@ -7,6 +7,7 @@ import (
 
 // PassNamingConventions checks that identifiers throughout the AST satisfy Lone naming conventions.
 type PassNamingConventions struct {
+	fileName    string
 	stack       *ScopeStack
 	diagnostics []Diagnostic
 }
@@ -14,6 +15,7 @@ type PassNamingConventions struct {
 // NewPassNamingConventions creates a new naming convention pass.
 func NewPassNamingConventions(fileName string) *PassNamingConventions {
 	return &PassNamingConventions{
+		fileName:    fileName,
 		stack:       NewScopeStack(fileName),
 		diagnostics: make([]Diagnostic, 0),
 	}
@@ -21,6 +23,8 @@ func NewPassNamingConventions(fileName string) *PassNamingConventions {
 
 // Run executes the naming convention pass on the parsed AST declarations.
 func (p *PassNamingConventions) Run(decls []any) []Diagnostic {
+	p.stack = NewScopeStack(p.fileName)
+	p.diagnostics = make([]Diagnostic, 0)
 	for _, decl := range decls {
 		p.walkNode(decl)
 	}
@@ -71,6 +75,11 @@ func (p *PassNamingConventions) walkNode(node any) {
 		p.checkBreakStmt(&n)
 	case *ir.BreakStmt:
 		p.checkBreakStmt(n)
+
+	case ir.DropStmt:
+		p.walkNode(n.Expr)
+	case *ir.DropStmt:
+		p.walkNode(n.Expr)
 
 	case ir.IfStmt:
 		p.checkIfStmt(&n)

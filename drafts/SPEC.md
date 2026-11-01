@@ -228,6 +228,14 @@ while low <= high {
 }
 ```
 
+### 6.5 Drop Statement (`DROP_STMT`)
+Evaluates an expression and explicitly discards its result:
+```lone
+drop compute_expensive_value()
+drop connection.read()
+```
+In Lone, any expression or function call returning a non-void value in statement position must be either consumed (e.g., assigned via `var`, returned, or passed to a function) or discarded with `drop`. Silently ignoring return values triggers a static analysis error (`type/unused-result`).
+
 ---
 
 ## 7. Expressions & Operators (`EXPR`)
@@ -297,6 +305,7 @@ From highest precedence (evaluated first) to lowest:
 | `break name: expr` | `ir.BreakStmt` (Kind `EXPR_BREAK`) |
 | `if cond { } else { }` | `ir.IfStmt` (Kind `EXPR_IF`) |
 | `while cond { }` | `ir.WhileStmt` (Kind `EXPR_WHILE`) |
+| `drop expr` | `ir.DropStmt` (Kind `EXPR_DROP`) |
 | `return expr` | `ir.ReturnStmt` |
 | `{ .field: expr }` | `ir.ObjectLiteral` (Kind `EXPR_OBJ_LITERAL`) |
 | `{ 1, 2, 3 }` | `ir.ListLiteral` (Kind `EXPR_LIST_LITERAL`) |
@@ -306,3 +315,30 @@ From highest precedence (evaluated first) to lowest:
 | `int`, `Map<K, V>` | `ir.TYPE_REF` (Kind `TYPE_BASE`, `ir.TypeBase`) |
 | `[]T`, `[size]T` | `ir.TYPE_REF` (Kind `TYPE_LIST`, `ir.TypeList`) |
 | `fn (T) T` | `ir.TYPE_REF` (Kind `TYPE_FN`, `ir.TypeFn`) |
+
+---
+
+## 9. Static Analysis & Typed IR (`packages/lone-alyzer`)
+
+The Lone Static Analyzer translates parsed ASTs into a **Typed IR** (`TProgram`), resolving placeholder types (`infer`) into concrete types, validating control flow, and enforcing safety rules.
+
+### 9.1 Type System & Representation
+- **Primitives**: `i8`-`i128`, `u8`-`u128`, `f32`, `f64`, `bool`, `str`, `char`, `void`, `none`, `any`
+- **Custom Nominal Types**: User-defined types (`CustomType{Name: "User"}`)
+- **List Types**: Dynamic (`[]T`) and fixed (`[N]T`)
+- **Function Types**: `fn(param1: T1, ...) RetType`
+- **Object Types**: Record shape `{ .field1: T1, .field2: T2 }`
+
+### 9.2 Key Analysis Passes & Rules
+1. **Naming Conventions (`naming/*`)**:
+   - Variables/Parameters/Labels: `snake_case`
+   - Globals/Constants: `ALL_CAPS` or `snake_case`
+   - Functions: `snake_case` or `#` intrinsic
+   - Types: `CamelCase`
+2. **Type Inference**:
+   - Variables declared without an explicit type (`var x = expr` parsed with type `infer`) are lowered in Typed IR to `TVarDec{Type: concrete_T}` matching the inferred expression type.
+3. **Function Return Validation (`type/return-mismatch`, `type/missing-return`)**:
+   - Return statements are checked against declared function return types.
+   - Non-void functions must contain explicit return paths.
+4. **Result Consumption Invariant (`type/unused-result`)**:
+   - Any statement that evaluates to a non-void value must be consumed (bound, returned) or explicitly discarded using `drop <expr>`.
