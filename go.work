@@ -1,2 +1,6 @@
 go 1.27.1
-use ./packages/lone-lang
+
+use (
+	./packages/lone-alyzer
+	./packages/lone-lang
+)
