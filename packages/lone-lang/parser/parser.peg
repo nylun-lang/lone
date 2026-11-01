@@ -114,7 +114,7 @@
 
 PROGRAM <- (_ TOP_LEVEL)*
 
-TOP_LEVEL <- BIND_DEC
+TOP_LEVEL <- BIND_DEC / FN_DEC
 
 
 KW_FN <- "fn" ![a-zA-Z0-9_]
@@ -124,6 +124,7 @@ KW_NONE <- "none" ![a-zA-Z0-9_]
 KW_BOOL <- ("true" / "false") ![a-zA-Z0-9_]
 KW_READONLY <- "ro" ![a-zA-Z0-9_]
 KW_COMPTIME <- "comptime" ![a-zA-Z0-9_]
+KW_RETURN <- "return" ![a-zA-Z0-9_]
 
 KEYWORD <- 
     KW_VAR /
@@ -132,7 +133,12 @@ KEYWORD <-
     KW_BOOL /
     KW_NONE /
     KW_READONLY /
-    KW_COMPTIME 
+    KW_COMPTIME /
+    KW_RETURN
+
+FN_NAME <- "#"? IDENTIFIER {
+    return string(c.text), nil
+}
 
 IDENTIFIER <- !KEYWORD [a-zA-Z_] [a-zA-Z0-9_]* {
     return c.text, nil
@@ -681,3 +687,65 @@ BIND_DEC <-
         Type: resolved_type,
     }, nil
 }
+
+RETURN_STMT <- KW_RETURN expr:(_ EXPR)? {
+    var val ir.Expr
+    if expr != nil {
+        val = AnyValToType[ir.Expr]("RETURN_STMT.val", AnyValToType[[]any]("RETURN_STMT.tuple", expr)[1])
+    }
+    return ir.ReturnStmt{
+        Value: val,
+        Pos: currentPosition(c),
+    }, nil
+}
+
+STMT <- BIND_DEC / RETURN_STMT / EXPR
+
+BLOCK <- "{" _ stmts:(_ STMT)* _ "}" {
+    var stmt_list []any = []any{}
+    if stmts != nil {
+        raw_list := AnyValToType[[]any]("BLOCK.stmts", stmts)
+        for _, tuple := range raw_list {
+            st := AnyValToType[[]any]("BLOCK.tuple", tuple)[1]
+            stmt_list = append(stmt_list, st)
+        }
+    }
+    return ir.Block{
+        Stmts: stmt_list,
+        Pos: currentPosition(c),
+    }, nil
+}
+
+FN_DEC <- 
+    KW_FN 
+    _ 
+    name:FN_NAME 
+    _ 
+    "(" 
+    _ 
+    params:FN_PARAM_LIST? 
+    _ 
+    ")" 
+    ret:(_ TYPE_REF)? 
+    _ 
+    body:BLOCK {
+        var fn_params []ir.FnParam = []ir.FnParam{}
+        if params != nil {
+            fn_params = AnyValToType[[]ir.FnParam]("FN_DEC.params", params)
+        }
+
+        var return_type *ir.TYPE_REF
+        if ret != nil {
+            r := AnyValToType[[]any]("FN_DEC.ret", ret)[1]
+            t := AnyValToType[ir.TYPE_REF]("FN_DEC.ret_type", r)
+            return_type = &t
+        }
+
+        return ir.FN_DEC{
+            Pos: currentPosition(c),
+            Name: AnyValToType[string]("FN_DEC.name", name),
+            Params: fn_params,
+            ReturnType: return_type,
+            Body: AnyValToType[ir.Block]("FN_DEC.body", body),
+        }, nil
+    }

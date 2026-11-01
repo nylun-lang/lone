@@ -380,3 +380,133 @@ var g = obj.calc(1).val
 		t.Errorf("unexpected suffix chain: %+v", pfG.Suffix)
 	}
 }
+
+func parseFunctions(t *testing.T, code string) []ir.FN_DEC {
+	t.Helper()
+	res, err := parser.Parse("test.lone", []byte(code))
+	if err != nil {
+		t.Fatalf("failed to parse %q: %v", code, err)
+	}
+
+	rawList, ok := res.([]any)
+	if !ok {
+		t.Fatalf("expected []any, got %T", res)
+	}
+
+	var decls []ir.FN_DEC
+	for _, item := range rawList {
+		pair, ok := item.([]any)
+		if !ok || len(pair) < 2 {
+			continue
+		}
+		dec, ok := pair[1].(ir.FN_DEC)
+		if ok {
+			decls = append(decls, dec)
+		}
+	}
+	return decls
+}
+
+func TestFunctionDeclaration(t *testing.T) {
+	code := `
+fn noop() {
+}
+
+fn add(a: int, b: int) int {
+    return a
+}
+
+fn compute(items: []string, factor: ?float) []float {
+    var x = 10
+    return x
+}
+
+fn #init(name: string) Self {
+}
+
+fn with_cb(cb: fn (x: int) bool) bool {
+    return cb(42)
+}
+`
+	fns := parseFunctions(t, code)
+	if len(fns) != 5 {
+		t.Fatalf("expected 5 function declarations, got %d", len(fns))
+	}
+
+	// 1. noop()
+	if fns[0].Name != "noop" {
+		t.Errorf("expected name 'noop', got %q", fns[0].Name)
+	}
+	if len(fns[0].Params) != 0 {
+		t.Errorf("expected 0 params, got %d", len(fns[0].Params))
+	}
+	if fns[0].ReturnType != nil {
+		t.Errorf("expected nil return type, got %+v", fns[0].ReturnType)
+	}
+	if len(fns[0].Body.Stmts) != 0 {
+		t.Errorf("expected 0 stmts, got %d", len(fns[0].Body.Stmts))
+	}
+
+	// 2. add(a: int, b: int) int
+	if fns[1].Name != "add" {
+		t.Errorf("expected name 'add', got %q", fns[1].Name)
+	}
+	if len(fns[1].Params) != 2 {
+		t.Fatalf("expected 2 params, got %d", len(fns[1].Params))
+	}
+	if fns[1].Params[0].Name != "a" || fns[1].Params[0].Type.AsBase().Name != "int" {
+		t.Errorf("unexpected param 0: %+v", fns[1].Params[0])
+	}
+	if fns[1].Params[1].Name != "b" || fns[1].Params[1].Type.AsBase().Name != "int" {
+		t.Errorf("unexpected param 1: %+v", fns[1].Params[1])
+	}
+	if fns[1].ReturnType == nil || fns[1].ReturnType.AsBase().Name != "int" {
+		t.Errorf("expected return type int, got %+v", fns[1].ReturnType)
+	}
+	if len(fns[1].Body.Stmts) != 1 {
+		t.Fatalf("expected 1 stmt in add, got %d", len(fns[1].Body.Stmts))
+	}
+	retStmt, ok := fns[1].Body.Stmts[0].(ir.ReturnStmt)
+	if !ok {
+		t.Fatalf("expected ReturnStmt, got %T", fns[1].Body.Stmts[0])
+	}
+	if retStmt.Value == nil {
+		t.Errorf("expected return expression, got nil")
+	}
+
+	// 3. compute(items: []string, factor: ?float) []float
+	if fns[2].Name != "compute" {
+		t.Errorf("expected name 'compute', got %q", fns[2].Name)
+	}
+	if fns[2].Params[0].Type.Kind != ir.TYPE_LIST {
+		t.Errorf("expected param 0 TYPE_LIST, got %v", fns[2].Params[0].Type.Kind)
+	}
+	if !fns[2].Params[1].Type.Constrain.Optional {
+		t.Errorf("expected param 1 to be optional")
+	}
+	if fns[2].ReturnType.Kind != ir.TYPE_LIST {
+		t.Errorf("expected return type TYPE_LIST, got %v", fns[2].ReturnType.Kind)
+	}
+	if len(fns[2].Body.Stmts) != 2 {
+		t.Fatalf("expected 2 stmts in compute, got %d", len(fns[2].Body.Stmts))
+	}
+	if _, ok := fns[2].Body.Stmts[0].(ir.BIND_DEC); !ok {
+		t.Errorf("expected first stmt to be BIND_DEC, got %T", fns[2].Body.Stmts[0])
+	}
+
+	// 4. #init(name: string) Self
+	if fns[3].Name != "#init" {
+		t.Errorf("expected name '#init', got %q", fns[3].Name)
+	}
+	if fns[3].ReturnType.AsBase().Name != "Self" {
+		t.Errorf("expected return type Self, got %+v", fns[3].ReturnType)
+	}
+
+	// 5. with_cb(cb: fn (x: int) bool) bool
+	if fns[4].Name != "with_cb" {
+		t.Errorf("expected name 'with_cb', got %q", fns[4].Name)
+	}
+	if fns[4].Params[0].Type.Kind != ir.TYPE_FN {
+		t.Errorf("expected param 0 TYPE_FN, got %v", fns[4].Params[0].Type.Kind)
+	}
+}

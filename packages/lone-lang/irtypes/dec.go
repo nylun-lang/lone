@@ -7,6 +7,28 @@ type BIND_DEC struct {
 	Type  TYPE_REF
 }
 
+type FN_DEC struct {
+	Name       string
+	Pos        Position
+	Params     []FnParam
+	ReturnType *TYPE_REF
+	Body       Block
+}
+
+func (f FN_DEC) HasReturn() bool {
+	return f.ReturnType != nil
+}
+
+type Block struct {
+	Stmts []any
+	Pos   Position
+}
+
+type ReturnStmt struct {
+	Value Expr
+	Pos   Position
+}
+
 type TypeRefKind int
 
 const (
