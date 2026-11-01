@@ -212,8 +212,14 @@ STRING <- '"' content:Inline_char* '"' {
 LITERAL <- NUMBER / BOOL / NONE / STRING
 
 
-PRIMARY_EXPR
-<- LITERAL
+NAME_REF <- id:IDENTIFIER {
+    return ir.NameRef{
+        Name: string(AnyValToType[[]uint8]("NAME_REF.id", id)),
+        Pos: currentPosition(c),
+    }, nil
+}
+
+PRIMARY_EXPR <- LITERAL / NAME_REF
 
 EXPR <- PRIMARY_EXPR
 
@@ -250,11 +256,23 @@ TYPE_BASE <-
 TYPE_LIST <- 
     "[" 
     _ 
+    size:EXPR?
+    _
     "]" 
     _ 
     elem:TYPE_REF {
+        var list_size ir.Expr = ir.Literal{
+            Kind: ir.LITERAL_DYNAMIC_SIZE,
+            Pos: currentPosition(c),
+        }
+
+        if size != nil {
+            list_size = AnyValToType[ir.Expr]("TYPE_LIST.size", size)
+        }
+
         itemType := AnyValToType[ir.TYPE_REF]("TYPE_LIST.elem", elem)
         return ir.TypeList{
+            Size: list_size,
             ItemType: itemType,
         }, nil
     }

@@ -40,3 +40,16 @@ type Literal struct {
 func (Literal) IsExpr() ExprKind {
 	return EXPR_LITERAL
 }
+
+// =====================
+// NAME REF EXPR
+// =====================
+
+type NameRef struct {
+	Name string
+	Pos  Position
+}
+
+func (NameRef) IsExpr() ExprKind {
+	return EXPR_NAME_REFERENCE
+}

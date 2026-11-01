@@ -80,12 +80,24 @@ type TypeBase struct {
 }
 
 type TypeList struct {
+	Size     Expr
 	ItemType TYPE_REF
+}
+
+func (l TypeList) IsFixed() bool {
+	if l.Size == nil {
+		return false
+	}
+	if lit, ok := l.Size.(Literal); ok && lit.Kind == LITERAL_DYNAMIC_SIZE {
+		return false
+	}
+	return true
 }
 
 type FnParam struct {
 	Name string
 	Type TYPE_REF
+	Size Expr
 }
 
 type TypeFn struct {

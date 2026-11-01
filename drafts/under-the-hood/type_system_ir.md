@@ -9,7 +9,7 @@ This document describes how type references are structured in the intermediate r
 In Lone, types are first-class, expressive syntactic constructs. Rather than treating all types as flat identifiers, `TYPE_REF` models three distinct structural forms:
 
 1. **`TypeBase`**: Named types with optional parameterized type arguments (e.g. `int`, `string`, `list<int>`, `Map<string, int>`).
-2. **`TypeList`**: Slice / dynamic array types of arbitrary items using prefix syntax `[]TYPE_REF` (e.g. `[]int`, `[][]float`, `[]?string`).
+2. **`TypeList`**: Slice / dynamic array types (`[]TYPE_REF`) or fixed-size array types (`[size]TYPE_REF`, e.g. `[9]int`, `[BUFFER_SIZE]string`, `[9][10]float`). Dynamic size uses `ir.Literal{ Kind: ir.LITERAL_DYNAMIC_SIZE }`.
 3. **`TypeFn`**: First-class function signatures with typed parameters and an optional return type (e.g. `fn (a: int, b: string) bool`, `fn ()`, `fn (cb: fn (x: int) bool) []string`).
 
 Orthogonally to their structural kind, type references carry modifiers/constraints (`TypeConstrain`):
@@ -56,8 +56,11 @@ type TYPE_REF struct {
 - **`TypeList`**:
   ```go
   type TypeList struct {
+      Size     Expr // ir.Literal (LITERAL_DYNAMIC_SIZE or LITERAL_INT) or NameRef
       ItemType TYPE_REF
   }
+
+  func (l TypeList) IsFixed() bool
   ```
 - **`TypeFn`**:
   ```go

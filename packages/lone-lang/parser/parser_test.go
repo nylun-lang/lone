@@ -91,6 +91,9 @@ var list_opt: []?string
 	if list0 == nil || list0.ItemType.AsBase().Name != "int" {
 		t.Errorf("unexpected list0 item type: %+v", list0)
 	}
+	if list0.IsFixed() {
+		t.Errorf("expected dynamic list, got fixed")
+	}
 
 	// matrix: [][]int
 	list1 := decls[1].Type.AsList()
@@ -111,6 +114,69 @@ var list_opt: []?string
 	list3 := decls[3].Type.AsList()
 	if !list3.ItemType.Constrain.Optional || list3.ItemType.AsBase().Name != "string" {
 		t.Errorf("expected inner optional string: %+v", list3.ItemType)
+	}
+}
+
+func TestFixedTypeList(t *testing.T) {
+	code := `
+var fixed_arr: [9]int
+var fixed_named: [BUFFER_SIZE]string
+var multi_fixed: [9][10]int
+var fixed_dynamic: [9][]int
+`
+	decls := parseLone(t, code)
+	if len(decls) != 4 {
+		t.Fatalf("expected 4 declarations, got %d", len(decls))
+	}
+
+	// fixed_arr: [9]int
+	list0 := decls[0].Type.AsList()
+	if list0 == nil || !list0.IsFixed() {
+		t.Fatalf("expected fixed list: %+v", list0)
+	}
+	litSize, ok := list0.Size.(ir.Literal)
+	if !ok || litSize.Kind != ir.LITERAL_INT || litSize.Value != 9 {
+		t.Errorf("expected int literal 9 for size, got %+v", list0.Size)
+	}
+	if list0.ItemType.AsBase().Name != "int" {
+		t.Errorf("expected item type int, got %+v", list0.ItemType)
+	}
+
+	// fixed_named: [BUFFER_SIZE]string
+	list1 := decls[1].Type.AsList()
+	if list1 == nil || !list1.IsFixed() {
+		t.Fatalf("expected fixed list: %+v", list1)
+	}
+	nameRef, ok := list1.Size.(ir.NameRef)
+	if !ok || nameRef.Name != "BUFFER_SIZE" {
+		t.Errorf("expected name ref BUFFER_SIZE, got %+v", list1.Size)
+	}
+	if list1.ItemType.AsBase().Name != "string" {
+		t.Errorf("expected item type string, got %+v", list1.ItemType)
+	}
+
+	// multi_fixed: [9][10]int
+	list2 := decls[2].Type.AsList()
+	if list2 == nil || !list2.IsFixed() {
+		t.Fatalf("expected fixed list: %+v", list2)
+	}
+	innerList2 := list2.ItemType.AsList()
+	if innerList2 == nil || !innerList2.IsFixed() {
+		t.Fatalf("expected inner fixed list: %+v", innerList2)
+	}
+	innerLit, ok := innerList2.Size.(ir.Literal)
+	if !ok || innerLit.Value != 10 {
+		t.Errorf("expected inner size 10, got %+v", innerList2.Size)
+	}
+
+	// fixed_dynamic: [9][]int
+	list3 := decls[3].Type.AsList()
+	if list3 == nil || !list3.IsFixed() {
+		t.Fatalf("expected outer fixed list: %+v", list3)
+	}
+	innerList3 := list3.ItemType.AsList()
+	if innerList3 == nil || innerList3.IsFixed() {
+		t.Fatalf("expected inner dynamic list: %+v", innerList3)
 	}
 }
 
