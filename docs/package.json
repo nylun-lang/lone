@@ -3,9 +3,12 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "predev": "node ./scripts/gen-sidebar.js",
     "dev": "vitepress dev docs",
+    "prebuild": "node ./scripts/gen-sidebar.js",
     "build": "vitepress build docs",
-    "serve": "vitepress serve docs"
+    "serve": "vitepress serve docs",
+    "gen-sidebar": "node ./scripts/gen-sidebar.js"
   },
   "devDependencies": {
     "vue": "3.2.44",
