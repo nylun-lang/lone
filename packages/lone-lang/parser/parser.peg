@@ -293,7 +293,81 @@ PRIMARY_EXPR <-
     / LIST_LITERAL
     / "(" _ expr:EXPR _ ")" { return expr, nil }
 
-EXPR <- PRIMARY_EXPR
+Call
+<- "(" _ args:EXPR_LIST? _ ")" {
+    call_args := []ir.Expr{}
+
+    if args != nil {
+        call_args = AnyValToType[[]ir.Expr]("Call.args", args)
+    }
+
+    return ir.SuffixCall{
+        Args: call_args,
+        Pos: currentPosition(c),
+    }, nil
+}
+
+Member_access <- "." name:IDENTIFIER {
+    return ir.SuffixMemberAccess{
+        Name: string(AnyValToType[[]byte]("Member_access.name", name)),
+        Pos: currentPosition(c),
+    }, nil
+}
+
+Namespace_access <- ":" name:IDENTIFIER {
+    return ir.SuffixNamespaceAccess{
+        Name: string(AnyValToType[[]byte]("Namespace_access.name", name)),
+        Pos: currentPosition(c),
+    }, nil
+}
+
+Associated_access <- "::" name:IDENTIFIER {
+    return ir.SuffixAssociatedAccess{
+        Name: string(AnyValToType[[]byte]("Associated_access.name", name)),
+        Pos: currentPosition(c),
+    }, nil
+}
+
+Call_type_init <- "::" expr:Call {
+    call := ir.SuffixCallTypeInit(AnyValToType[ir.SuffixCall]("Call_type_init.call", expr))
+    return call, nil
+}
+
+Call_type_make <- "::" data:(OBJECT_LITERAL / LIST_LITERAL) {
+    _, is_obj := data.(ir.ObjectLiteral)
+    call := ir.SuffixCallTypeMake{
+        Arg: data,
+        Pos: currentPosition(c),
+    }
+    
+    if is_obj {
+        call.Kind = ir.CALL_TYPE_MAKE_OBJ
+    } else {
+        call.Kind = ir.CALL_TYPE_MAKE_LIST
+    }
+
+    return call, nil
+}
+
+Postfix_suffix <- 
+    Member_access
+    / Namespace_access
+    / Associated_access
+    / Call
+    / Call_type_init
+    / Call_type_make
+
+
+POSTFIX_EXPR
+<- base:PRIMARY_EXPR suffix:Postfix_suffix* {
+    return ir.PostFixExpr{
+        Base: AnyValToType[ir.Expr]("POSTFIX_EXPR.base", base),
+        Suffix: AnySliceToSliceOfType[ir.Suffix]("POSTFIX_EXPR.suffix", suffix),
+        Pos: currentPosition(c),
+    }, nil
+}
+
+EXPR <- POSTFIX_EXPR
 
 TYPE_REF_ARGS <- 
     "<"
