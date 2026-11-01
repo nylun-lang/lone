@@ -69,6 +69,47 @@
         
         return b.String()
     }
+
+    func FoldBinaryExpr(ref string, c *current, head any, rest any) ir.Expr {
+        
+        curr := AnyValToType[ir.Expr](
+            fmt.Sprintf("%s.left", ref),
+            head,
+        )
+
+        tail := AnyValToType[[]any](
+            fmt.Sprintf("%s.tail", ref),
+            rest,
+        )
+
+        if len(tail) == 0 {
+            return curr
+        }
+
+        for _, part := range tail {
+            tuple := AnyValToType[[]any](
+                fmt.Sprintf("%s.tuple", ref),
+                part,
+            )
+
+            opBytes := AnyValToType[[]byte](fmt.Sprintf("%s.op", ref), tuple[1])
+            op := ir.BinaryOp(string(opBytes))
+
+            right := AnyValToType[ir.Expr](
+                fmt.Sprintf("%s.right", ref),
+                tuple[3],
+            )
+
+            curr = ir.BinaryExpr{
+                Op: op,
+                Left: curr,
+                Right: right,
+                Pos: currentPosition(c),
+            }
+        }
+
+        return curr
+    }
 }
 
 PROGRAM <- (_ TOP_LEVEL)*
@@ -367,7 +408,89 @@ POSTFIX_EXPR
     }, nil
 }
 
-EXPR <- POSTFIX_EXPR
+UNARY_OP
+<- "-"
+/ "+"
+/ "!"
+/ "&"
+/ "*"
+
+UNARY_EXPR
+<- op:UNARY_OP _ expr:UNARY_EXPR {
+    return ir.UnaryExpr{
+        Op:   ir.UnaryOp(string(AnyValToType[[]byte]("UNARY_EXPR.op", op))),
+        Expr: AnyValToType[ir.Expr]("UNARY_EXPR.expr", expr),
+        Pos:  currentPosition(c),
+    }, nil
+}
+/ POSTFIX_EXPR
+
+MUL_BINARY_EXPR 
+<- left:UNARY_EXPR right:(_ ("*" / "/") _ UNARY_EXPR)* {
+    expr := FoldBinaryExpr("MUL_BINARY_EXPR", c, left, right)
+    return expr, nil
+} / UNARY_EXPR
+
+
+ADD_BINARY_EXPR 
+<- left:MUL_BINARY_EXPR right:(_ ("+" / "-") _ MUL_BINARY_EXPR)* {
+    expr := FoldBinaryExpr("ADD_BINARY_EXPR", c, left, right)
+    return expr, nil
+} 
+
+Comparision_Op 
+<- ">"
+/  "<"
+/  ">="
+/  "<="
+
+COMPARISION_BINARY_EXPR 
+<- left:ADD_BINARY_EXPR right:(_ Comparision_Op _ ADD_BINARY_EXPR)* {
+    expr := FoldBinaryExpr("COMPARISION_BINARY_EXPR", c, left, right)
+    return expr, nil
+}
+
+Equality_Op
+<- "=="
+/  "!="
+
+EQUALITY_BINARY_EXPR 
+<- left:COMPARISION_BINARY_EXPR right:(_ Equality_Op _ COMPARISION_BINARY_EXPR)* {
+    expr := FoldBinaryExpr("EQUALITY_BINARY_EXPR", c, left, right)
+    return expr, nil
+}
+
+BITWISE_OR_BINARY_EXPR 
+<- left:EQUALITY_BINARY_EXPR right:(_ "|" _ EQUALITY_BINARY_EXPR)* {
+    expr := FoldBinaryExpr("BITWISE_OR_BINARY_EXPR", c, left, right)
+    return expr, nil
+}
+
+BITWISE_XOR_BINARY_EXPR 
+<- left:BITWISE_OR_BINARY_EXPR right:(_ "^" _ BITWISE_OR_BINARY_EXPR)* {
+    expr := FoldBinaryExpr("BITWISE_XOR_BINARY_EXPR", c, left, right)
+    return expr, nil
+}
+
+BITWISE_AND_BINARY_EXPR 
+<- left:BITWISE_OR_BINARY_EXPR right:(_ "&" _ BITWISE_OR_BINARY_EXPR)* {
+    expr := FoldBinaryExpr("BITWISE_AND_BINARY_EXPR", c, left, right)
+    return expr, nil
+}
+
+LOGICAL_AND_BINARY_EXPR 
+<- left:BITWISE_AND_BINARY_EXPR right:(_ "and" _ BITWISE_AND_BINARY_EXPR)* {
+    expr := FoldBinaryExpr("LOGICAL_AND_BINARY_EXPR", c, left, right)
+    return expr, nil
+}
+
+LOGICAL_OR_BINARY_EXPR 
+<- left:LOGICAL_AND_BINARY_EXPR right:(_ "or" _ LOGICAL_AND_BINARY_EXPR)* {
+    expr := FoldBinaryExpr("LOGICAL_OR_BINARY_EXPR", c, left, right)
+    return expr, nil
+}
+
+EXPR <- LOGICAL_OR_BINARY_EXPR
 
 TYPE_REF_ARGS <- 
     "<"

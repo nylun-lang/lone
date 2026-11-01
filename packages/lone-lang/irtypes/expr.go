@@ -17,6 +17,63 @@ type Expr interface {
 }
 
 // =====================
+// BINARY EXPR
+// =====================
+
+type BinaryOp string
+
+const (
+	BINARY_OP_PLUS       BinaryOp = "+"
+	BINARY_OP_MINUS      BinaryOp = "-"
+	BINARY_OP_TIME       BinaryOp = "*"
+	BINARY_OP_DIV        BinaryOp = "/"
+	BINARY_OP_MOD        BinaryOp = "%"
+	BINARY_OP_AND        BinaryOp = "and"
+	BINARY_OP_OR         BinaryOp = "or"
+	BINARY_OP_LESS       BinaryOp = ">"
+	BINARY_OP_LESS_EQ    BinaryOp = ">="
+	BINARY_OP_EQ         BinaryOp = "=="
+	BINARY_OP_NOT_EQ     BinaryOp = "!="
+	BINARY_OP_GREATER    BinaryOp = "<"
+	BINARY_OP_GREATER_EQ BinaryOp = "<="
+)
+
+type BinaryExpr struct {
+	Op    BinaryOp
+	Left  Expr
+	Right Expr
+	Pos   Position
+}
+
+func (BinaryExpr) IsExpr() ExprKind {
+	return EXPR_BINARY_OP
+}
+
+// =====================
+// UNARY EXPR
+// =====================
+
+type UnaryOp string
+
+const (
+	UNARY_OP_POSITIVE = "+"
+	UNARY_OP_NEGATIVE = "-"
+	UNARY_OP_NOT      = "!"
+	UNARY_OP_REF      = "&"
+	UNARY_OP_DEREF    = "*"
+)
+
+type UnaryExpr struct {
+	Op   UnaryOp
+	Expr Expr
+	Pos  Position
+}
+
+func (UnaryExpr) IsExpr() ExprKind {
+	return EXPR_UNARY_OP
+}
+
+// =====================
 // POSTFIX EXPR
 // =====================
 
