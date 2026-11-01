@@ -1,0 +1,10 @@
+var BadGlobalName = 10
+
+fn BadFunctionName(BadParam: i32) i32 {
+	var x = 100
+	return "string instead of i32"
+}
+
+fn test_unused() void {
+	BadFunctionName(42)
+}

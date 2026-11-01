@@ -21,12 +21,13 @@ func LowerProgram(prog *air.TProgram) (*mirtypes.MirModule, error) {
 }
 
 type lowerer struct {
-	mod     *mirtypes.MirModule
-	fn      *mirtypes.MirFunction
-	curBlk  *mirtypes.MirBlock
-	regId   int
-	blockId int
-	vars    map[string]string // maps variable name to register name
+	mod           *mirtypes.MirModule
+	fn            *mirtypes.MirFunction
+	curBlk        *mirtypes.MirBlock
+	regId         int
+	blockId       int
+	vars          map[string]string // maps variable name to register name
+	loopExitStack []string          // tracks enclosing loop exit block labels
 }
 
 func newLowerer() *lowerer {
@@ -35,7 +36,8 @@ func newLowerer() *lowerer {
 			Functions: make([]*mirtypes.MirFunction, 0),
 			Globals:   make(map[string]mirtypes.MirT),
 		},
-		vars: make(map[string]string),
+		vars:          make(map[string]string),
+		loopExitStack: make([]string, 0),
 	}
 }
 
@@ -194,8 +196,10 @@ func (l *lowerer) lowerStmt(stmt air.TStmt) {
 
 	case *air.TWhileStmt:
 		headBlk := l.freshBlock("while_head")
+		headBlk.IsLoop = true
 		bodyBlk := l.freshBlock("while_body")
 		exitBlk := l.freshBlock("while_exit")
+		headBlk.LoopExit = exitBlk.Name
 
 		l.curBlk.Terminator = mirtypes.MirJump{Target: headBlk.Name}
 
@@ -208,6 +212,9 @@ func (l *lowerer) lowerStmt(stmt air.TStmt) {
 			ElseTarget: exitBlk.Name,
 		}
 
+		// Track loop exit for breaks
+		l.loopExitStack = append(l.loopExitStack, exitBlk.Name)
+
 		// Body
 		l.curBlk = bodyBlk
 		l.lowerBlock(&s.Body)
@@ -215,11 +222,17 @@ func (l *lowerer) lowerStmt(stmt air.TStmt) {
 			l.curBlk.Terminator = mirtypes.MirJump{Target: headBlk.Name}
 		}
 
+		l.loopExitStack = l.loopExitStack[:len(l.loopExitStack)-1]
+
 		l.curBlk = exitBlk
 
 	case *air.TBreakStmt:
-		// Basic break without explicit target jumps to current join or exits
-		l.curBlk.Terminator = mirtypes.MirReturn{}
+		if len(l.loopExitStack) > 0 {
+			target := l.loopExitStack[len(l.loopExitStack)-1]
+			l.curBlk.Terminator = mirtypes.MirJump{Target: target}
+		} else {
+			l.curBlk.Terminator = mirtypes.MirReturn{}
+		}
 		l.curBlk = nil
 	}
 }
@@ -252,44 +265,44 @@ func (l *lowerer) lowerExpr(expr air.TExpr) mirtypes.MirOperand {
 		rightOp := l.lowerExpr(e.Right)
 		destReg := l.freshReg("t_bin", mType)
 
-		switch e.Op {
-		case ir.BINARY_OP_PLUS:
+		switch string(e.Op) {
+		case "+":
 			l.curBlk.Insts = append(l.curBlk.Insts, mirtypes.MirBinOp{
 				Op: "add", Type: mType, Dest: destReg, Left: leftOp, Right: rightOp,
 			})
-		case ir.BINARY_OP_MINUS:
+		case "-":
 			l.curBlk.Insts = append(l.curBlk.Insts, mirtypes.MirBinOp{
 				Op: "sub", Type: mType, Dest: destReg, Left: leftOp, Right: rightOp,
 			})
-		case ir.BINARY_OP_TIME:
+		case "*":
 			l.curBlk.Insts = append(l.curBlk.Insts, mirtypes.MirBinOp{
 				Op: "mul", Type: mType, Dest: destReg, Left: leftOp, Right: rightOp,
 			})
-		case ir.BINARY_OP_DIV:
+		case "/":
 			l.curBlk.Insts = append(l.curBlk.Insts, mirtypes.MirBinOp{
 				Op: "div", Type: mType, Dest: destReg, Left: leftOp, Right: rightOp,
 			})
-		case ir.BINARY_OP_LESS:
+		case "<":
 			l.curBlk.Insts = append(l.curBlk.Insts, mirtypes.MirCmpOp{
 				Op: "lt", Type: toMirType(e.Left.ExprType()), Dest: destReg, Left: leftOp, Right: rightOp,
 			})
-		case ir.BINARY_OP_LESS_EQ:
+		case "<=":
 			l.curBlk.Insts = append(l.curBlk.Insts, mirtypes.MirCmpOp{
 				Op: "le", Type: toMirType(e.Left.ExprType()), Dest: destReg, Left: leftOp, Right: rightOp,
 			})
-		case ir.BINARY_OP_GREATER:
+		case ">":
 			l.curBlk.Insts = append(l.curBlk.Insts, mirtypes.MirCmpOp{
 				Op: "gt", Type: toMirType(e.Left.ExprType()), Dest: destReg, Left: leftOp, Right: rightOp,
 			})
-		case ir.BINARY_OP_GREATER_EQ:
+		case ">=":
 			l.curBlk.Insts = append(l.curBlk.Insts, mirtypes.MirCmpOp{
 				Op: "ge", Type: toMirType(e.Left.ExprType()), Dest: destReg, Left: leftOp, Right: rightOp,
 			})
-		case ir.BINARY_OP_EQ:
+		case "==":
 			l.curBlk.Insts = append(l.curBlk.Insts, mirtypes.MirCmpOp{
 				Op: "eq", Type: toMirType(e.Left.ExprType()), Dest: destReg, Left: leftOp, Right: rightOp,
 			})
-		case ir.BINARY_OP_NOT_EQ:
+		case "!=":
 			l.curBlk.Insts = append(l.curBlk.Insts, mirtypes.MirCmpOp{
 				Op: "ne", Type: toMirType(e.Left.ExprType()), Dest: destReg, Left: leftOp, Right: rightOp,
 			})

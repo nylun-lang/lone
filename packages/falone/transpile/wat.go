@@ -79,16 +79,135 @@ func transpileFunction(fn *mirtypes.MirFunction) (string, error) {
 		return sb.String(), nil
 	}
 
-	if len(fn.Blocks) == 1 {
+	if hasLoop(fn.Blocks) {
+		emitFunctionBlocks(&sb, fn.Blocks, 2)
+	} else if len(fn.Blocks) == 1 {
 		// Single block
 		emitBlockBody(&sb, fn.Blocks[0], 2)
 	} else {
-		// Multi-block control flow: wrap forward blocks in nested WebAssembly block labels
+		// Multi-block forward control flow
 		emitStructuredBlocks(&sb, fn.Blocks, 2)
 	}
 
 	sb.WriteString("  )")
 	return sb.String(), nil
+}
+
+func hasLoop(blocks []*mirtypes.MirBlock) bool {
+	for _, b := range blocks {
+		if b.IsLoop || strings.HasPrefix(b.Name, "while_head") {
+			return true
+		}
+	}
+	return false
+}
+
+func emitFunctionBlocks(sb *strings.Builder, blocks []*mirtypes.MirBlock, indent int) {
+	pad := strings.Repeat("  ", indent)
+
+	for i := 0; i < len(blocks); i++ {
+		blk := blocks[i]
+
+		// Check if this block is a loop header
+		if blk.IsLoop || strings.HasPrefix(blk.Name, "while_head") {
+			exitName := blk.LoopExit
+			if exitName == "" {
+				// Infer exit name from branch else target
+				if br, ok := blk.Terminator.(mirtypes.MirBranch); ok {
+					exitName = br.ElseTarget
+				}
+			}
+			loopHead := cleanIdentifier(blk.Name)
+			loopExit := cleanIdentifier(exitName)
+
+			// Find exit block index
+			exitIdx := -1
+			for j := i + 1; j < len(blocks); j++ {
+				if blocks[j].Name == exitName {
+					exitIdx = j
+					break
+				}
+			}
+
+			sb.WriteString(fmt.Sprintf("%s(block $%s\n", pad, loopExit))
+			sb.WriteString(fmt.Sprintf("%s  (loop $%s\n", pad, loopHead))
+
+			// 1. Evaluate condition
+			if len(blk.Insts) > 0 {
+				sb.WriteString(fmt.Sprintf("%s    ;; Evaluate condition\n", pad))
+				for _, inst := range blk.Insts {
+					emitInstruction(sb, inst, indent+2)
+				}
+			}
+
+			// 2. Exit if condition is false
+			if br, ok := blk.Terminator.(mirtypes.MirBranch); ok {
+				sb.WriteString(fmt.Sprintf("%s    ;; Exit if condition is false\n", pad))
+				emitLoadOperand(sb, br.Cond, mirtypes.MirI32, indent+2)
+				sb.WriteString(fmt.Sprintf("%s    i32.eqz\n", pad))
+				sb.WriteString(fmt.Sprintf("%s    br_if $%s\n\n", pad, loopExit))
+			}
+
+			// 3. Body
+			bodyBlocksEnd := len(blocks)
+			if exitIdx != -1 {
+				bodyBlocksEnd = exitIdx
+			}
+
+			sb.WriteString(fmt.Sprintf("%s    ;; Body\n", pad))
+			repeated := false
+			for j := i + 1; j < bodyBlocksEnd; j++ {
+				bodyBlk := blocks[j]
+				for _, inst := range bodyBlk.Insts {
+					emitInstruction(sb, inst, indent+2)
+				}
+				if jmp, ok := bodyBlk.Terminator.(mirtypes.MirJump); ok {
+					target := cleanIdentifier(jmp.Target)
+					if target == loopExit {
+						sb.WriteString(fmt.Sprintf("%s    br $%s\n", pad, loopExit))
+					} else if target == loopHead {
+						sb.WriteString(fmt.Sprintf("%s    ;; Repeat\n", pad))
+						sb.WriteString(fmt.Sprintf("%s    br $%s\n", pad, loopHead))
+						repeated = true
+					}
+				} else if ret, ok := bodyBlk.Terminator.(mirtypes.MirReturn); ok {
+					emitTerminator(sb, ret, indent+2)
+				}
+			}
+
+			if !repeated {
+				sb.WriteString(fmt.Sprintf("%s    ;; Repeat\n", pad))
+				sb.WriteString(fmt.Sprintf("%s    br $%s\n", pad, loopHead))
+			}
+
+			sb.WriteString(fmt.Sprintf("%s  )\n", pad))
+			sb.WriteString(fmt.Sprintf("%s)\n\n", pad))
+
+			if exitIdx != -1 {
+				i = exitIdx - 1
+			} else {
+				i = bodyBlocksEnd - 1
+			}
+			continue
+		}
+
+		// Non-loop block
+		sb.WriteString(fmt.Sprintf("%s;; label %s\n", pad, blk.Name))
+		for _, inst := range blk.Insts {
+			emitInstruction(sb, inst, indent)
+		}
+
+		// Only emit terminator if it's not a jump to the immediately following block
+		if blk.Terminator != nil {
+			if jmp, ok := blk.Terminator.(mirtypes.MirJump); ok {
+				if i+1 < len(blocks) && cleanIdentifier(jmp.Target) == cleanIdentifier(blocks[i+1].Name) {
+					// Fallthrough to next block, no need for br
+					continue
+				}
+			}
+			emitTerminator(sb, blk.Terminator, indent)
+		}
+	}
 }
 
 func emitStructuredBlocks(sb *strings.Builder, blocks []*mirtypes.MirBlock, indent int) {

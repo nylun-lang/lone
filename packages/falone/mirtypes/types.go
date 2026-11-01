@@ -206,6 +206,8 @@ func (b MirBranch) TerminatorString() string {
 
 type MirBlock struct {
 	Name       string
+	IsLoop     bool   // true if this block is a loop header
+	LoopExit   string // label of the loop exit block
 	Insts      []MirInst
 	Terminator MirTerminator
 }
