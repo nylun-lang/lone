@@ -1,4 +1,6 @@
-package lonealyzer
+package analyze
+
+import . "lonealyzer/irtypes"
 
 // PassTypes performs type analysis, inferring untyped variables, verifying function returns,
 // enforcing that non-void expression results are consumed or dropped, and generating a Typed IR.

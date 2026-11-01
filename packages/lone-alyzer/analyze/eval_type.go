@@ -1,7 +1,8 @@
-package lonealyzer
+package analyze
 
 import (
 	"fmt"
+	. "lonealyzer/irtypes"
 	ir "lonelang/irtypes"
 )
 

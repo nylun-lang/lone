@@ -1,4 +1,6 @@
-package lonealyzer
+package analyze
+
+import . "lonealyzer/irtypes"
 
 // Pass represents an analysis pass operating on AST declarations.
 type Pass interface {

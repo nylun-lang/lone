@@ -1,4 +1,4 @@
-package lonealyzer
+package analyze
 
 import (
 	"fmt"

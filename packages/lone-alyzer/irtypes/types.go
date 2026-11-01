@@ -1,4 +1,4 @@
-package lonealyzer
+package irtypes
 
 import (
 	"fmt"

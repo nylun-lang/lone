@@ -1,6 +1,9 @@
-package lonealyzer
+package analyze
 
-import "fmt"
+import (
+	"fmt"
+	. "lonealyzer/irtypes"
+)
 
 // ScopeKind identifies the syntactic structure that owns a lexical scope.
 type ScopeKind string

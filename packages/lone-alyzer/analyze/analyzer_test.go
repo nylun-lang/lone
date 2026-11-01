@@ -1,20 +1,21 @@
-package lonealyzer_test
+package analyze_test
 
 import (
 	"testing"
 
-	"lonealyzer"
+	"lonealyzer/analyze"
+	air "lonealyzer/irtypes"
 	ir "lonelang/irtypes"
 	"lonelang/parser"
 )
 
 func TestScopeStack(t *testing.T) {
-	stack := lonealyzer.NewScopeStack("main.lone")
-	if stack.Current().Kind != lonealyzer.ScopeFile {
+	stack := analyze.NewScopeStack("main.lone")
+	if stack.Current().Kind != analyze.ScopeFile {
 		t.Fatalf("expected root scope to be file, got %v", stack.Current().Kind)
 	}
 
-	sym1 := &lonealyzer.Symbol{Name: "GLOBAL_VAL", Kind: lonealyzer.SymbolVar}
+	sym1 := &analyze.Symbol{Name: "GLOBAL_VAL", Kind: analyze.SymbolVar}
 	if err := stack.Define(sym1); err != nil {
 		t.Fatalf("failed to define global: %v", err)
 	}
@@ -25,16 +26,16 @@ func TestScopeStack(t *testing.T) {
 	}
 
 	// Push function
-	stack.Push(lonealyzer.ScopeFunction, "main")
-	if stack.Current().Kind != lonealyzer.ScopeFunction {
+	stack.Push(analyze.ScopeFunction, "main")
+	if stack.Current().Kind != analyze.ScopeFunction {
 		t.Fatalf("expected function scope, got %v", stack.Current().Kind)
 	}
-	if !stack.HasEnclosing(lonealyzer.ScopeFile) {
+	if !stack.HasEnclosing(analyze.ScopeFile) {
 		t.Fatalf("expected enclosing file scope")
 	}
 
 	// Define local
-	sym2 := &lonealyzer.Symbol{Name: "local_val", Kind: lonealyzer.SymbolVar}
+	sym2 := &analyze.Symbol{Name: "local_val", Kind: analyze.SymbolVar}
 	if err := stack.Define(sym2); err != nil {
 		t.Fatalf("failed to define local: %v", err)
 	}
@@ -49,7 +50,7 @@ func TestScopeStack(t *testing.T) {
 
 	// Pop
 	stack.Pop()
-	if stack.Current().Kind != lonealyzer.ScopeFile {
+	if stack.Current().Kind != analyze.ScopeFile {
 		t.Fatalf("expected to return to file scope, got %v", stack.Current().Kind)
 	}
 	if resolved := stack.Resolve("local_val"); resolved != nil {
@@ -75,7 +76,7 @@ fn calculate_total(item_count: i32, unit_price: f32) f32 {
 		t.Fatalf("parse failed: %v", err)
 	}
 
-	analyzer := lonealyzer.NewAnalyzer("test.lone", lonealyzer.DefaultConfig())
+	analyzer := analyze.NewAnalyzer("test.lone", analyze.DefaultConfig())
 	diags := analyzer.Analyze(ast)
 
 	if len(diags) != 0 {
@@ -101,7 +102,7 @@ fn BadFunctionName(BadParam: i32) bad_custom_type {
 		t.Fatalf("parse failed: %v", err)
 	}
 
-	analyzer := lonealyzer.NewAnalyzer("test.lone", lonealyzer.DefaultConfig())
+	analyzer := analyze.NewAnalyzer("test.lone", analyze.DefaultConfig())
 	diags := analyzer.Analyze(ast)
 
 	expectedRules := map[string]bool{
@@ -134,7 +135,7 @@ func TestNamingConventionsIntrinsicFunction(t *testing.T) {
 		Body: ir.Block{Stmts: nil},
 	}
 
-	analyzer := lonealyzer.NewAnalyzer("test.lone", lonealyzer.DefaultConfig())
+	analyzer := analyze.NewAnalyzer("test.lone", analyze.DefaultConfig())
 	diags := analyzer.Analyze([]any{fn})
 
 	if len(diags) != 0 {
@@ -158,7 +159,7 @@ fn compute() i32 {
 		t.Fatalf("parse failed: %v", err)
 	}
 
-	analyzer := lonealyzer.NewAnalyzer("infer.lone", lonealyzer.DefaultConfig())
+	analyzer := analyze.NewAnalyzer("infer.lone", analyze.DefaultConfig())
 	prog, diags := analyzer.AnalyzeTyped(ast)
 
 	if len(diags) != 0 {
@@ -170,30 +171,30 @@ fn compute() i32 {
 	}
 
 	// 1. var num = 42 -> TypeI32
-	varNum, ok := prog.Decls[0].(*lonealyzer.TVarDec)
-	if !ok || !varNum.Type.Equals(lonealyzer.TypeI32) {
+	varNum, ok := prog.Decls[0].(*air.TVarDec)
+	if !ok || !varNum.Type.Equals(air.TypeI32) {
 		t.Errorf("expected varNum to be resolved to i32, got: %+v", varNum)
 	}
 
 	// 2. var text = "hello" -> TypeStr
-	varText, ok := prog.Decls[1].(*lonealyzer.TVarDec)
-	if !ok || !varText.Type.Equals(lonealyzer.TypeStr) {
+	varText, ok := prog.Decls[1].(*air.TVarDec)
+	if !ok || !varText.Type.Equals(air.TypeStr) {
 		t.Errorf("expected varText to be resolved to str, got: %+v", varText)
 	}
 
 	// 3. var flag = true -> TypeBool
-	varFlag, ok := prog.Decls[2].(*lonealyzer.TVarDec)
-	if !ok || !varFlag.Type.Equals(lonealyzer.TypeBool) {
+	varFlag, ok := prog.Decls[2].(*air.TVarDec)
+	if !ok || !varFlag.Type.Equals(air.TypeBool) {
 		t.Errorf("expected varFlag to be resolved to bool, got: %+v", varFlag)
 	}
 
 	// 4. fn compute() i32 -> local_infer is i32
-	fnCompute, ok := prog.Decls[3].(*lonealyzer.TFnDec)
-	if !ok || !fnCompute.ReturnType.Equals(lonealyzer.TypeI32) {
+	fnCompute, ok := prog.Decls[3].(*air.TFnDec)
+	if !ok || !fnCompute.ReturnType.Equals(air.TypeI32) {
 		t.Errorf("expected fnCompute return type to be i32, got: %+v", fnCompute)
 	}
-	localVar, ok := fnCompute.Body.Stmts[0].(*lonealyzer.TVarDec)
-	if !ok || !localVar.Type.Equals(lonealyzer.TypeI32) {
+	localVar, ok := fnCompute.Body.Stmts[0].(*air.TVarDec)
+	if !ok || !localVar.Type.Equals(air.TypeI32) {
 		t.Errorf("expected local_infer to be resolved to i32, got: %+v", localVar)
 	}
 }
@@ -210,7 +211,7 @@ fn get_num() i32 {
 		t.Fatalf("parse failed: %v", err)
 	}
 
-	analyzer := lonealyzer.NewAnalyzer("mismatch.lone", lonealyzer.DefaultConfig())
+	analyzer := analyze.NewAnalyzer("mismatch.lone", analyze.DefaultConfig())
 	diags := analyzer.Analyze(astMismatch)
 
 	hasMismatch := false
@@ -262,7 +263,7 @@ fn test_main() void {
 		t.Fatalf("parse failed: %v", err)
 	}
 
-	analyzer := lonealyzer.NewAnalyzer("unused.lone", lonealyzer.DefaultConfig())
+	analyzer := analyze.NewAnalyzer("unused.lone", analyze.DefaultConfig())
 	diagsUnused := analyzer.Analyze(astUnused)
 
 	hasUnusedDiag := false
