@@ -188,7 +188,7 @@ Escape <- '\\' cc:(
     return nil, fmt.Errorf("invalid escape")
 }
 
-Inline_normal_char <- cc:(!('"' / EOL ) .) {
+Inline_normal_char <- cc:(!('"' / _EOL ) .) {
     return AnyValToType[[]any]("Normal_char.c", cc)[1], nil
 }
 
@@ -219,7 +219,51 @@ NAME_REF <- id:IDENTIFIER {
     }, nil
 }
 
-PRIMARY_EXPR <- LITERAL / NAME_REF
+Field_val_list 
+    <- first:Field_val_assign 
+       list:(_ "," _ Field_val_assign)* 
+       {
+        
+        fields := []ir.FieldAssign{
+            AnyValToType[ir.FieldAssign]("Field_val_list.first", first),
+        }
+
+        for _,r := range AnyValToType[[]any]("Field_val_list.l", list) {
+            tuple := AnyValToType[[]any]("Field_val_list.tuple", r)
+            fields = append(
+                fields, 
+                AnyValToType[ir.FieldAssign]("Field_val_list.fields", tuple[3]),
+            )
+        }
+
+        return fields, nil
+    }
+
+Field_val_assign 
+    <- "." field_name:IDENTIFIER":" _ field_val:EXPR {
+        name := AnySliceToString("Field_val_assign.name", []any{field_name})
+        expr := AnyValToType[ir.Expr]("Field_val_assign.expr", field_val)
+
+        return ir.FieldAssign{
+            Name: name,
+            Expr: expr,
+        }, nil
+    }
+
+OBJECT_LITERAL 
+    <- "{" _ f:Field_val_list _ "}" {
+        fields := AnyValToType[[]ir.FieldAssign]("ObjectLiteral.fields", f)
+        return ir.ObjectLiteral{
+            Fields: fields,
+            Pos: currentPosition(c),
+        }, nil
+    }
+
+PRIMARY_EXPR <- 
+    LITERAL 
+    / NAME_REF 
+    / OBJECT_LITERAL
+    / "(" _ expr:EXPR _ ")" { return expr, nil }
 
 EXPR <- PRIMARY_EXPR
 

@@ -53,3 +53,21 @@ type NameRef struct {
 func (NameRef) IsExpr() ExprKind {
 	return EXPR_NAME_REFERENCE
 }
+
+// =====================
+// OBJ LITERAL EXPR
+// =====================
+
+type ObjectLiteral struct {
+	Fields []FieldAssign `json:"fields"`
+	Pos    Position
+}
+
+func (ObjectLiteral) IsExpr() ExprKind {
+	return EXPR_OBJ_LITERAL
+}
+
+type FieldAssign struct {
+	Name string `json:"name"`
+	Expr Expr   `json:"expr"`
+}
