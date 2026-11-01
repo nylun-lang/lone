@@ -1,6 +1,7 @@
 package main
 
 import (
+	"falone/transpile"
 	"fmt"
 	"os"
 
@@ -18,7 +19,7 @@ and WebAssembly (WAT). It also integrates lone-alyzer for static analysis and ty
 			return cmd.Help()
 		}
 		// If a file is passed directly to falone (e.g. 'falone file.lone'), default to compile
-		return runCompile(args[0])
+		return runCompile(args[0], transpile.TargetWasi)
 	},
 }
 

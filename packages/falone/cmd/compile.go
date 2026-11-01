@@ -21,23 +21,53 @@ var (
 )
 
 var compileCmd = &cobra.Command{
-	Use:     "compile <file.lone>",
+	Use:     "compile [target] <file.lone>",
 	Aliases: []string{"build", "c"},
 	Short:   "Compile Lone source code to Falone MIR or WebAssembly (WAT)",
+	Args:    cobra.ArbitraryArgs,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if len(args) == 0 {
+			return cmd.Help()
+		}
+		target := transpile.Target(compileTargetFlag)
+		if target == "" {
+			target = transpile.TargetWasi
+		}
+		return runCompile(args[0], target)
+	},
+}
+
+var compileWasmCmd = &cobra.Command{
+	Use:     "wasm <file.lone>",
+	Aliases: []string{"wasi", "standalone"},
+	Short:   "Compile Lone source code targeting standalone WebAssembly (WASI)",
 	Args:    cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runCompile(args[0])
+		return runCompile(args[0], transpile.TargetWasi)
+	},
+}
+
+var compileWebCmd = &cobra.Command{
+	Use:     "web <file.lone>",
+	Aliases: []string{"browser", "js"},
+	Short:   "Compile Lone source code targeting Web/Browser environments",
+	Args:    cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return runCompile(args[0], transpile.TargetWeb)
 	},
 }
 
 func init() {
-	compileCmd.Flags().BoolVarP(&compileMirFlag, "mir", "m", false, "Print Falone MIR assembly")
-	compileCmd.Flags().BoolVarP(&compileWatFlag, "wat", "w", false, "Print WebAssembly Text (WAT)")
-	compileCmd.Flags().StringVarP(&compileOutFlag, "output", "o", "", "Write WebAssembly output to specified file")
+	compileCmd.PersistentFlags().BoolVarP(&compileMirFlag, "mir", "m", false, "Print Falone MIR assembly")
+	compileCmd.PersistentFlags().BoolVarP(&compileWatFlag, "wat", "w", false, "Print WebAssembly Text (WAT)")
+	compileCmd.PersistentFlags().StringVarP(&compileOutFlag, "output", "o", "", "Write WebAssembly output to specified file")
 	compileCmd.Flags().StringVarP(&compileTargetFlag, "target", "t", "wasi", "Compilation target ('wasi' or 'web')")
+
+	compileCmd.AddCommand(compileWasmCmd)
+	compileCmd.AddCommand(compileWebCmd)
 }
 
-func runCompile(filePath string) error {
+func runCompile(filePath string, target transpile.Target) error {
 	if _, err := os.Lstat(filePath); err != nil {
 		return fmt.Errorf("file '%s' does not exist: %w", filePath, err)
 	}
@@ -72,7 +102,7 @@ func runCompile(filePath string) error {
 	}
 
 	// 4. Transpile Falone MIR to WAT
-	watText, err := transpile.TranspileToWatWithTarget(mirMod, transpile.Target(compileTargetFlag))
+	watText, err := transpile.TranspileToWatWithTarget(mirMod, target)
 	if err != nil {
 		return fmt.Errorf("transpilation error: %w", err)
 	}
