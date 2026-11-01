@@ -114,7 +114,7 @@
 
 PROGRAM <- (_ TOP_LEVEL)*
 
-TOP_LEVEL <- BIND_DEC / FN_DEC
+TOP_LEVEL <- BIND_DEC / FN_DEC / LABEL_DEC
 
 
 KW_FN <- "fn" ![a-zA-Z0-9_]
@@ -125,6 +125,7 @@ KW_BOOL <- ("true" / "false") ![a-zA-Z0-9_]
 KW_READONLY <- "ro" ![a-zA-Z0-9_]
 KW_COMPTIME <- "comptime" ![a-zA-Z0-9_]
 KW_RETURN <- "return" ![a-zA-Z0-9_]
+KW_BREAK <- "break" ![a-zA-Z0-9_]
 
 KEYWORD <- 
     KW_VAR /
@@ -134,7 +135,8 @@ KEYWORD <-
     KW_NONE /
     KW_READONLY /
     KW_COMPTIME /
-    KW_RETURN
+    KW_RETURN /
+    KW_BREAK
 
 FN_NAME <- "#"? IDENTIFIER {
     return string(c.text), nil
@@ -149,6 +151,7 @@ _SPACE <- [ \t]
 _INLINE_COMMENT     <- "--" ("fa:" IDENTIFIER)? (!EOL .)*
 _MULTI_LINE_COMMENT <- "---" ("fa:" IDENTIFIER)? (!"---" .)*
 _COMMENT <- (_MULTI_LINE_COMMENT / _INLINE_COMMENT)
+_INLINE_WS <- (_SPACE / _INLINE_COMMENT)*
 
 _ <- (_SPACE / _EOL / _COMMENT)*
 
@@ -334,7 +337,9 @@ LIST_LITERAL
     }
 
 PRIMARY_EXPR <- 
-    LITERAL 
+    LABEL_DEC
+    / BREAK_STMT
+    / LITERAL 
     / NAME_REF 
     / OBJECT_LITERAL
     / LIST_LITERAL
@@ -688,7 +693,7 @@ BIND_DEC <-
     }, nil
 }
 
-RETURN_STMT <- KW_RETURN expr:(_ EXPR)? {
+RETURN_STMT <- KW_RETURN expr:(_INLINE_WS EXPR)? {
     var val ir.Expr
     if expr != nil {
         val = AnyValToType[ir.Expr]("RETURN_STMT.val", AnyValToType[[]any]("RETURN_STMT.tuple", expr)[1])
@@ -699,7 +704,29 @@ RETURN_STMT <- KW_RETURN expr:(_ EXPR)? {
     }, nil
 }
 
-STMT <- BIND_DEC / RETURN_STMT / EXPR
+BREAK_LABEL <- id:IDENTIFIER _INLINE_WS ":" !":" {
+    return string(AnyValToType[[]uint8]("BREAK_LABEL.id", id)), nil
+}
+
+BREAK_STMT <- KW_BREAK label:(_INLINE_WS BREAK_LABEL)? val:(_INLINE_WS EXPR)? {
+    var label_name string
+    if label != nil {
+        label_name = AnyValToType[string]("BREAK_STMT.label", AnyValToType[[]any]("BREAK_STMT.label_tuple", label)[1])
+    }
+
+    var break_val ir.Expr
+    if val != nil {
+        break_val = AnyValToType[ir.Expr]("BREAK_STMT.val", AnyValToType[[]any]("BREAK_STMT.val_tuple", val)[1])
+    }
+
+    return ir.BreakStmt{
+        Label: label_name,
+        Value: break_val,
+        Pos: currentPosition(c),
+    }, nil
+}
+
+STMT <- BIND_DEC / RETURN_STMT / BREAK_STMT / EXPR
 
 BLOCK <- "{" _ stmts:(_ STMT)* _ "}" {
     var stmt_list []any = []any{}
@@ -712,6 +739,14 @@ BLOCK <- "{" _ stmts:(_ STMT)* _ "}" {
     }
     return ir.Block{
         Stmts: stmt_list,
+        Pos: currentPosition(c),
+    }, nil
+}
+
+LABEL_DEC <- name:IDENTIFIER _ ":" !":" _ body:BLOCK {
+    return ir.LabelDec{
+        Name: string(AnyValToType[[]uint8]("LABEL_DEC.name", name)),
+        Body: AnyValToType[ir.Block]("LABEL_DEC.body", body),
         Pos: currentPosition(c),
     }, nil
 }

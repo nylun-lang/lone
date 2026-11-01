@@ -510,3 +510,109 @@ fn with_cb(cb: fn (x: int) bool) bool {
 		t.Errorf("expected param 0 TYPE_FN, got %v", fns[4].Params[0].Type.Kind)
 	}
 }
+
+func TestLabelDecAndBreakStmt(t *testing.T) {
+	code := `
+var result = blk: {
+    var x = 10
+    break blk: x + 1
+}
+
+fn test_block() int {
+    var computed = eval: {
+        break eval: 42
+    }
+    break eval:
+    break 100
+    break
+    return computed
+}
+`
+	res, err := parser.Parse("test_label.lone", []byte(code))
+	if err != nil {
+		t.Fatalf("failed to parse: %v", err)
+	}
+
+	rawList := res.([]any)
+	if len(rawList) != 2 {
+		t.Fatalf("expected 2 top-level items, got %d", len(rawList))
+	}
+
+	// 1. var result = blk: { ... }
+	varDec := rawList[0].([]any)[1].(ir.BIND_DEC)
+	if varDec.Name != "result" {
+		t.Errorf("expected var 'result', got %q", varDec.Name)
+	}
+
+	pf, ok := varDec.Value.(ir.PostFixExpr)
+	if !ok {
+		t.Fatalf("expected PostFixExpr for value, got %T", varDec.Value)
+	}
+	labelDec, ok := pf.Base.(ir.LabelDec)
+	if !ok {
+		t.Fatalf("expected LabelDec, got %T", pf.Base)
+	}
+	if labelDec.Name != "blk" {
+		t.Errorf("expected label name 'blk', got %q", labelDec.Name)
+	}
+	if len(labelDec.Body.Stmts) != 2 {
+		t.Fatalf("expected 2 statements in blk, got %d", len(labelDec.Body.Stmts))
+	}
+
+	// Statement 1 in blk: var x = 10
+	if _, ok := labelDec.Body.Stmts[0].(ir.BIND_DEC); !ok {
+		t.Errorf("expected BIND_DEC in blk, got %T", labelDec.Body.Stmts[0])
+	}
+
+	// Statement 2 in blk: break blk: x + 1
+	break1, ok := labelDec.Body.Stmts[1].(ir.BreakStmt)
+	if !ok {
+		t.Fatalf("expected BreakStmt, got %T", labelDec.Body.Stmts[1])
+	}
+	if break1.Label != "blk" {
+		t.Errorf("expected break label 'blk', got %q", break1.Label)
+	}
+	if break1.Value == nil {
+		t.Errorf("expected break value, got nil")
+	}
+
+	// 2. fn test_block()
+	fnDec := rawList[1].([]any)[1].(ir.FN_DEC)
+	if fnDec.Name != "test_block" {
+		t.Errorf("expected fn 'test_block', got %q", fnDec.Name)
+	}
+	if len(fnDec.Body.Stmts) != 5 {
+		t.Fatalf("expected 5 stmts in fn, got %d", len(fnDec.Body.Stmts))
+	}
+
+	// Stmt 1: var computed = eval: { break eval: 42 }
+	varComputed := fnDec.Body.Stmts[0].(ir.BIND_DEC)
+	pfEval := varComputed.Value.(ir.PostFixExpr)
+	labelEval := pfEval.Base.(ir.LabelDec)
+	if labelEval.Name != "eval" {
+		t.Errorf("expected label 'eval', got %q", labelEval.Name)
+	}
+
+	// Stmt 2: break eval: (label only, no value)
+	break2 := fnDec.Body.Stmts[1].(ir.BreakStmt)
+	if break2.Label != "eval" || break2.Value != nil {
+		t.Errorf("unexpected break2: %+v", break2)
+	}
+
+	// Stmt 3: break 100 (unlabeled with value)
+	break3 := fnDec.Body.Stmts[2].(ir.BreakStmt)
+	if break3.Label != "" || break3.Value == nil {
+		t.Errorf("unexpected break3: %+v", break3)
+	}
+
+	// Stmt 4: break (bare break)
+	break4 := fnDec.Body.Stmts[3].(ir.BreakStmt)
+	if break4.Label != "" || break4.Value != nil {
+		t.Errorf("unexpected break4: %+v", break4)
+	}
+
+	// Stmt 5: return computed
+	if _, ok := fnDec.Body.Stmts[4].(ir.ReturnStmt); !ok {
+		t.Errorf("expected ReturnStmt for stmt 5, got %T", fnDec.Body.Stmts[4])
+	}
+}

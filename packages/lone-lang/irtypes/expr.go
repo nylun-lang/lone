@@ -10,6 +10,8 @@ const (
 	EXPR_NAME_REFERENCE
 	EXPR_UNARY_OP
 	EXPR_BINARY_OP
+	EXPR_LABEL_DEC
+	EXPR_BREAK
 )
 
 type Expr interface {
@@ -232,4 +234,32 @@ type ListLiteral struct {
 
 func (ListLiteral) IsExpr() ExprKind {
 	return EXPR_LIST_LITERAL
+}
+
+// =====================
+// LABEL DEC EXPR
+// =====================
+
+type LabelDec struct {
+	Name string
+	Body Block
+	Pos  Position
+}
+
+func (LabelDec) IsExpr() ExprKind {
+	return EXPR_LABEL_DEC
+}
+
+// =====================
+// BREAK STMT / EXPR
+// =====================
+
+type BreakStmt struct {
+	Label string
+	Value Expr
+	Pos   Position
+}
+
+func (BreakStmt) IsExpr() ExprKind {
+	return EXPR_BREAK
 }
