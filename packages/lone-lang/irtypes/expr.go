@@ -12,6 +12,8 @@ const (
 	EXPR_BINARY_OP
 	EXPR_LABEL_DEC
 	EXPR_BREAK
+	EXPR_IF
+	EXPR_WHILE
 )
 
 type Expr interface {
@@ -262,4 +264,33 @@ type BreakStmt struct {
 
 func (BreakStmt) IsExpr() ExprKind {
 	return EXPR_BREAK
+}
+
+// =====================
+// IF STMT / EXPR
+// =====================
+
+type IfStmt struct {
+	Cond Expr
+	Then Block
+	Else any // nil, Block, or IfStmt
+	Pos  Position
+}
+
+func (IfStmt) IsExpr() ExprKind {
+	return EXPR_IF
+}
+
+// =====================
+// WHILE STMT / EXPR
+// =====================
+
+type WhileStmt struct {
+	Cond Expr
+	Body Block
+	Pos  Position
+}
+
+func (WhileStmt) IsExpr() ExprKind {
+	return EXPR_WHILE
 }

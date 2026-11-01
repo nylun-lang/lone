@@ -616,3 +616,139 @@ fn test_block() int {
 		t.Errorf("expected ReturnStmt for stmt 5, got %T", fnDec.Body.Stmts[4])
 	}
 }
+
+func TestIfStmtAndWhileStmt(t *testing.T) {
+	code := `
+fn classify(x: int) int {
+    if x > 0 {
+        return 1
+    } else if x == 0 {
+        return 0
+    } else {
+        return -1
+    }
+}
+
+fn count_up(limit: int) int {
+    var count = 0
+    while count < limit {
+        if count == 5 {
+            break
+        }
+        var next = count + 1
+    }
+    return count
+}
+
+var res = loop: while true {
+    break loop: 42
+}
+`
+	res, err := parser.Parse("test_control_flow.lone", []byte(code))
+	if err != nil {
+		t.Fatalf("failed to parse: %v", err)
+	}
+
+	rawList := res.([]any)
+	if len(rawList) != 3 {
+		t.Fatalf("expected 3 top-level items, got %d", len(rawList))
+	}
+
+	// 1. fn classify(x: int) int
+	fnClassify := rawList[0].([]any)[1].(ir.FN_DEC)
+	if fnClassify.Name != "classify" {
+		t.Errorf("expected fn 'classify', got %q", fnClassify.Name)
+	}
+	if len(fnClassify.Body.Stmts) != 1 {
+		t.Fatalf("expected 1 stmt in classify, got %d", len(fnClassify.Body.Stmts))
+	}
+
+	ifStmt, ok := fnClassify.Body.Stmts[0].(ir.IfStmt)
+	if !ok {
+		t.Fatalf("expected IfStmt, got %T", fnClassify.Body.Stmts[0])
+	}
+	if ifStmt.Cond == nil || len(ifStmt.Then.Stmts) != 1 {
+		t.Errorf("unexpected ifStmt then branch: %+v", ifStmt)
+	}
+
+	// Else should be chained IfStmt: else if x == 0
+	elseIf, ok := ifStmt.Else.(ir.IfStmt)
+	if !ok {
+		t.Fatalf("expected nested IfStmt in Else, got %T", ifStmt.Else)
+	}
+	if elseIf.Cond == nil || len(elseIf.Then.Stmts) != 1 {
+		t.Errorf("unexpected elseIf then branch: %+v", elseIf)
+	}
+
+	// Inner else should be Block
+	elseBlock, ok := elseIf.Else.(ir.Block)
+	if !ok {
+		t.Fatalf("expected Block for final else, got %T", elseIf.Else)
+	}
+	if len(elseBlock.Stmts) != 1 {
+		t.Errorf("expected 1 stmt in elseBlock, got %d", len(elseBlock.Stmts))
+	}
+
+	// 2. fn count_up(limit: int) int
+	fnCount := rawList[1].([]any)[1].(ir.FN_DEC)
+	if fnCount.Name != "count_up" {
+		t.Errorf("expected fn 'count_up', got %q", fnCount.Name)
+	}
+	if len(fnCount.Body.Stmts) != 3 {
+		t.Fatalf("expected 3 stmts in count_up, got %d", len(fnCount.Body.Stmts))
+	}
+
+	// Stmt 1: var count = 0 (BIND_DEC)
+	if _, ok := fnCount.Body.Stmts[0].(ir.BIND_DEC); !ok {
+		t.Errorf("expected BIND_DEC for stmt 0, got %T", fnCount.Body.Stmts[0])
+	}
+
+	// Stmt 2: while count < limit
+	whileStmt, ok := fnCount.Body.Stmts[1].(ir.WhileStmt)
+	if !ok {
+		t.Fatalf("expected WhileStmt for stmt 1, got %T", fnCount.Body.Stmts[1])
+	}
+	if whileStmt.Cond == nil {
+		t.Errorf("expected while condition, got nil")
+	}
+	if len(whileStmt.Body.Stmts) != 2 {
+		t.Fatalf("expected 2 stmts in while body, got %d", len(whileStmt.Body.Stmts))
+	}
+
+	// Nested IfStmt inside while body
+	nestedIf, ok := whileStmt.Body.Stmts[0].(ir.IfStmt)
+	if !ok {
+		t.Fatalf("expected IfStmt in while body, got %T", whileStmt.Body.Stmts[0])
+	}
+	if nestedIf.Else != nil {
+		t.Errorf("expected nil else for nestedIf, got %+v", nestedIf.Else)
+	}
+	if len(nestedIf.Then.Stmts) != 1 {
+		t.Fatalf("expected 1 stmt in nestedIf, got %d", len(nestedIf.Then.Stmts))
+	}
+	if _, ok := nestedIf.Then.Stmts[0].(ir.BreakStmt); !ok {
+		t.Errorf("expected BreakStmt inside nestedIf, got %T", nestedIf.Then.Stmts[0])
+	}
+
+	// 3. var res = loop: while true { break loop: 42 }
+	varLoop := rawList[2].([]any)[1].(ir.BIND_DEC)
+	pfLoop := varLoop.Value.(ir.PostFixExpr)
+	labelLoop := pfLoop.Base.(ir.LabelDec)
+	if labelLoop.Name != "loop" {
+		t.Errorf("expected label name 'loop', got %q", labelLoop.Name)
+	}
+	if len(labelLoop.Body.Stmts) != 1 {
+		t.Fatalf("expected 1 stmt in labeled while, got %d", len(labelLoop.Body.Stmts))
+	}
+	labeledWhile, ok := labelLoop.Body.Stmts[0].(ir.WhileStmt)
+	if !ok {
+		t.Fatalf("expected WhileStmt in labeled body, got %T", labelLoop.Body.Stmts[0])
+	}
+	if len(labeledWhile.Body.Stmts) != 1 {
+		t.Fatalf("expected 1 stmt in labeledWhile body, got %d", len(labeledWhile.Body.Stmts))
+	}
+	breakStmt := labeledWhile.Body.Stmts[0].(ir.BreakStmt)
+	if breakStmt.Label != "loop" || breakStmt.Value == nil {
+		t.Errorf("expected break loop: 42, got %+v", breakStmt)
+	}
+}

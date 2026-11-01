@@ -112,9 +112,13 @@
     }
 }
 
-PROGRAM <- (_ TOP_LEVEL)*
+PROGRAM <- decls:(_ TOP_LEVEL)* _ EOF {
+    return decls, nil
+}
 
-TOP_LEVEL <- BIND_DEC / FN_DEC / LABEL_DEC
+EOF <- !.
+
+TOP_LEVEL <- BIND_DEC / FN_DEC / IF_STMT / WHILE_STMT / LABEL_DEC
 
 
 KW_FN <- "fn" ![a-zA-Z0-9_]
@@ -126,6 +130,9 @@ KW_READONLY <- "ro" ![a-zA-Z0-9_]
 KW_COMPTIME <- "comptime" ![a-zA-Z0-9_]
 KW_RETURN <- "return" ![a-zA-Z0-9_]
 KW_BREAK <- "break" ![a-zA-Z0-9_]
+KW_IF <- "if" ![a-zA-Z0-9_]
+KW_ELSE <- "else" ![a-zA-Z0-9_]
+KW_WHILE <- "while" ![a-zA-Z0-9_]
 
 KEYWORD <- 
     KW_VAR /
@@ -136,7 +143,10 @@ KEYWORD <-
     KW_READONLY /
     KW_COMPTIME /
     KW_RETURN /
-    KW_BREAK
+    KW_BREAK /
+    KW_IF /
+    KW_ELSE /
+    KW_WHILE
 
 FN_NAME <- "#"? IDENTIFIER {
     return string(c.text), nil
@@ -338,6 +348,8 @@ LIST_LITERAL
 
 PRIMARY_EXPR <- 
     LABEL_DEC
+    / IF_STMT
+    / WHILE_STMT
     / BREAK_STMT
     / LITERAL 
     / NAME_REF 
@@ -450,10 +462,10 @@ ADD_BINARY_EXPR
 } 
 
 Comparision_Op 
-<- ">"
-/  "<"
-/  ">="
+<- ">="
 /  "<="
+/  ">"
+/  "<"
 
 COMPARISION_BINARY_EXPR 
 <- left:ADD_BINARY_EXPR right:(_ Comparision_Op _ ADD_BINARY_EXPR)* {
@@ -726,7 +738,33 @@ BREAK_STMT <- KW_BREAK label:(_INLINE_WS BREAK_LABEL)? val:(_INLINE_WS EXPR)? {
     }, nil
 }
 
-STMT <- BIND_DEC / RETURN_STMT / BREAK_STMT / EXPR
+ELSE_BRANCH <- KW_ELSE _ branch:(IF_STMT / BLOCK) {
+    return branch, nil
+}
+
+IF_STMT <- KW_IF _ cond:EXPR _ then:BLOCK el:(_ ELSE_BRANCH)? {
+    var else_branch any
+    if el != nil {
+        else_branch = AnyValToType[[]any]("IF_STMT.else", el)[1]
+    }
+
+    return ir.IfStmt{
+        Cond: AnyValToType[ir.Expr]("IF_STMT.cond", cond),
+        Then: AnyValToType[ir.Block]("IF_STMT.then", then),
+        Else: else_branch,
+        Pos: currentPosition(c),
+    }, nil
+}
+
+WHILE_STMT <- KW_WHILE _ cond:EXPR _ body:BLOCK {
+    return ir.WhileStmt{
+        Cond: AnyValToType[ir.Expr]("WHILE_STMT.cond", cond),
+        Body: AnyValToType[ir.Block]("WHILE_STMT.body", body),
+        Pos: currentPosition(c),
+    }, nil
+}
+
+STMT <- BIND_DEC / RETURN_STMT / BREAK_STMT / IF_STMT / WHILE_STMT / EXPR
 
 BLOCK <- "{" _ stmts:(_ STMT)* _ "}" {
     var stmt_list []any = []any{}
@@ -743,10 +781,21 @@ BLOCK <- "{" _ stmts:(_ STMT)* _ "}" {
     }, nil
 }
 
-LABEL_DEC <- name:IDENTIFIER _ ":" !":" _ body:BLOCK {
+LABELABLE <- BLOCK / IF_STMT / WHILE_STMT
+
+LABEL_DEC <- name:IDENTIFIER _ ":" !":" _ body:LABELABLE {
+    var blk ir.Block
+    if b, ok := body.(ir.Block); ok {
+        blk = b
+    } else {
+        blk = ir.Block{
+            Stmts: []any{body},
+            Pos: currentPosition(c),
+        }
+    }
     return ir.LabelDec{
         Name: string(AnyValToType[[]uint8]("LABEL_DEC.name", name)),
-        Body: AnyValToType[ir.Block]("LABEL_DEC.body", body),
+        Body: blk,
         Pos: currentPosition(c),
     }, nil
 }
