@@ -76,13 +76,13 @@ PROGRAM <- (_ TOP_LEVEL)*
 TOP_LEVEL <- BIND_DEC
 
 
-KW_FN <- "fn" 
-KW_VAR <- "var"
-KW_TYPE <- "type"
-KW_NONE <- "none" 
-KW_BOOL <- "true" / "false"
-KW_READONLY <- "ro"
-KW_COMPTIME <- "comptime"
+KW_FN <- "fn" ![a-zA-Z0-9_]
+KW_VAR <- "var" ![a-zA-Z0-9_]
+KW_TYPE <- "type" ![a-zA-Z0-9_]
+KW_NONE <- "none" ![a-zA-Z0-9_]
+KW_BOOL <- ("true" / "false") ![a-zA-Z0-9_]
+KW_READONLY <- "ro" ![a-zA-Z0-9_]
+KW_COMPTIME <- "comptime" ![a-zA-Z0-9_]
 
 KEYWORD <- 
     KW_VAR /
@@ -233,32 +233,124 @@ TYPE_REF_ARGS <-
         return result, nil
     }
 
+TYPE_BASE <- 
+    name:IDENTIFIER
+    args:TYPE_REF_ARGS? {
+        var type_args []ir.TYPE_REF = []ir.TYPE_REF{}
+        if args != nil {
+            type_args = AnySliceToSliceOfType[ir.TYPE_REF]("TYPE_BASE.type_args", args)
+        }
+
+        return ir.TypeBase{
+            Name: string(AnyValToType[[]uint8]("TYPE_BASE.name", name)),
+            Args: type_args,
+        }, nil
+    }
+
+TYPE_LIST <- 
+    "[" 
+    _ 
+    "]" 
+    _ 
+    elem:TYPE_REF {
+        itemType := AnyValToType[ir.TYPE_REF]("TYPE_LIST.elem", elem)
+        return ir.TypeList{
+            ItemType: itemType,
+        }, nil
+    }
+
+FN_PARAM <- 
+    name:(IDENTIFIER _ ":" _)? 
+    ptype:TYPE_REF {
+        param_name := ""
+        if name != nil {
+            n := AnyValToType[[]any]("FN_PARAM.name", name)[0]
+            param_name = string(AnyValToType[[]uint8]("FN_PARAM.name_str", n))
+        }
+        param_type := AnyValToType[ir.TYPE_REF]("FN_PARAM.ptype", ptype)
+        return ir.FnParam{
+            Name: param_name,
+            Type: param_type,
+        }, nil
+    }
+
+FN_PARAM_LIST <- 
+    first:FN_PARAM 
+    rest:(_ "," _ FN_PARAM)* 
+    (_ ",")? {
+        result := []ir.FnParam{
+            AnyValToType[ir.FnParam]("FN_PARAM_LIST.first", first),
+        }
+        if rest != nil {
+            rest_list := AnyValToType[[]any]("FN_PARAM_LIST.rest_list", rest)
+            for _, tuple := range rest_list {
+                p := AnyValToType[[]any]("FN_PARAM_LIST.tuple", tuple)[3]
+                result = append(result, AnyValToType[ir.FnParam]("FN_PARAM_LIST.p", p))
+            }
+        }
+        return result, nil
+    }
+
+TYPE_FN <- 
+    KW_FN 
+    _ 
+    "(" 
+    _ 
+    params:FN_PARAM_LIST? 
+    _ 
+    ")" 
+    ret:(_ TYPE_REF)? {
+        var fn_params []ir.FnParam = []ir.FnParam{}
+        if params != nil {
+            fn_params = AnyValToType[[]ir.FnParam]("TYPE_FN.params", params)
+        }
+
+        var return_type *ir.TYPE_REF
+        if ret != nil {
+            r := AnyValToType[[]any]("TYPE_FN.ret", ret)[1]
+            t := AnyValToType[ir.TYPE_REF]("TYPE_FN.ret_type", r)
+            return_type = &t
+        }
+
+        return ir.TypeFn{
+            Params: fn_params,
+            ReturnType: return_type,
+        }, nil
+    }
+
+TYPE_ACTUAL <- TYPE_FN / TYPE_LIST / TYPE_BASE
+
 TYPE_REF <- 
     is_comptime:KW_COMPTIME?
     _
     is_readonly:KW_READONLY? 
     _ 
     is_optional:"?"? 
-    name:IDENTIFIER
-    args:TYPE_REF_ARGS?
-    {
+    _
+    actual:TYPE_ACTUAL {
         constrain := ir.TypeConstrain{
             Comptime: is_comptime != nil,
             ReadOnly: is_readonly != nil,
             Optional: is_optional != nil,
         }
 
-        var type_args []ir.TYPE_REF = []ir.TYPE_REF{}
-
-        if args != nil {
-            type_args = AnySliceToSliceOfType[ir.TYPE_REF]("BIND_DEC.type_args", args)
+        var kind ir.TypeRefKind
+        switch actual.(type) {
+        case ir.TypeBase:
+            kind = ir.TYPE_BASE
+        case ir.TypeList:
+            kind = ir.TYPE_LIST
+        case ir.TypeFn:
+            kind = ir.TYPE_FN
+        default:
+            gpanic("TYPE_REF", fmt.Sprintf("unexpected type %T", actual))
         }
 
         return ir.TYPE_REF{
             Pos: currentPosition(c),
-            Args: type_args,
-            Name: string(AnyValToType[[]uint8]("TYPE_REF.name", name)),
+            Kind: kind,
             Constrain: constrain,
+            Value: actual,
         }, nil
     }
 
@@ -285,9 +377,13 @@ BIND_DEC <-
         resolved_type = AnyValToType[ir.TYPE_REF]("BIND_DEC.resolved_type", extracted_type)
     } else {
         resolved_type = ir.TYPE_REF{
-            Name: "infer",
+            Kind: ir.TYPE_BASE,
             Pos: currentPosition(c),
             Constrain: ir.TypeConstrain{},
+            Value: ir.TypeBase{
+                Name: "infer",
+                Args: []ir.TYPE_REF{},
+            },
         }
     }
 

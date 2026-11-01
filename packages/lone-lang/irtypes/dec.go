@@ -7,15 +7,88 @@ type BIND_DEC struct {
 	Type  TYPE_REF
 }
 
-type TYPE_REF struct {
-	Pos       Position
-	Name      string
-	Args      []TYPE_REF
-	Constrain TypeConstrain
+type TypeRefKind int
+
+const (
+	TYPE_BASE TypeRefKind = iota
+	TYPE_LIST
+	TYPE_FN
+)
+
+func (k TypeRefKind) String() string {
+	switch k {
+	case TYPE_BASE:
+		return "TypeBase"
+	case TYPE_LIST:
+		return "TypeList"
+	case TYPE_FN:
+		return "TypeFn"
+	default:
+		return "Unknown"
+	}
 }
 
 type TypeConstrain struct {
 	ReadOnly bool
 	Optional bool
 	Comptime bool
+}
+
+type TYPE_REF struct {
+	Pos       Position
+	Kind      TypeRefKind
+	Constrain TypeConstrain
+	Value     any
+}
+
+func (t TYPE_REF) AsBase() *TypeBase {
+	switch v := t.Value.(type) {
+	case *TypeBase:
+		return v
+	case TypeBase:
+		return &v
+	default:
+		return nil
+	}
+}
+
+func (t TYPE_REF) AsList() *TypeList {
+	switch v := t.Value.(type) {
+	case *TypeList:
+		return v
+	case TypeList:
+		return &v
+	default:
+		return nil
+	}
+}
+
+func (t TYPE_REF) AsFn() *TypeFn {
+	switch v := t.Value.(type) {
+	case *TypeFn:
+		return v
+	case TypeFn:
+		return &v
+	default:
+		return nil
+	}
+}
+
+type TypeBase struct {
+	Name string
+	Args []TYPE_REF
+}
+
+type TypeList struct {
+	ItemType TYPE_REF
+}
+
+type FnParam struct {
+	Name string
+	Type TYPE_REF
+}
+
+type TypeFn struct {
+	Params     []FnParam
+	ReturnType *TYPE_REF
 }

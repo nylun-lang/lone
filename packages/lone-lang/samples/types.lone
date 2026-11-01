@@ -1,0 +1,8 @@
+var simple_list: []int = 1
+var matrix: [][]int = 1
+var opt_list: ?[]int = 1
+var fn_empty: fn () int = 1
+var fn_void: fn () = 1
+var fn_multi: fn (a: int, b: string) bool = 1
+var fn_nested: fn (cb: fn (x: int) bool) []string = 1
+var list_of_fn: []fn (v: int) string = 1
