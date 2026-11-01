@@ -1,0 +1,8 @@
+analyze-ir op:
+    go run cmd/main.go -ir {{op}}
+
+analyze-json op:
+    go run cmd/main.go -nodes  {{op}}
+
+analyze-nodes op:
+    go run cmd/main.go -nodes  {{op}}
