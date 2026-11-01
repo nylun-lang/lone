@@ -81,13 +81,17 @@ KW_VAR <- "var"
 KW_TYPE <- "type"
 KW_NONE <- "none" 
 KW_BOOL <- "true" / "false"
+KW_READONLY <- "ro"
+KW_COMPTIME <- "comptime"
 
 KEYWORD <- 
     KW_VAR /
     KW_TYPE /
     KW_FN /
     KW_BOOL /
-    KW_NONE
+    KW_NONE /
+    KW_READONLY /
+    KW_COMPTIME 
 
 IDENTIFIER <- !KEYWORD [a-zA-Z_] [a-zA-Z0-9_]* {
     return c.text, nil
@@ -213,10 +217,56 @@ PRIMARY_EXPR
 
 EXPR <- PRIMARY_EXPR
 
+TYPE_REF_ARGS <- 
+    "<"
+    _
+    first:TYPE_REF
+    rest:(_ "," _ TYPE_REF)*
+    _
+    ">" {
+        result := []any{first}
+        rest_list := AnyValToType[[]any]("TYPE_REF_ARGS.rest_list", rest)
+        for _, tuple := range(rest_list) {
+            arg := AnyValToType[[]any]("TYPE_REF_ARGS.arg", tuple)[3]
+            result = append(result, arg)
+        }
+        return result, nil
+    }
+
+TYPE_REF <- 
+    is_comptime:KW_COMPTIME?
+    _
+    is_readonly:KW_READONLY? 
+    _ 
+    is_optional:"?"? 
+    name:IDENTIFIER
+    args:TYPE_REF_ARGS?
+    {
+        constrain := ir.TypeConstrain{
+            Comptime: is_comptime != nil,
+            ReadOnly: is_readonly != nil,
+            Optional: is_optional != nil,
+        }
+
+        var type_args []ir.TYPE_REF = []ir.TYPE_REF{}
+
+        if args != nil {
+            type_args = AnySliceToSliceOfType[ir.TYPE_REF]("BIND_DEC.type_args", args)
+        }
+
+        return ir.TYPE_REF{
+            Pos: currentPosition(c),
+            Args: type_args,
+            Name: string(AnyValToType[[]uint8]("TYPE_REF.name", name)),
+            Constrain: constrain,
+        }, nil
+    }
+
 BIND_DEC <- 
     KW_VAR 
     _ 
     name:IDENTIFIER 
+    vtype:(":" _ TYPE_REF)?
     value:(_ "=" _ EXPR)? {
 
     pos := currentPosition(c)
@@ -229,9 +279,22 @@ BIND_DEC <-
         resolved = ir.Literal{ Kind: ir.LITERAL_UNINITIALIZED }
     }
 
+    var resolved_type ir.TYPE_REF
+    if vtype != nil {
+        extracted_type := AnyValToType[[]any]("BIND_DEC.resolved_type", vtype)[2]
+        resolved_type = AnyValToType[ir.TYPE_REF]("BIND_DEC.resolved_type", extracted_type)
+    } else {
+        resolved_type = ir.TYPE_REF{
+            Name: "infer",
+            Pos: currentPosition(c),
+            Constrain: ir.TypeConstrain{},
+        }
+    }
+
     return ir.BIND_DEC{
         Pos: pos,
         Name: string(AnyValToType[[]uint8]("BIND_DEC.name", name)),
         Value: resolved,
+        Type: resolved_type,
     }, nil
 }
