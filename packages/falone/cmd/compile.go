@@ -3,7 +3,10 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 
+	"falone/adapter"
 	"falone/lowering"
 	"falone/mirtypes"
 	"falone/transpile"
@@ -14,10 +17,11 @@ import (
 )
 
 var (
-	compileMirFlag    bool
-	compileWatFlag    bool
-	compileOutFlag    string
-	compileTargetFlag string
+	compileMirFlag     bool
+	compileWatFlag     bool
+	compileOutFlag     string
+	compileTargetFlag  string
+	compileAdapterFlag string
 )
 
 var compileCmd = &cobra.Command{
@@ -61,6 +65,9 @@ func init() {
 	compileCmd.PersistentFlags().BoolVarP(&compileMirFlag, "mir", "m", false, "Print Falone MIR assembly")
 	compileCmd.PersistentFlags().BoolVarP(&compileWatFlag, "wat", "w", false, "Print WebAssembly Text (WAT)")
 	compileCmd.PersistentFlags().StringVarP(&compileOutFlag, "output", "o", "", "Write WebAssembly output to specified file")
+	compileCmd.PersistentFlags().StringVar(&compileAdapterFlag, "with-adapter", "", "Generate runtime glue adapter ('node' or 'browser')")
+	compileCmd.PersistentFlags().StringVar(&compileAdapterFlag, "with-adater", "", "Alias for --with-adapter")
+	_ = compileCmd.PersistentFlags().MarkHidden("with-adater")
 	compileCmd.Flags().StringVarP(&compileTargetFlag, "target", "t", "wasi", "Compilation target ('wasi' or 'web')")
 
 	compileCmd.AddCommand(compileWasmCmd)
@@ -107,12 +114,58 @@ func runCompile(filePath string, target transpile.Target) error {
 		return fmt.Errorf("transpilation error: %w", err)
 	}
 
+	// 5. Generate runtime adapter if requested
+	var adapterCode string
+	var adapterKind adapter.AdapterKind
+	if compileAdapterFlag != "" {
+		adapterKind, err = adapter.ParseAdapterKind(compileAdapterFlag)
+		if err != nil {
+			return err
+		}
+
+		wasmFileName := strings.TrimSuffix(filepath.Base(filePath), filepath.Ext(filePath)) + ".wasm"
+		if compileOutFlag != "" {
+			ext := filepath.Ext(compileOutFlag)
+			if ext == ".wat" || ext == ".wasm" {
+				wasmFileName = strings.TrimSuffix(filepath.Base(compileOutFlag), ext) + ".wasm"
+			} else if ext == ".js" {
+				wasmFileName = strings.TrimSuffix(filepath.Base(compileOutFlag), ".js") + ".wasm"
+			}
+		}
+
+		adapterCode, err = adapter.GenerateAdapter(adapterKind, wasmFileName)
+		if err != nil {
+			return fmt.Errorf("adapter generation error: %w", err)
+		}
+	}
+
 	// If output file specified
 	if compileOutFlag != "" {
-		if err := os.WriteFile(compileOutFlag, []byte(watText), 0644); err != nil {
+		watOutPath := compileOutFlag
+		var adapterOutPath string
+		if adapterCode != "" {
+			ext := filepath.Ext(compileOutFlag)
+			if ext == ".js" {
+				adapterOutPath = compileOutFlag
+				watOutPath = strings.TrimSuffix(compileOutFlag, ".js") + ".wat"
+			} else {
+				base := strings.TrimSuffix(compileOutFlag, ext)
+				adapterOutPath = base + ".adapter.js"
+			}
+		}
+
+		if err := os.WriteFile(watOutPath, []byte(watText), 0644); err != nil {
 			return fmt.Errorf("failed to write output file: %w", err)
 		}
-		fmt.Printf("Successfully compiled to %s\n", compileOutFlag)
+
+		if adapterOutPath != "" {
+			if err := os.WriteFile(adapterOutPath, []byte(adapterCode), 0644); err != nil {
+				return fmt.Errorf("failed to write adapter file: %w", err)
+			}
+			fmt.Printf("Successfully compiled to %s and generated %s adapter %s\n", watOutPath, adapterKind, adapterOutPath)
+		} else {
+			fmt.Printf("Successfully compiled to %s\n", watOutPath)
+		}
 		return nil
 	}
 
@@ -135,6 +188,14 @@ func runCompile(filePath string, target transpile.Target) error {
 	if printWat {
 		fmt.Println("=== WEBASSEMBLY TEXT (WAT) ===")
 		fmt.Print(watText)
+	}
+
+	if adapterCode != "" {
+		if printMir || printWat {
+			fmt.Println()
+		}
+		fmt.Printf("=== RUNTIME ADAPTER (%s) ===\n", adapterKind)
+		fmt.Print(adapterCode)
 	}
 
 	return nil
