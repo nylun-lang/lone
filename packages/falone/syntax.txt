@@ -1,0 +1,30 @@
+# falone instruction set
+
+- add, div, dub, mul
+- cmp.lt, cmp.gt, cmp.eq
+- jump, branch, return
+- call
+- const
+
+```mir
+fn @add(%a: i32, %b: i32) -> i32 {
+    entry:
+        %r3 = add i32 %a, %b
+    exit:
+        return %r3
+}
+
+fn main() -> void {
+    entry:
+        %r1 = call @add 1 2
+        %condition = cmp.lt %r1 10
+        branch %condition, if_block, exit
+    
+    if_block:
+        call @do_foo
+        jump exit
+
+    exit:
+        return
+}
+```
