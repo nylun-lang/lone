@@ -14,9 +14,10 @@ import (
 )
 
 var (
-	compileMirFlag bool
-	compileWatFlag bool
-	compileOutFlag string
+	compileMirFlag    bool
+	compileWatFlag    bool
+	compileOutFlag    string
+	compileTargetFlag string
 )
 
 var compileCmd = &cobra.Command{
@@ -33,6 +34,7 @@ func init() {
 	compileCmd.Flags().BoolVarP(&compileMirFlag, "mir", "m", false, "Print Falone MIR assembly")
 	compileCmd.Flags().BoolVarP(&compileWatFlag, "wat", "w", false, "Print WebAssembly Text (WAT)")
 	compileCmd.Flags().StringVarP(&compileOutFlag, "output", "o", "", "Write WebAssembly output to specified file")
+	compileCmd.Flags().StringVarP(&compileTargetFlag, "target", "t", "wasi", "Compilation target ('wasi' or 'web')")
 }
 
 func runCompile(filePath string) error {
@@ -70,7 +72,7 @@ func runCompile(filePath string) error {
 	}
 
 	// 4. Transpile Falone MIR to WAT
-	watText, err := transpile.TranspileToWat(mirMod)
+	watText, err := transpile.TranspileToWatWithTarget(mirMod, transpile.Target(compileTargetFlag))
 	if err != nil {
 		return fmt.Errorf("transpilation error: %w", err)
 	}

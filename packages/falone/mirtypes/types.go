@@ -241,7 +241,13 @@ func (f *MirFunction) AddLocal(reg string, typ MirT) {
 	f.Locals[reg] = typ
 }
 
+type MirDataSegment struct {
+	Offset int
+	Value  string
+}
+
 type MirModule struct {
-	Functions []*MirFunction
-	Globals   map[string]MirT
+	Functions    []*MirFunction
+	Globals      map[string]MirT
+	DataSegments []MirDataSegment
 }

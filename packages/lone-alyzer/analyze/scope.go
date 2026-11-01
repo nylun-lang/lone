@@ -94,11 +94,25 @@ type ScopeStack struct {
 // NewScopeStack initializes a stack with a top-level file scope.
 func NewScopeStack(fileName string) *ScopeStack {
 	root := NewScope(ScopeFile, fileName, nil)
+	registerBuiltins(root)
 	return &ScopeStack{
 		root:    root,
 		current: root,
 		all:     []*Scope{root},
 	}
+}
+
+func registerBuiltins(root *Scope) {
+	_ = root.Define(&Symbol{
+		Name: "#print",
+		Kind: SymbolFn,
+		Type: &FnType{
+			Params: []FnParamType{
+				{Name: "str", Type: TypeStr},
+			},
+			ReturnType: TypeVoid,
+		},
+	})
 }
 
 // Root returns the root file scope.

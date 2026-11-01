@@ -335,3 +335,44 @@ fn test_main() void {
 		t.Fatalf("expected 0 diagnostics when calling void fn, got: %v", diagsVoid)
 	}
 }
+
+func TestPrintIntrinsicAnalysis(t *testing.T) {
+	code := `
+fn main() void {
+	#print("Hello, world!\n")
+}
+`
+	ast, err := parser.Parse("print.lone", []byte(code))
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+
+	analyzer := analyze.NewAnalyzer("print.lone", analyze.DefaultConfig())
+	prog, diags := analyzer.AnalyzeTyped(ast)
+	if len(diags) != 0 {
+		t.Fatalf("expected 0 diagnostics for #print call, got: %v", diags)
+	}
+
+	if len(prog.Decls) != 1 {
+		t.Fatalf("expected 1 decl, got %d", len(prog.Decls))
+	}
+	fnMain, ok := prog.Decls[0].(*air.TFnDec)
+	if !ok {
+		t.Fatalf("expected TFnDec, got %T", prog.Decls[0])
+	}
+	if len(fnMain.Body.Stmts) != 1 {
+		t.Fatalf("expected 1 stmt, got %d", len(fnMain.Body.Stmts))
+	}
+	exprStmt, ok := fnMain.Body.Stmts[0].(*air.TExprStmt)
+	if !ok {
+		t.Fatalf("expected TExprStmt, got %T", fnMain.Body.Stmts[0])
+	}
+	callExpr, ok := exprStmt.Expr.(*air.TCallExpr)
+	if !ok {
+		t.Fatalf("expected TCallExpr, got %T", exprStmt.Expr)
+	}
+	ref, ok := callExpr.Callee.(*air.TVarRefExpr)
+	if !ok || ref.Name != "#print" {
+		t.Fatalf("expected callee '#print', got %+v", callExpr.Callee)
+	}
+}

@@ -467,6 +467,9 @@ func (te *TypeEvaluator) evalLiteral(lit *ir.Literal) *TLiteralExpr {
 func (te *TypeEvaluator) evalNameRef(nr *ir.NameRef) *TVarRefExpr {
 	sym := te.stack.Resolve(nr.Name)
 	if sym == nil {
+		if IsIntrinsic(nr.Name) {
+			return &TVarRefExpr{Name: nr.Name, Typ: TypeAny, Pos_: nr.Pos}
+		}
 		te.addDiag(SeverityError, nr.Pos, "type/undefined-identifier",
 			fmt.Sprintf("undefined identifier %q", nr.Name))
 		return &TVarRefExpr{Name: nr.Name, Typ: TypeUnknown, Pos_: nr.Pos}

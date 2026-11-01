@@ -28,17 +28,40 @@ type lowerer struct {
 	blockId       int
 	vars          map[string]string // maps variable name to register name
 	loopExitStack []string          // tracks enclosing loop exit block labels
+	dataOffset    int               // tracks linear memory allocation offset
+	stringOffsets map[string]int    // deduplicates string literals to data offsets
+	stringVarLens map[string]int    // tracks known string length for variables
 }
 
 func newLowerer() *lowerer {
 	return &lowerer{
 		mod: &mirtypes.MirModule{
-			Functions: make([]*mirtypes.MirFunction, 0),
-			Globals:   make(map[string]mirtypes.MirT),
+			Functions:    make([]*mirtypes.MirFunction, 0),
+			Globals:      make(map[string]mirtypes.MirT),
+			DataSegments: make([]mirtypes.MirDataSegment, 0),
 		},
 		vars:          make(map[string]string),
 		loopExitStack: make([]string, 0),
+		dataOffset:    16, // offsets 0..15 reserved for WASI ciovec_t scratchpad
+		stringOffsets: make(map[string]int),
+		stringVarLens: make(map[string]int),
 	}
+}
+
+func (l *lowerer) allocString(val string) int {
+	if offset, exists := l.stringOffsets[val]; exists {
+		return offset
+	}
+	offset := l.dataOffset
+	l.stringOffsets[val] = offset
+	l.mod.DataSegments = append(l.mod.DataSegments, mirtypes.MirDataSegment{
+		Offset: offset,
+		Value:  val,
+	})
+	// Advance offset by string byte length + 1 (null terminator) and align to 4 bytes
+	l.dataOffset += len(val) + 1
+	l.dataOffset = (l.dataOffset + 3) & ^3
+	return offset
 }
 
 func (l *lowerer) freshReg(prefix string, typ mirtypes.MirT) string {
@@ -136,6 +159,17 @@ func (l *lowerer) lowerStmt(stmt air.TStmt) {
 		mType := toMirType(s.Type)
 		reg := l.freshReg("v_"+s.Name, mType)
 		l.vars[s.Name] = reg
+
+		// Track string variable lengths for intrinsics like #print
+		if lit, ok := s.Value.(*air.TLiteralExpr); ok {
+			if strVal, ok := lit.Value.(string); ok {
+				l.stringVarLens[s.Name] = len(strVal)
+			}
+		} else if ref, ok := s.Value.(*air.TVarRefExpr); ok {
+			if strLen, ok := l.stringVarLens[ref.Name]; ok {
+				l.stringVarLens[s.Name] = strLen
+			}
+		}
 
 		l.curBlk.Insts = append(l.curBlk.Insts, mirtypes.MirCopyInst{
 			Dest: reg,
@@ -246,6 +280,13 @@ func (l *lowerer) lowerExpr(expr air.TExpr) mirtypes.MirOperand {
 
 	switch e := expr.(type) {
 	case *air.TLiteralExpr:
+		if strVal, ok := e.Value.(string); ok && e.Kind == ir.LITERAL_STRING {
+			offset := l.allocString(strVal)
+			return mirtypes.MirConst{
+				Type:  mirtypes.MirI32,
+				Value: offset,
+			}
+		}
 		return mirtypes.MirConst{
 			Type:  mType,
 			Value: e.Value,
@@ -338,6 +379,39 @@ func (l *lowerer) lowerExpr(expr air.TExpr) mirtypes.MirOperand {
 		calleeName := "unknown"
 		if ref, ok := e.Callee.(*air.TVarRefExpr); ok {
 			calleeName = ref.Name
+		}
+
+		// Handle built-in intrinsics: #print
+		if calleeName == "#print" {
+			var ptrOp mirtypes.MirOperand = mirtypes.MirConst{Type: mirtypes.MirI32, Value: 0}
+			var lenOp mirtypes.MirOperand = mirtypes.MirConst{Type: mirtypes.MirI32, Value: 0}
+
+			if len(e.Args) > 0 {
+				arg := e.Args[0]
+				if lit, ok := arg.(*air.TLiteralExpr); ok {
+					if strVal, ok := lit.Value.(string); ok {
+						offset := l.allocString(strVal)
+						ptrOp = mirtypes.MirConst{Type: mirtypes.MirI32, Value: offset}
+						lenOp = mirtypes.MirConst{Type: mirtypes.MirI32, Value: len(strVal)}
+					} else {
+						ptrOp = l.lowerExpr(arg)
+					}
+				} else if ref, ok := arg.(*air.TVarRefExpr); ok {
+					ptrOp = l.lowerExpr(arg)
+					if strLen, ok := l.stringVarLens[ref.Name]; ok {
+						lenOp = mirtypes.MirConst{Type: mirtypes.MirI32, Value: strLen}
+					}
+				} else {
+					ptrOp = l.lowerExpr(arg)
+				}
+			}
+
+			l.curBlk.Insts = append(l.curBlk.Insts, mirtypes.MirCallInst{
+				Dest:   "",
+				Callee: "__lone_rt_print",
+				Args:   []mirtypes.MirOperand{ptrOp, lenOp},
+			})
+			return mirtypes.MirConst{Type: mirtypes.MirVoid, Value: 0}
 		}
 
 		var args []mirtypes.MirOperand

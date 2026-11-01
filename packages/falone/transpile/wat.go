@@ -6,21 +6,66 @@ import (
 	"strings"
 )
 
-// TranspileToWat converts a Falone MirModule into WebAssembly Text format (WAT).
+// Target represents the compilation target for WebAssembly output.
+type Target string
+
+const (
+	TargetWasi Target = "wasi"
+	TargetWeb  Target = "web"
+)
+
+// TranspileToWat converts a Falone MirModule into WebAssembly Text format (WAT) targeting WASI.
 func TranspileToWat(mod *mirtypes.MirModule) (string, error) {
+	return TranspileToWatWithTarget(mod, TargetWasi)
+}
+
+// TranspileToWatWithTarget converts a Falone MirModule into WebAssembly Text format for a specific target.
+func TranspileToWatWithTarget(mod *mirtypes.MirModule, target Target) (string, error) {
 	if mod == nil {
 		return "(module)", nil
 	}
 
+	if target == "" {
+		target = TargetWasi
+	}
+
 	var sb strings.Builder
 	sb.WriteString("(module\n")
+
+	needsPrint := usesPrintIntrinsic(mod)
+
+	// Target-specific imports
+	if needsPrint {
+		if target == TargetWeb {
+			sb.WriteString("  (import \"env\" \"print\" (func $__lone_rt_print (param i32 i32)))\n")
+		} else {
+			// WASI snapshot preview 1 fd_write import
+			sb.WriteString("  (import \"wasi_snapshot_preview1\" \"fd_write\" (func $__wasi_fd_write (param i32 i32 i32 i32) (result i32)))\n")
+		}
+	}
+
 	sb.WriteString("  (memory (export \"memory\") 1)\n")
+
+	// Linear memory data segments (string literals)
+	for _, seg := range mod.DataSegments {
+		sb.WriteString(fmt.Sprintf("  (data (i32.const %d) \"%s\")\n", seg.Offset, escapeWatString(seg.Value)))
+	}
 
 	// Global variables
 	for name, typ := range mod.Globals {
 		gName := cleanIdentifier(name)
 		wType := toWasmType(typ)
 		sb.WriteString(fmt.Sprintf("  (global $%s (mut %s) (%s.const 0))\n", gName, wType, wType))
+	}
+
+	// Inlined runtime built-in functions
+	if needsPrint && target != TargetWeb {
+		sb.WriteString("\n  ;; Inlined WASI #print runtime implementation\n")
+		sb.WriteString("  (func $__lone_rt_print (param $ptr i32) (param $len i32)\n")
+		sb.WriteString("    (i32.store (i32.const 0) (local.get $ptr))\n")
+		sb.WriteString("    (i32.store (i32.const 4) (local.get $len))\n")
+		sb.WriteString("    (drop (call $__wasi_fd_write (i32.const 1) (i32.const 0) (i32.const 1) (i32.const 8)))\n")
+		sb.WriteString("  )\n")
 	}
 
 	// Functions
@@ -36,6 +81,44 @@ func TranspileToWat(mod *mirtypes.MirModule) (string, error) {
 	return sb.String(), nil
 }
 
+func usesPrintIntrinsic(mod *mirtypes.MirModule) bool {
+	if mod == nil {
+		return false
+	}
+	for _, fn := range mod.Functions {
+		for _, blk := range fn.Blocks {
+			for _, inst := range blk.Insts {
+				if call, ok := inst.(mirtypes.MirCallInst); ok {
+					callee := cleanIdentifier(call.Callee)
+					if callee == "__lone_rt_print" || callee == "#print" || callee == "print" {
+						return true
+					}
+				}
+			}
+		}
+	}
+	return false
+}
+
+func escapeWatString(s string) string {
+	var sb strings.Builder
+	for i := 0; i < len(s); i++ {
+		b := s[i]
+		if b == '"' {
+			sb.WriteString(`\"`)
+		} else if b == '\\' {
+			sb.WriteString(`\\`)
+		} else if b >= 32 && b <= 126 {
+			sb.WriteByte(b)
+		} else {
+			sb.WriteString(fmt.Sprintf("\\%02x", b))
+		}
+	}
+	// Append trailing null-terminator for C interoperability
+	sb.WriteString("\\00")
+	return sb.String()
+}
+
 func transpileFunction(fn *mirtypes.MirFunction) (string, error) {
 	fnName := cleanIdentifier(fn.Name)
 	var sb strings.Builder
@@ -43,7 +126,7 @@ func transpileFunction(fn *mirtypes.MirFunction) (string, error) {
 	// Export main by default or if function is exported
 	exportStr := ""
 	if fnName == "main" {
-		exportStr = " (export \"main\")"
+		exportStr = " (export \"_start\") (export \"main\")"
 	}
 
 	sb.WriteString(fmt.Sprintf("  (func $%s%s", fnName, exportStr))

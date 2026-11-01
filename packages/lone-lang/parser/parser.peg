@@ -235,7 +235,15 @@ Escape <- '\\' cc:(
     / 'r'
     / 't'
 ) {
-    switch AnyValToType[byte]("Escape.c", cc) {
+    var b byte
+    if slice, ok := cc.([]byte); ok && len(slice) > 0 {
+        b = slice[0]
+    } else if bVal, ok := cc.(byte); ok {
+        b = bVal
+    } else {
+        b = AnyValToType[byte]("Escape.c", cc)
+    }
+    switch b {
     case 'n':
         return []byte{'\n'}, nil
     case 'r':
@@ -274,9 +282,9 @@ STRING <- '"' content:Inline_char* '"' {
 LITERAL <- NUMBER / BOOL / NONE / STRING
 
 
-NAME_REF <- id:IDENTIFIER {
+NAME_REF <- "#"? IDENTIFIER {
     return ir.NameRef{
-        Name: string(AnyValToType[[]uint8]("NAME_REF.id", id)),
+        Name: string(c.text),
         Pos: currentPosition(c),
     }, nil
 }

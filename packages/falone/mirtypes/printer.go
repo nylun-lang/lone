@@ -12,6 +12,13 @@ func FormatModule(mod *MirModule) string {
 	}
 
 	var sb strings.Builder
+	for _, seg := range mod.DataSegments {
+		sb.WriteString(fmt.Sprintf("data @%d %q\n", seg.Offset, seg.Value))
+	}
+	if len(mod.DataSegments) > 0 && len(mod.Functions) > 0 {
+		sb.WriteString("\n")
+	}
+
 	for i, fn := range mod.Functions {
 		if i > 0 {
 			sb.WriteString("\n\n")

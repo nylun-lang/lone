@@ -795,3 +795,38 @@ fn main() void {
 		t.Errorf("expected non-nil expr in drop2")
 	}
 }
+
+func TestIntrinsicCall(t *testing.T) {
+	code := `
+fn main() void {
+	#print("Hello, world!\n")
+}
+`
+	ast, err := parser.Parse("test_intrinsic.lone", []byte(code))
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+
+	rawList := ast.([]any)
+	if len(rawList) != 1 {
+		t.Fatalf("expected 1 declaration, got %d", len(rawList))
+	}
+
+	mainFn := rawList[0].([]any)[1].(ir.FN_DEC)
+	if len(mainFn.Body.Stmts) != 1 {
+		t.Fatalf("expected 1 stmt in mainFn, got %d", len(mainFn.Body.Stmts))
+	}
+
+	postExpr, ok := mainFn.Body.Stmts[0].(ir.PostFixExpr)
+	if !ok {
+		t.Fatalf("expected PostFixExpr, got %T", mainFn.Body.Stmts[0])
+	}
+
+	nameRef, ok := postExpr.Base.(ir.NameRef)
+	if !ok {
+		t.Fatalf("expected NameRef for Base, got %T", postExpr.Base)
+	}
+	if nameRef.Name != "#print" {
+		t.Errorf("expected '#print', got %q", nameRef.Name)
+	}
+}

@@ -98,8 +98,8 @@ func TestTranspileSyntaxExampleToWat(t *testing.T) {
 	if !strings.Contains(watText, "(func $add") {
 		t.Errorf("expected (func $add in WAT, got:\n%s", watText)
 	}
-	if !strings.Contains(watText, "(func $main (export \"main\")") {
-		t.Errorf("expected (func $main (export \"main\") in WAT, got:\n%s", watText)
+	if !strings.Contains(watText, `(func $main (export "_start") (export "main")`) {
+		t.Errorf("expected (func $main (export \"_start\") (export \"main\") in WAT, got:\n%s", watText)
 	}
 	if !strings.Contains(watText, "i32.add") {
 		t.Errorf("expected i32.add in WAT, got:\n%s", watText)
@@ -204,5 +204,85 @@ func TestTranspileWhileLoopToWat(t *testing.T) {
 	}
 	if !strings.Contains(watText, "br $while_head") {
 		t.Errorf("missing br $while_head in WAT:\n%s", watText)
+	}
+}
+
+func TestTranspilePrintIntrinsicToWatWasi(t *testing.T) {
+	fnMain := &mirtypes.MirFunction{
+		Name:       "main",
+		Params:     nil,
+		ReturnType: mirtypes.MirVoid,
+		Locals:     make(map[string]mirtypes.MirT),
+	}
+	entry := fnMain.AddBlock("entry")
+	entry.Insts = append(entry.Insts, mirtypes.MirCallInst{
+		Callee: "__lone_rt_print",
+		Args: []mirtypes.MirOperand{
+			mirtypes.MirConst{Type: mirtypes.MirI32, Value: 16},
+			mirtypes.MirConst{Type: mirtypes.MirI32, Value: 17},
+		},
+	})
+	entry.Terminator = mirtypes.MirReturn{}
+
+	mod := &mirtypes.MirModule{
+		Functions: []*mirtypes.MirFunction{fnMain},
+		DataSegments: []mirtypes.MirDataSegment{
+			{Offset: 16, Value: "Hello from Lone!\n"},
+		},
+	}
+
+	watText, err := transpile.TranspileToWatWithTarget(mod, transpile.TargetWasi)
+	if err != nil {
+		t.Fatalf("transpile failed: %v", err)
+	}
+
+	if !strings.Contains(watText, `(import "wasi_snapshot_preview1" "fd_write"`) {
+		t.Errorf("missing wasi_snapshot_preview1 fd_write import in WAT:\n%s", watText)
+	}
+	if !strings.Contains(watText, `(data (i32.const 16) "Hello from Lone!\0a\00")`) {
+		t.Errorf("missing or incorrect data segment in WAT:\n%s", watText)
+	}
+	if !strings.Contains(watText, `(func $__lone_rt_print (param $ptr i32) (param $len i32)`) {
+		t.Errorf("missing $__lone_rt_print function in WAT:\n%s", watText)
+	}
+	if !strings.Contains(watText, `call $__lone_rt_print`) {
+		t.Errorf("missing call to $__lone_rt_print in WAT:\n%s", watText)
+	}
+}
+
+func TestTranspilePrintIntrinsicToWatWeb(t *testing.T) {
+	fnMain := &mirtypes.MirFunction{
+		Name:       "main",
+		Params:     nil,
+		ReturnType: mirtypes.MirVoid,
+		Locals:     make(map[string]mirtypes.MirT),
+	}
+	entry := fnMain.AddBlock("entry")
+	entry.Insts = append(entry.Insts, mirtypes.MirCallInst{
+		Callee: "__lone_rt_print",
+		Args: []mirtypes.MirOperand{
+			mirtypes.MirConst{Type: mirtypes.MirI32, Value: 16},
+			mirtypes.MirConst{Type: mirtypes.MirI32, Value: 17},
+		},
+	})
+	entry.Terminator = mirtypes.MirReturn{}
+
+	mod := &mirtypes.MirModule{
+		Functions: []*mirtypes.MirFunction{fnMain},
+		DataSegments: []mirtypes.MirDataSegment{
+			{Offset: 16, Value: "Hello from Lone!\n"},
+		},
+	}
+
+	watText, err := transpile.TranspileToWatWithTarget(mod, transpile.TargetWeb)
+	if err != nil {
+		t.Fatalf("transpile failed: %v", err)
+	}
+
+	if !strings.Contains(watText, `(import "env" "print" (func $__lone_rt_print (param i32 i32)))`) {
+		t.Errorf("missing env print import in WAT:\n%s", watText)
+	}
+	if strings.Contains(watText, "wasi_snapshot_preview1") {
+		t.Errorf("did not expect wasi import for web target in WAT:\n%s", watText)
 	}
 }
