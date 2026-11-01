@@ -1,0 +1,24 @@
+var APP_VERSION = "1.0.0"
+var max_retries = 3
+
+fn compute_total(base: i32, multiplier: i32) i32 {
+	var result = base * multiplier
+	return result
+}
+
+fn execute_pipeline() void {
+	var initial_val = 50
+	var final_score = compute_total(initial_val, 2)
+	drop compute_total(10, 5)
+
+	var loop_count = 0
+	while loop_count < max_retries {
+		drop loop_count + 1
+		break
+	}
+
+	var computed_label = calc_blk: {
+		break calc_blk: final_score + 10
+	}
+	drop computed_label
+}

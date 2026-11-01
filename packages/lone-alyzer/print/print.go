@@ -1,12 +1,140 @@
 package print
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 
 	"lonealyzer/analyze"
 	air "lonealyzer/irtypes"
 )
+
+// PrintNodesJSON serializes the Typed IR node tree into formatted JSON.
+func PrintNodesJSON(node any) (string, error) {
+	bytes, err := json.MarshalIndent(node, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	return string(bytes), nil
+}
+
+// PrintNodeTree renders a structured indented tree representation of the Typed IR nodes.
+func PrintNodeTree(node air.TNode, indent int) string {
+	if node == nil {
+		return "<nil>\n"
+	}
+
+	pad := strings.Repeat("  ", indent)
+
+	switch n := node.(type) {
+	case *air.TProgram:
+		var sb strings.Builder
+		sb.WriteString(pad + "TProgram\n")
+		for _, d := range n.Decls {
+			sb.WriteString(PrintNodeTree(d, indent+1))
+		}
+		return sb.String()
+
+	case *air.TVarDec:
+		return fmt.Sprintf("%s├── TVarDec [name=%q, type=%s]\n%s", pad, n.Name, n.Type.String(), PrintNodeTree(n.Value, indent+1))
+
+	case *air.TFnDec:
+		var sb strings.Builder
+		sb.WriteString(fmt.Sprintf("%s├── TFnDec [name=%q, return=%s]\n", pad, n.Name, n.ReturnType.String()))
+		for _, p := range n.Params {
+			sb.WriteString(fmt.Sprintf("%s  ├── TFnParam [name=%q, type=%s]\n", pad, p.Name, p.Type.String()))
+		}
+		sb.WriteString(PrintNodeTree(&n.Body, indent+1))
+		return sb.String()
+
+	case *air.TBlock:
+		var sb strings.Builder
+		sb.WriteString(fmt.Sprintf("%s├── TBlock [stmts=%d]\n", pad, len(n.Stmts)))
+		for _, s := range n.Stmts {
+			sb.WriteString(PrintNodeTree(s, indent+1))
+		}
+		return sb.String()
+
+	case *air.TReturnStmt:
+		if n.Value != nil {
+			return fmt.Sprintf("%s├── TReturnStmt\n%s", pad, PrintNodeTree(n.Value, indent+1))
+		}
+		return fmt.Sprintf("%s├── TReturnStmt (void)\n", pad)
+
+	case *air.TDropStmt:
+		return fmt.Sprintf("%s├── TDropStmt\n%s", pad, PrintNodeTree(n.Expr, indent+1))
+
+	case *air.TBreakStmt:
+		return fmt.Sprintf("%s├── TBreakStmt [label=%q]\n", pad, n.Label)
+
+	case *air.TExprStmt:
+		return fmt.Sprintf("%s├── TExprStmt\n%s", pad, PrintNodeTree(n.Expr, indent+1))
+
+	case *air.TWhileStmt:
+		var sb strings.Builder
+		sb.WriteString(fmt.Sprintf("%s├── TWhileStmt\n", pad))
+		sb.WriteString(fmt.Sprintf("%s  ├── Cond:\n%s", pad, PrintNodeTree(n.Cond, indent+2)))
+		sb.WriteString(PrintNodeTree(&n.Body, indent+1))
+		return sb.String()
+
+	case *air.TIfStmt:
+		var sb strings.Builder
+		sb.WriteString(fmt.Sprintf("%s├── TIfStmt\n", pad))
+		sb.WriteString(fmt.Sprintf("%s  ├── Cond:\n%s", pad, PrintNodeTree(n.Cond, indent+2)))
+		sb.WriteString(PrintNodeTree(&n.Then, indent+1))
+		if n.Else != nil {
+			sb.WriteString(fmt.Sprintf("%s  ├── Else:\n", pad))
+			sb.WriteString(PrintNodeTree(n.Else, indent+2))
+		}
+		return sb.String()
+
+	case *air.TLabelDec:
+		var sb strings.Builder
+		sb.WriteString(fmt.Sprintf("%s├── TLabelDec [name=%q]\n", pad, n.Name))
+		sb.WriteString(PrintNodeTree(&n.Body, indent+1))
+		return sb.String()
+
+	case *air.TBinaryExpr:
+		return fmt.Sprintf("%s└── TBinaryExpr [op=%s, type=%s]\n%s%s", pad, n.Op, n.Typ.String(), PrintNodeTree(n.Left, indent+1), PrintNodeTree(n.Right, indent+1))
+
+	case *air.TUnaryExpr:
+		return fmt.Sprintf("%s└── TUnaryExpr [op=%s, type=%s]\n%s", pad, n.Op, n.Typ.String(), PrintNodeTree(n.Expr, indent+1))
+
+	case *air.TCallExpr:
+		var sb strings.Builder
+		sb.WriteString(fmt.Sprintf("%s└── TCallExpr [type=%s]\n", pad, n.Typ.String()))
+		sb.WriteString(fmt.Sprintf("%s  ├── Callee:\n%s", pad, PrintNodeTree(n.Callee, indent+2)))
+		for i, a := range n.Args {
+			sb.WriteString(fmt.Sprintf("%s  ├── Arg[%d]:\n%s", pad, i, PrintNodeTree(a, indent+2)))
+		}
+		return sb.String()
+
+	case *air.TLiteralExpr:
+		return fmt.Sprintf("%s└── TLiteralExpr [val=%v, type=%s]\n", pad, n.Value, n.Typ.String())
+
+	case *air.TVarRefExpr:
+		return fmt.Sprintf("%s└── TVarRefExpr [name=%q, type=%s]\n", pad, n.Name, n.Typ.String())
+
+	case *air.TObjectExpr:
+		var sb strings.Builder
+		sb.WriteString(fmt.Sprintf("%s└── TObjectExpr [type=%s]\n", pad, n.Typ.String()))
+		for _, f := range n.Fields {
+			sb.WriteString(fmt.Sprintf("%s  ├── .%s:\n%s", pad, f.Name, PrintNodeTree(f.Expr, indent+2)))
+		}
+		return sb.String()
+
+	case *air.TListExpr:
+		var sb strings.Builder
+		sb.WriteString(fmt.Sprintf("%s└── TListExpr [type=%s]\n", pad, n.Typ.String()))
+		for i, it := range n.Items {
+			sb.WriteString(fmt.Sprintf("%s  ├── [%d]:\n%s", pad, i, PrintNodeTree(it, indent+2)))
+		}
+		return sb.String()
+
+	default:
+		return fmt.Sprintf("%s└── %T\n", pad, node)
+	}
+}
 
 // FormatDiagnostic returns a user-readable string for a diagnostic.
 func FormatDiagnostic(d analyze.Diagnostic) string {
