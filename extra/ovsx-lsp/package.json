@@ -79,7 +79,9 @@
     "vscode:prepublish": "npm run compile",
     "compile": "tsc -b",
     "watch": "tsc -b -w",
-    "build": "tsc -b"
+    "build": "tsc -b",
+    "package": "npx @vscode/vsce package --no-dependencies",
+    "publish:ovsx": "npx ovsx publish lone-lsp-0.1.0.vsix"
   },
   "dependencies": {
     "vscode-languageclient": "^9.0.1"
