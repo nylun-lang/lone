@@ -11,6 +11,7 @@ import (
 	p "lone/pkg/parser"
 	"lone/pkg/sema"
 	"lone/pkg/wir"
+	lonelogger "lone/pkg2/lone-shared-logger"
 
 	"github.com/spf13/cobra"
 )
@@ -94,13 +95,28 @@ func runBuild(filePath string, target wir.Target) error {
 	typedProg, diags := analyzer.AnalyzeTyped(rawAst)
 
 	hasErrors := false
+	emitter := lonelogger.NewEmitter(os.Stderr, lonelogger.DefaultConfig())
 	for _, diag := range diags {
-		if diag.Severity == sema.SeverityError {
+		var sev lonelogger.Severity
+		switch diag.Severity {
+		case sema.SeverityError:
+			sev = lonelogger.SeverityError
 			hasErrors = true
-			fmt.Fprintf(os.Stderr, "Error [%s:%d:%d]: %s\n", filePath, diag.Pos.Line, diag.Pos.Col, diag.Message)
-		} else if diag.Severity == sema.SeverityWarning {
-			fmt.Fprintf(os.Stderr, "Warning [%s:%d:%d]: %s\n", filePath, diag.Pos.Line, diag.Pos.Col, diag.Message)
+		case sema.SeverityWarning:
+			sev = lonelogger.SeverityWarning
+		case sema.SeverityHint:
+			sev = lonelogger.SeverityHint
+		default:
+			sev = lonelogger.SeverityNote
 		}
+
+		diagObj := &lonelogger.Diagnostic{
+			Severity:    sev,
+			Code:        diag.Rule,
+			Message:     diag.Message,
+			PrimarySpan: lonelogger.PointSpan(filePath, diag.Pos.Line, diag.Pos.Col),
+		}
+		_ = emitter.Emit(diagObj, content)
 	}
 	if hasErrors {
 		return fmt.Errorf("compilation failed with type/semantic errors")

@@ -8,6 +8,7 @@ import (
 	"lone/pkg/diag"
 	p "lone/pkg/parser"
 	"lone/pkg/sema"
+	lonelogger "lone/pkg2/lone-shared-logger"
 
 	"github.com/spf13/cobra"
 )
@@ -66,18 +67,28 @@ var checkCmd = &cobra.Command{
 		}
 
 		hasErrors := false
+		emitter := lonelogger.NewEmitter(os.Stderr, lonelogger.DefaultConfig())
 		for _, d := range diags {
-			prefix := "INFO"
+			var sev lonelogger.Severity
 			switch d.Severity {
 			case sema.SeverityError:
-				prefix = "ERROR"
+				sev = lonelogger.SeverityError
 				hasErrors = true
 			case sema.SeverityWarning:
-				prefix = "WARN"
+				sev = lonelogger.SeverityWarning
 			case sema.SeverityHint:
-				prefix = "HINT"
+				sev = lonelogger.SeverityHint
+			default:
+				sev = lonelogger.SeverityNote
 			}
-			fmt.Fprintf(os.Stderr, "[%s] %s:%d:%d: %s\n", prefix, filePath, d.Pos.Line, d.Pos.Col, d.Message)
+
+			diagObj := &lonelogger.Diagnostic{
+				Severity:    sev,
+				Code:        d.Rule,
+				Message:     d.Message,
+				PrimarySpan: lonelogger.PointSpan(filePath, d.Pos.Line, d.Pos.Col),
+			}
+			_ = emitter.Emit(diagObj, content)
 		}
 
 		if hasErrors {
