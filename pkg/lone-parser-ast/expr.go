@@ -64,6 +64,7 @@ const (
 	UNARY_OP_POSITIVE = "+"
 	UNARY_OP_NEGATIVE = "-"
 	UNARY_OP_NOT      = "!"
+	UNARY_OP_RAW_REF  = "&raw"
 	UNARY_OP_REF      = "&"
 	UNARY_OP_DEREF    = "*"
 )

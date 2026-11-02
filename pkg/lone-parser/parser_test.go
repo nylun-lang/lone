@@ -830,3 +830,92 @@ fn main() void {
 		t.Errorf("expected '#print', got %q", nameRef.Name)
 	}
 }
+
+func TestImportDeclaration(t *testing.T) {
+	code := `
+import .readline from :std:io
+import .foo, .bar, from .std
+import :wasi:cli as cli
+`
+	ast, err := loneparser.Parse("test_import.lone", []byte(code))
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+
+	rawList, ok := ast.([]any)
+	if !ok || len(rawList) != 3 {
+		t.Fatalf("expected 3 declarations, got %d (%T)", len(rawList), ast)
+	}
+
+	// 1. import .readline from :std:io
+	imp1, ok := rawList[0].([]any)[1].(ir.ImportDecl)
+	if !ok {
+		t.Fatalf("expected ImportDecl, got %T", rawList[0].([]any)[1])
+	}
+	if len(imp1.Symbols) != 1 || imp1.Symbols[0] != "readline" {
+		t.Errorf("expected symbols ['readline'], got %v", imp1.Symbols)
+	}
+	if imp1.Source != ":std:io" || !imp1.IsNamespace {
+		t.Errorf("expected namespace :std:io, got source=%q isNamespace=%v", imp1.Source, imp1.IsNamespace)
+	}
+
+	// 2. import .foo, .bar, from .std
+	imp2, ok := rawList[1].([]any)[1].(ir.ImportDecl)
+	if !ok {
+		t.Fatalf("expected ImportDecl, got %T", rawList[1].([]any)[1])
+	}
+	if len(imp2.Symbols) != 2 || imp2.Symbols[0] != "foo" || imp2.Symbols[1] != "bar" {
+		t.Errorf("expected symbols ['foo', 'bar'], got %v", imp2.Symbols)
+	}
+	if imp2.Source != ".std" || imp2.IsNamespace {
+		t.Errorf("expected relative .std, got source=%q isNamespace=%v", imp2.Source, imp2.IsNamespace)
+	}
+
+	// 3. import :wasi:cli as cli
+	imp3, ok := rawList[2].([]any)[1].(ir.ImportDecl)
+	if !ok {
+		t.Fatalf("expected ImportDecl, got %T", rawList[2].([]any)[1])
+	}
+	if imp3.Alias != "cli" || imp3.Source != ":wasi:cli" || !imp3.IsNamespace {
+		t.Errorf("expected alias cli for :wasi:cli, got alias=%q source=%q isNs=%v", imp3.Alias, imp3.Source, imp3.IsNamespace)
+	}
+}
+
+func TestRawPointerUnaryExpr(t *testing.T) {
+	code := `
+fn test() void {
+	var a = &raw b
+	var c = &d
+}
+`
+	ast, err := loneparser.Parse("test_raw_ptr.lone", []byte(code))
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+
+	rawList := ast.([]any)
+	fnDec := rawList[0].([]any)[1].(ir.FN_DEC)
+	if len(fnDec.Body.Stmts) != 2 {
+		t.Fatalf("expected 2 stmts, got %d", len(fnDec.Body.Stmts))
+	}
+
+	// var a = &raw b
+	stmt1 := fnDec.Body.Stmts[0].(ir.BIND_DEC)
+	un1, ok := stmt1.Value.(ir.UnaryExpr)
+	if !ok {
+		t.Fatalf("expected UnaryExpr, got %T", stmt1.Value)
+	}
+	if un1.Op != ir.UNARY_OP_RAW_REF {
+		t.Errorf("expected op %q, got %q", ir.UNARY_OP_RAW_REF, un1.Op)
+	}
+
+	// var c = &d
+	stmt2 := fnDec.Body.Stmts[1].(ir.BIND_DEC)
+	un2, ok := stmt2.Value.(ir.UnaryExpr)
+	if !ok {
+		t.Fatalf("expected UnaryExpr, got %T", stmt2.Value)
+	}
+	if un2.Op != ir.UNARY_OP_REF {
+		t.Errorf("expected op %q, got %q", ir.UNARY_OP_REF, un2.Op)
+	}
+}

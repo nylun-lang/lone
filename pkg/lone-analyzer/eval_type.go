@@ -69,6 +69,9 @@ func (te *TypeEvaluator) hoistTopLevel(node any) {
 	}
 
 	switch n := node.(type) {
+	case ir.ImportDecl, *ir.ImportDecl:
+		// Imports handled during dependency resolution & symbol lookup
+		return
 	case ir.FN_DEC:
 		te.hoistFn(&n)
 	case *ir.FN_DEC:
@@ -130,6 +133,23 @@ func (te *TypeEvaluator) analyzeTopLevel(node any) TNode {
 	}
 
 	switch n := node.(type) {
+	case ir.ImportDecl:
+		return &TImportDecl{
+			Symbols:     n.Symbols,
+			Source:      n.Source,
+			IsNamespace: n.IsNamespace,
+			Alias:       n.Alias,
+			Pos_:        n.Pos,
+		}
+	case *ir.ImportDecl:
+		return &TImportDecl{
+			Symbols:     n.Symbols,
+			Source:      n.Source,
+			IsNamespace: n.IsNamespace,
+			Alias:       n.Alias,
+			Pos_:        n.Pos,
+		}
+
 	case ir.FN_DEC:
 		return te.analyzeFnDec(&n)
 	case *ir.FN_DEC:

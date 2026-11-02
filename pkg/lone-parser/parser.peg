@@ -5,6 +5,7 @@
         ir "lone/pkg/lone-parser-ast"
         "fmt"
         "strconv"
+        "strings"
     )
 
     func currentPosition(c *current) ir.Position {
@@ -118,9 +119,66 @@ PROGRAM <- decls:(_ TOP_LEVEL)* _ EOF {
 
 EOF <- !.
 
-TOP_LEVEL <- BIND_DEC / FN_DEC / IF_STMT / WHILE_STMT / LABEL_DEC / DROP_STMT
+TOP_LEVEL <- IMPORT_STMT / BIND_DEC / FN_DEC / IF_STMT / WHILE_STMT / LABEL_DEC / DROP_STMT
 
+IMPORT_STMT <- IMPORT_SYMBOLS_STMT / IMPORT_ALIAS_STMT
 
+IMPORT_SYMBOLS_STMT <- KW_IMPORT _ symbols:IMPORT_SYMBOL_LIST _ KW_FROM _ src:IMPORT_SOURCE {
+    symList := AnyValToType[[]string]("IMPORT_SYMBOLS_STMT.symbols", symbols)
+    sourceStr := AnyValToType[string]("IMPORT_SYMBOLS_STMT.src", src)
+    isNs := strings.HasPrefix(sourceStr, ":")
+    return ir.ImportDecl{
+        Symbols:     symList,
+        Source:      sourceStr,
+        IsNamespace: isNs,
+        Pos:         currentPosition(c),
+    }, nil
+}
+
+IMPORT_ALIAS_STMT <- KW_IMPORT _ src:IMPORT_SOURCE _ KW_AS _ alias:IDENTIFIER {
+    sourceStr := AnyValToType[string]("IMPORT_ALIAS_STMT.src", src)
+    aliasBytes := AnyValToType[[]byte]("IMPORT_ALIAS_STMT.alias", alias)
+    isNs := strings.HasPrefix(sourceStr, ":")
+    return ir.ImportDecl{
+        Source:      sourceStr,
+        IsNamespace: isNs,
+        Alias:       string(aliasBytes),
+        Pos:         currentPosition(c),
+    }, nil
+}
+
+IMPORT_SYMBOL_LIST <- first:IMPORT_SYMBOL rest:(_ "," _ IMPORT_SYMBOL)* (_ ",")? {
+    f := AnyValToType[string]("IMPORT_SYMBOL_LIST.first", first)
+    list := []string{f}
+    if restSlice, ok := rest.([]any); ok {
+        for _, item := range restSlice {
+            if tuple, ok := item.([]any); ok && len(tuple) >= 4 {
+                sym := AnyValToType[string]("IMPORT_SYMBOL_LIST.rest", tuple[3])
+                list = append(list, sym)
+            }
+        }
+    }
+    return list, nil
+}
+
+IMPORT_SYMBOL <- "." id:IDENTIFIER {
+    idBytes := AnyValToType[[]byte]("IMPORT_SYMBOL.id", id)
+    return string(idBytes), nil
+}
+
+IMPORT_SOURCE <- NAMESPACE_SOURCE / RELATIVE_SOURCE
+
+NAMESPACE_SOURCE <- ":" IDENTIFIER (":" IDENTIFIER)* {
+    return string(c.text), nil
+}
+
+RELATIVE_SOURCE <- "."+ [a-zA-Z0-9_./-]* {
+    return string(c.text), nil
+}
+
+KW_IMPORT <- "import" ![a-zA-Z0-9_]
+KW_FROM <- "from" ![a-zA-Z0-9_]
+KW_AS <- "as" ![a-zA-Z0-9_]
 KW_FN <- "fn" ![a-zA-Z0-9_]
 KW_VAR <- "var" ![a-zA-Z0-9_]
 KW_TYPE <- "type" ![a-zA-Z0-9_]
@@ -136,6 +194,9 @@ KW_WHILE <- "while" ![a-zA-Z0-9_]
 KW_DROP <- "drop" ![a-zA-Z0-9_]
 
 KEYWORD <- 
+    KW_IMPORT /
+    KW_FROM /
+    KW_AS /
     KW_VAR /
     KW_TYPE /
     KW_FN /
@@ -446,6 +507,7 @@ UNARY_OP
 <- "-"
 / "+"
 / "!"
+/ "&raw"
 / "&"
 / "*"
 

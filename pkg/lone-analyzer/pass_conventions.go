@@ -46,6 +46,8 @@ func (p *PassNamingConventions) walkNode(node any) {
 	}
 
 	switch n := node.(type) {
+	case ir.ImportDecl, *ir.ImportDecl:
+		return
 	case ir.BIND_DEC:
 		p.checkBindDec(&n)
 	case *ir.BIND_DEC:

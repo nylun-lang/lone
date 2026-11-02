@@ -17,6 +17,7 @@ type ProjectFile struct {
 	Content     []byte           // Raw source content
 	Ast         any              // Parsed AST declarations
 	Decls       []any            // Flat list of declarations in the file
+	Imports     []loneast.ImportDecl // Flat list of import declarations in the file
 	Provides    []string         // Top-level symbols defined by this file (functions, globals)
 	Requires    []string         // Symbols referenced by this file
 	Positions   map[string]loneast.Position // Symbol -> defining position
@@ -46,6 +47,7 @@ func (p *Project) AddFile(filePath string, content []byte) (*ProjectFile, error)
 	}
 
 	decls := extractDeclarations(rawAst)
+	imports := extractImports(decls)
 	provides, positions := extractProvidedSymbols(decls)
 	requires := extractRequiredSymbols(decls)
 
@@ -54,6 +56,7 @@ func (p *Project) AddFile(filePath string, content []byte) (*ProjectFile, error)
 		Content:   content,
 		Ast:       rawAst,
 		Decls:     decls,
+		Imports:   imports,
 		Provides:  provides,
 		Requires:  requires,
 		Positions: positions,
@@ -125,12 +128,26 @@ func extractProvidedSymbols(decls []any) ([]string, map[string]loneast.Position)
 	return symbols, positions
 }
 
+func extractImports(decls []any) []loneast.ImportDecl {
+	var imports []loneast.ImportDecl
+	for _, d := range decls {
+		if imp, ok := d.(loneast.ImportDecl); ok {
+			imports = append(imports, imp)
+		}
+	}
+	return imports
+}
+
 func extractRequiredSymbols(decls []any) []string {
 	seen := make(map[string]bool)
 	var required []string
 
 	for _, d := range decls {
 		switch v := d.(type) {
+		case loneast.ImportDecl:
+			for _, sym := range v.Symbols {
+				seen[sym] = true
+			}
 		case loneast.FN_DEC:
 			scanBlockForReferences(v.Body, seen)
 		case loneast.BIND_DEC:

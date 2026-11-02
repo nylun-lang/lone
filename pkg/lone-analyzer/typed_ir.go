@@ -52,6 +52,18 @@ func (v *TVarDec) Pos() ir.Position { return v.Pos_ }
 func (v *TVarDec) isDecl()          {}
 func (v *TVarDec) isStmt()          {}
 
+// TImportDecl represents a typed module or namespace import statement.
+type TImportDecl struct {
+	Symbols     []string
+	Source      string
+	IsNamespace bool
+	Alias       string
+	Pos_        ir.Position
+}
+
+func (i *TImportDecl) Pos() ir.Position { return i.Pos_ }
+func (i *TImportDecl) isDecl()          {}
+
 // TFnParam represents a typed function parameter.
 type TFnParam struct {
 	Name string

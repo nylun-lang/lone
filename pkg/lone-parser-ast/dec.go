@@ -1,5 +1,13 @@
 package loneast
 
+type ImportDecl struct {
+	Symbols     []string // List of imported symbol names (e.g. ["readline", "print"])
+	Source      string   // Target namespace or relative path (e.g. ":std:io", ".std")
+	IsNamespace bool     // True if Source starts with ':'
+	Alias       string   // Optional alias (e.g. for "import :std:io as io")
+	Pos         Position
+}
+
 type BIND_DEC struct {
 	Name  string
 	Pos   Position
