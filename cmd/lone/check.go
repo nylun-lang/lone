@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"os"
 
-	"lone/pkg/diag"
-	p "lone/pkg/parser"
-	"lone/pkg/sema"
-	lonelogger "lone/pkg2/lone-shared-logger"
+	loneanalyzer "lone/pkg/lone-analyzer"
+	loneanalyzerdiag "lone/pkg/lone-analyzer-diag"
+	loneparser "lone/pkg/lone-parser"
+	lonelogger "lone/pkg/lone-shared-logger"
 
 	"github.com/spf13/cobra"
 )
@@ -16,6 +16,7 @@ import (
 var (
 	checkAstJsonFlag  bool
 	checkAirJsonFlag  bool
+	checkTreeFlag     bool
 	checkDiagJsonFlag bool
 )
 
@@ -31,9 +32,12 @@ var checkCmd = &cobra.Command{
 			return fmt.Errorf("failed to read file %s: %w", filePath, err)
 		}
 
-		rawAst, err := p.Parse(filePath, content)
+		rawAst, err := loneparser.Parse(filePath, content)
 		if err != nil {
-			return fmt.Errorf("syntax error: %w", err)
+			emitter := lonelogger.NewEmitter(os.Stderr, lonelogger.DefaultConfig())
+			diag := lonelogger.NewError(err.Error(), lonelogger.PointSpan(filePath, 1, 1))
+			_ = emitter.Emit(diag, content)
+			return fmt.Errorf("syntax error in %s", filePath)
 		}
 
 		if checkAstJsonFlag {
@@ -45,15 +49,20 @@ var checkCmd = &cobra.Command{
 			return nil
 		}
 
-		analyzer := sema.NewAnalyzer(filePath, sema.DefaultConfig())
+		analyzer := loneanalyzer.NewAnalyzer(filePath, loneanalyzer.DefaultConfig())
 		typedProg, diags := analyzer.AnalyzeTyped(rawAst)
 
 		if checkAirJsonFlag {
-			out, err := diag.PrintNodesJSON(typedProg)
+			out, err := loneanalyzerdiag.PrintNodesJSON(typedProg)
 			if err != nil {
 				return err
 			}
 			fmt.Println(out)
+			return nil
+		}
+
+		if checkTreeFlag {
+			fmt.Print(loneanalyzerdiag.PrintNodeTree(typedProg, 0))
 			return nil
 		}
 
@@ -66,29 +75,14 @@ var checkCmd = &cobra.Command{
 			return nil
 		}
 
-		hasErrors := false
 		emitter := lonelogger.NewEmitter(os.Stderr, lonelogger.DefaultConfig())
-		for _, d := range diags {
-			var sev lonelogger.Severity
-			switch d.Severity {
-			case sema.SeverityError:
-				sev = lonelogger.SeverityError
-				hasErrors = true
-			case sema.SeverityWarning:
-				sev = lonelogger.SeverityWarning
-			case sema.SeverityHint:
-				sev = lonelogger.SeverityHint
-			default:
-				sev = lonelogger.SeverityNote
-			}
+		hasErrors := false
 
-			diagObj := &lonelogger.Diagnostic{
-				Severity:    sev,
-				Code:        d.Rule,
-				Message:     d.Message,
-				PrimarySpan: lonelogger.PointSpan(filePath, d.Pos.Line, d.Pos.Col),
+		for _, d := range diags {
+			if d.Severity == loneanalyzer.SeverityError {
+				hasErrors = true
 			}
-			_ = emitter.Emit(diagObj, content)
+			_ = emitter.Emit(d.ToLoggerDiag(filePath), content)
 		}
 
 		if hasErrors {
@@ -103,5 +97,6 @@ var checkCmd = &cobra.Command{
 func init() {
 	checkCmd.Flags().BoolVar(&checkAstJsonFlag, "ast-json", false, "Output raw AST as JSON")
 	checkCmd.Flags().BoolVar(&checkAirJsonFlag, "air-json", false, "Output Typed IR (AIR) as JSON")
+	checkCmd.Flags().BoolVar(&checkTreeFlag, "tree", false, "Output Typed IR as an indented structural tree")
 	checkCmd.Flags().BoolVar(&checkDiagJsonFlag, "diag-json", false, "Output diagnostics as JSON")
 }

@@ -1,0 +1,4 @@
+make:
+    clang --target=wasm32-wasip1 -O3 -nostdlib \
+    -Wl,--no-entry -Wl,--export-all \
+    -c core/lone_rt_print.c -o targets/wasm-wasi32/lone_rt_print.wasm

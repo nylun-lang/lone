@@ -3,7 +3,7 @@ package main
 import (
 	"os"
 
-	lonelsp "lone/pkg2/lone-lsp"
+	lonelsp "lone/pkg/lone-lsp"
 
 	"github.com/spf13/cobra"
 )

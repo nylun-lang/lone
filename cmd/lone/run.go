@@ -6,7 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 
-	"lone/pkg/wir"
+	lonecompiler "lone/pkg/lone-compiler"
 
 	"github.com/spf13/cobra"
 )
@@ -25,13 +25,12 @@ var runCmd = &cobra.Command{
 
 		watPath := filepath.Join(tmpDir, "out.wat")
 		buildOutFlag = watPath
-		buildWatFlag = true
 
-		if err := runBuild(filePath, wir.TargetWasi); err != nil {
+		if err := runBuild(filePath, lonecompiler.TargetWasi); err != nil {
 			return err
 		}
 
-		// Check if wasmtime or node + wat2wasm is available
+		// Try wasmtime if installed
 		if wasmtimePath, err := exec.LookPath("wasmtime"); err == nil {
 			execCmd := exec.Command(wasmtimePath, watPath)
 			execCmd.Stdout = os.Stdout
