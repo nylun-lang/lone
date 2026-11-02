@@ -266,9 +266,18 @@ Indirection constructs do not implicitly alias or dereference; manipulating
 The core `indirection` and collection constructs are:
 
 - `ref<T>` : Managed, lifetime-tracked reference to T
-- `ptr<T>` : Unsafe raw memory address to T
+- `ptr<T>` : Unsafe raw memory address to T (Wasm linear memory `i32` offset)
 - `list<T>`: Dynamically sized contiguous collection of T
 - `map<K, V>`: Associative key-value table
+
+##### Address-of Operators: `&` vs. `&raw`
+
+In accordance with **IL1 (Explicit over implicit)**, taking an address explicitly specifies whether it creates a managed reference or an unmanaged raw memory address:
+
+| Syntax | Resulting Type | Description |
+| :---: | :---: | :--- |
+| `&foo` | `ref<T>` | **Managed Reference**: Tracked by the escape analyzer and memory model (datastack frame or promoted to Managed Store). |
+| `&raw foo` | `ptr<T>` | **Raw Memory Address**: Raw byte offset in WebAssembly linear memory (`i32`). Forces `foo` to be allocated in linear memory (datastack/shadow stack). Unsafe, zero runtime overhead. |
 
 Example: Explicit Managed Allocation & Access
 
@@ -286,6 +295,14 @@ let y = #refGrab(x)
 
 -- Compile Error: Cannot mutate field 'name' through read-only modifier 'ro'
 y.name = "max"
+```
+
+Example: Raw Pointer for Systems & WASI Syscalls
+
+```lone
+let nread = 0
+-- Explicitly take the raw linear memory address (ptr<int>) for a WASI syscall
+let ptr_nread ptr<int> = &raw nread
 ```
 
 #### 4.3 Fn Type
