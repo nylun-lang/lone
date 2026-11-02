@@ -1,15 +1,25 @@
-# Def
+# Package Architecture
 
-- lone-analyzer: semantic analysis
-- lone-analyzer-diag: print typed ir
-- lone-analyzer-project: analyze whole lone project and order em as one file
-- lone-compiler: compile to web or wasm target
-- lone-compiler-adapter: gen glue for target
-- lone-compiler-lower: from typed ir to mir
-- lone-compiler-mir: ir rep right before wasm
-- lone-compiler-wir: wasm ir rep, used to create optimizable wasm code
-- lone-parser: the lone lang parser
-- lone-parser-ast: the ir rep used by the parser
-- lone-runtime: inlined built in fn
-- lone-lsp: lone language protocol
-- lone-shared-logger: logger used to display error rekated to source lone file
+- **lone-parser-ast** AST nodes and source span positioning.
+
+- **lone-parser-ast** AST nodes and source span positioning.
+
+- **lone-shared-logger** Rust/Zig-style source excerpts with carets and line numbers.
+
+- **lone-analyzer** Multi-pass type inference, scope stack, return verification, and consume-or-drop rules.
+
+- **lone-analyzer-diag** Typed IR JSON and indented tree printers.
+
+- **lone-analyzer-project** Multi-file dependency graph, cycle detection, and topological compilation ordering.
+
+- **lone-runtime** Inlined intrinsic table registry (#print for WASI and Web).
+
+- **lone-compiler-mir** Assembly-like Mid-level IR and lowerer.
+
+- **lone-compiler-wir** Structured WebAssembly AST, peephole optimizer, and WAT serializer.
+
+- **lone-compiler-adapter** Node.js and Browser JavaScript glue generators.
+
+- **lone-compiler** End-to-end compiler coordinator.
+
+- **lone-lsp** JSON-RPC 2.0 Language Server Protocol daemon.
