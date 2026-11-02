@@ -1,0 +1,6 @@
+// Lone Standard Library: Root Entrypoint (std.lone)
+// Similar to Zig's lib/std/std.zig
+
+fn print(msg: str) void {
+    #print(msg)
+}

@@ -20,23 +20,32 @@ Welcome to the **Lone Programming Language** repository. This guide defines proj
 
 ---
 
-## 2. Directory Layout & Organization
+## 2. Directory Layout & Organization (Architecture v2)
+
+Inspired by Zig (`_local/zig`), Lone uses a clean separation between **compiler host code** (`pkg/`, `cmd/`) and **target language libraries** (`lib/`):
 
 | Directory / File | Description & Purpose |
 | :--- | :--- |
-| `AGENT.md` | AI instructions, repository conventions, and workflow rules (this file). |
-| `README.md` | Main project entry point and high-level introduction. |
-| `go.work` / `go.work.sum` | Go workspace configuration linking active Go packages. |
-| `packages/` | Core implementation packages of Lone. |
-| `packages/lone-lang/` | PEG grammar (`parser/parser.peg`), generated parser (`mna/pigeon`), AST/IR data structures (`irtypes`), and sample test runners (`cmd/parse.go`). |
-| `packages/falone/` | The official Lone compiler (`Falone`), translating Lone IR to WebAssembly. |
-| `packages/lone-alyzer/` | Static analysis, LSP, and developer tooling for Lone. |
+| `cmd/lone/` | **Single unified CLI driver** (`lone build`, `lone check`, `lone run`, `lone lsp`). |
+| `pkg/` | **Unified Compiler Engine** (single Go module root `lone`): |
+| `pkg/ast/` | Abstract Syntax Tree node definitions and source position types. |
+| `pkg/parser/` | PEG grammar (`parser.peg`) and generated Pigeon parser. |
+| `pkg/sema/` | Semantic analysis, type checking, scope resolution, and Analyzed IR (AIR). |
+| `pkg/mir/` | Mid-level IR: basic blocks, CFG, virtual registers, and AIR lowering. |
+| `pkg/wir/` | WebAssembly IR (WIR) and WAT transpilation engine. |
+| `pkg/adapter/` | Runtime adapter glue generator for Node.js and Browser environments. |
+| `pkg/diag/` | Formatted diagnostic messages, error reporters, and AST/AIR printers. |
+| `lib/` | **Target Code (shipped with compiler)**: |
+| `lib/std/` | Lone Standard Library written in `.lone` (e.g., `lib/std/std.lone`, `io.lone`). |
+| `lib/runtime/` | Host runtime glue, WASI preview 1 stubs, and adapter harnesses. |
+| `test/` | **Consolidated Test Harness**: |
+| `test/behavior/` | End-to-end `.lone` source files verifying compiler and execution outputs. |
+| `test/compile_errors/` | Negative `.lone` files asserting diagnostic errors and warnings. |
+| `packages/` | *Legacy multi-module implementation (kept for backwards compatibility during migration).* |
 | `drafts/` | Working documentation, designs, reports, and internal specs. |
-| `drafts/research/` | **Ideas and drafts of what the project could be** (language specifications, sketches, RFCs, memory model explorations). |
-| `drafts/under-the-hood/` | **Internal architectural documentation** explaining how the project and its components work under the hood. |
-| `drafts/reports/` | **Work session reports** generated at the conclusion of tasks and feature requests. |
-| `drafts/archive/` | Historical specifications and archived documentation. |
-| `_old/` | **Legacy or old implementations of Lone.** Kept strictly for reference; do not modify unless migrating legacy functionality. |
+| `drafts/research/` | **Ideas and drafts of what the project could be** (language specs, sketches, RFCs). |
+| `drafts/under-the-hood/`| **Internal architectural documentation** explaining compiler subsystems. |
+| `drafts/reports/` | **Work session reports** generated at the conclusion of tasks. |
 | `assets/` | Brand assets, icons, banners, and vector artwork. |
 
 ---
@@ -72,21 +81,27 @@ Whenever assisting on this repository, you must strictly follow these rules:
 
 ## 4. Development Workflows & Commands
 
-The project uses Go (1.27+) with a multi-module workspace (`go.work`).
-
-### Working on the Parser (`packages/lone-lang`)
-1. **Grammar definition**: `packages/lone-lang/parser/parser.peg`
-2. **Generate parser**:
+### Unified Toolchain Commands (`cmd/lone`)
+1. **Check / Semantic Analysis**:
    ```bash
-   cd packages/lone-lang
-   go tool pigeon -o ./parser/generated-parser.go ./parser/parser.peg
+   go run ./cmd/lone check test/behavior/hello.lone
    ```
-   *(or `just gen-parser` if `just` is installed)*
-3. **Run parser against sample files**:
+2. **Build WebAssembly (WAT)**:
    ```bash
-   go run ./packages/lone-lang/cmd/parse.go ./packages/lone-lang/samples/misc.lone
+   go run ./cmd/lone build test/behavior/hello.lone
    ```
-   *(or `cd packages/lone-lang && just parse samples/misc.lone`)*
+3. **Build with JavaScript Runtime Glue**:
+   ```bash
+   go run ./cmd/lone build test/behavior/hello.lone -o out.wat --with-adapter node
+   ```
+4. **Regenerate Parser**:
+   ```bash
+   go run github.com/mna/pigeon -o ./pkg/parser/generated-parser.go ./pkg/parser/parser.peg
+   ```
+5. **Run All Tests**:
+   ```bash
+   go test ./pkg/...
+   ```
 
 ---
 

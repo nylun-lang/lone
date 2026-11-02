@@ -1,7 +1,0 @@
-go 1.27.1
-
-use (
-	./packages/falone
-	./packages/lone-alyzer
-	./packages/lone-lang
-)
