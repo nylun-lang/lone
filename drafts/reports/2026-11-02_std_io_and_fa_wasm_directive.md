@@ -32,16 +32,28 @@ The user provided clarification and architectural refinement:
    - Conceptualized structs as linear memory layouts and materialized traits as zero-sized function bundles.
 
 2. **Authored Comprehensive Implementation Roadmap**:
-   - Created [roadmap_import_system_memory_and_std_io.md](../research/roadmap_import_system_memory_and_std_io.md) covering 6 distinct phases:
-     - **Phase 1**: Flat Import System & Module Resolver.
-     - **Phase 2**: Host Capability Directives (`---fa:wasm`).
-     - **Phase 3**: Explicit Indirection (`&` vs `&raw`) & Datastack.
-     - **Phase 4**: Struct Layout & Offset Arithmetic.
-     - **Phase 5**: Trait Materialization & Static Method Dispatch.
-     - **Phase 6**: Pure-Lone Standard Library (`lib/std/sys.lone` & `lib/std/io.lone`).
+   - Created [roadmap_import_system_memory_and_std_io.md](../research/roadmap_import_system_memory_and_std_io.md) covering 6 distinct phases from flat imports to pure Lone standard I/O.
+
+3. **Implemented Phase 1 & `&raw` Operator**:
+   - Created feature branch: `feat/import-and-std-io`.
+   - **AST**: Added `loneast.ImportDecl` to `pkg/lone-parser-ast/dec.go` and `UNARY_OP_RAW_REF = "&raw"` to `pkg/lone-parser-ast/expr.go`.
+   - **PEG Grammar**: Updated `pkg/lone-parser/parser.peg` to parse:
+     - `import .foo, .bar from :std:io` (namespace imports)
+     - `import .foo from .std` (relative module imports)
+     - `import :std:io as io` (aliased imports)
+     - `&raw foo` prefix unary expression.
+   - **Regenerated Parser**: Generated `pkg/lone-parser/generated-parser.go` using Pigeon.
+   - **Semantic & Project Integration**:
+     - Added `TImportDecl` in `pkg/lone-analyzer/typed_ir.go`.
+     - Integrated `ImportDecl` in `pkg/lone-analyzer/eval_type.go` and `pass_conventions.go`.
+     - Added import symbol requirement tracking in `pkg/lone-analyzer-project/project.go`.
+   - **Tests Added**:
+     - `TestImportDeclaration` in `pkg/lone-parser/parser_test.go`.
+     - `TestRawPointerUnaryExpr` in `pkg/lone-parser/parser_test.go`.
+     - All package tests passing (`100% PASS`).
 
 ---
 
 ## 3. Pending Questions & Next Steps
-- Execute Phase 1: Implement `IMPORT_STMT` in `pkg/lone-parser/parser.peg` and regenerate parser with Pigeon.
-- Create AST nodes in `pkg/lone-parser-ast/dec.go`.
+- Implement Phase 2: Host capability directives (`---fa:wasm`) and WIR import emission.
+- Implement Phase 3: Datastack (shadow stack) bump/rewind in WIR/MIR and `&raw` address lowering.
