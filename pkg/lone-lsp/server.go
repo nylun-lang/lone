@@ -169,7 +169,7 @@ func (s *Server) validateDocument(uri string, text string) {
 	fileName := uriToPath(uri)
 	rawAst, err := loneparser.Parse(fileName, []byte(text))
 
-	var lspDiags []Diagnostic
+	lspDiags := make([]Diagnostic, 0)
 
 	if err != nil {
 		// Syntax error from parser

@@ -1,0 +1,87 @@
+{
+  "name": "lone-lsp",
+  "displayName": "Lone Language Support",
+  "description": "Language Server Protocol client and syntax highlighting for the Lone programming language",
+  "version": "0.1.0",
+  "publisher": "lone-lang",
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "keywords": [
+    "lone",
+    "lsp",
+    "wasm",
+    "compiler"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "lone",
+        "aliases": [
+          "Lone",
+          "lone"
+        ],
+        "extensions": [
+          ".lone"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "lone",
+        "scopeName": "source.lone",
+        "path": "./syntaxes/lone.tmLanguage.json"
+      }
+    ],
+    "configuration": {
+      "type": "object",
+      "title": "Lone",
+      "properties": {
+        "lone.lsp.command": {
+          "type": "string",
+          "default": "lone",
+          "description": "Path or binary name for the Lone CLI (uses 'lone' in PATH by default)"
+        },
+        "lone.lsp.args": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "lsp"
+          ],
+          "description": "Command-line arguments passed to the Lone executable to run the LSP server"
+        },
+        "lone.trace.server": {
+          "type": "string",
+          "enum": [
+            "off",
+            "messages",
+            "verbose"
+          ],
+          "default": "off",
+          "description": "Trace level for communication between VS Code and the Lone language server"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -b",
+    "watch": "tsc -b -w",
+    "build": "tsc -b"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.75.0",
+    "typescript": "^5.3.3"
+  }
+}
