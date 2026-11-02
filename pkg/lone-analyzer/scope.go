@@ -27,11 +27,14 @@ const (
 
 // Symbol represents a declared identifier in a scope.
 type Symbol struct {
-	Name  string
-	Kind  SymbolKind
-	Type  Type
-	Scope *Scope
-	Node  any // original AST node reference
+	Name         string
+	MangledName  string // Optional lowered symbol name (e.g. for methods or aliased imports)
+	Kind         SymbolKind
+	Type         Type
+	Scope        *Scope
+	Node         any   // original AST node reference
+	DeclNode     TNode // typed IR declaration node (e.g. *TVarDec or *TFnParam)
+	AddressTaken bool  // true if &raw or & was applied to this variable
 }
 
 // Scope represents a lexical environment holding symbols and nesting relationships.
@@ -110,6 +113,36 @@ func registerBuiltins(root *Scope) {
 				{Name: "str", Type: TypeStr},
 			},
 			ReturnType: TypeVoid,
+		},
+	})
+	_ = root.Define(&Symbol{
+		Name: "#heap_alloc",
+		Kind: SymbolFn,
+		Type: &FnType{
+			Params: []FnParamType{
+				{Name: "size", Type: TypeI32},
+			},
+			ReturnType: &PtrType{Elem: TypeU8},
+		},
+	})
+	_ = root.Define(&Symbol{
+		Name: "#ptr_to_str",
+		Kind: SymbolFn,
+		Type: &FnType{
+			Params: []FnParamType{
+				{Name: "ptr", Type: &PtrType{Elem: TypeU8}},
+			},
+			ReturnType: TypeStr,
+		},
+	})
+	_ = root.Define(&Symbol{
+		Name: "#str_to_ptr",
+		Kind: SymbolFn,
+		Type: &FnType{
+			Params: []FnParamType{
+				{Name: "s", Type: TypeStr},
+			},
+			ReturnType: &PtrType{Elem: TypeU8},
 		},
 	})
 }

@@ -131,6 +131,33 @@ func PrintNodeTree(node loneanalyzer.TNode, indent int) string {
 		}
 		return sb.String()
 
+	case *loneanalyzer.THostImport:
+		return fmt.Sprintf("%s├── THostImport [module=%q, name=%q, local=%q, return=%s]\n",
+			pad, n.WasmModule, n.WasmName, n.LocalName, n.ReturnType.String())
+
+	case *loneanalyzer.TTypeDec:
+		return fmt.Sprintf("%s├── TTypeDec [name=%q, type=%s]\n", pad, n.Name, n.Typ.String())
+
+	case *loneanalyzer.TAssignStmt:
+		return fmt.Sprintf("%s├── TAssignStmt\n%s%s", pad, PrintNodeTree(n.Target, indent+1), PrintNodeTree(n.Value, indent+1))
+
+	case *loneanalyzer.TIndexExpr:
+		return fmt.Sprintf("%s└── TIndexExpr [type=%s]\n%s%s", pad, n.Typ.String(), PrintNodeTree(n.Base, indent+1), PrintNodeTree(n.Index, indent+1))
+
+	case *loneanalyzer.TMemberExpr:
+		return fmt.Sprintf("%s└── TMemberExpr [member=%q, offset=%d, type=%s]\n%s", pad, n.Member, n.Offset, n.Typ.String(), PrintNodeTree(n.Base, indent+1))
+
+	case *loneanalyzer.TStructLitExpr:
+		var sb strings.Builder
+		sb.WriteString(fmt.Sprintf("%s└── TStructLitExpr [type=%s]\n", pad, n.StructType.Name))
+		for _, f := range n.Fields {
+			sb.WriteString(fmt.Sprintf("%s  ├── .%s:\n%s", pad, f.Name, PrintNodeTree(f.Expr, indent+2)))
+		}
+		return sb.String()
+
+	case *loneanalyzer.TTraitMatExpr:
+		return fmt.Sprintf("%s└── TTraitMatExpr [type=%s]\n", pad, n.Typ.String())
+
 	default:
 		return fmt.Sprintf("%s└── %T\n", pad, node)
 	}
@@ -177,6 +204,15 @@ func PrintNode(node loneanalyzer.TNode, indent int) string {
 	switch n := node.(type) {
 	case *loneanalyzer.TVarDec:
 		return fmt.Sprintf("%svar %s: %s = %s", pad, n.Name, n.Type.String(), PrintExpr(n.Value))
+
+	case *loneanalyzer.THostImport:
+		return fmt.Sprintf("%simport %s.%s as %s", pad, n.WasmModule, n.WasmName, n.LocalName)
+
+	case *loneanalyzer.TTypeDec:
+		return fmt.Sprintf("%stype %s = %s", pad, n.Name, n.Typ.String())
+
+	case *loneanalyzer.TAssignStmt:
+		return fmt.Sprintf("%s%s = %s", pad, PrintExpr(n.Target), PrintExpr(n.Value))
 
 	case *loneanalyzer.TFnDec:
 		var params []string
@@ -293,6 +329,22 @@ func PrintExpr(expr loneanalyzer.TExpr) string {
 
 	case *loneanalyzer.TDropStmt:
 		return fmt.Sprintf("drop %s", PrintExpr(e.Expr))
+
+	case *loneanalyzer.TIndexExpr:
+		return fmt.Sprintf("%s[%s]", PrintExpr(e.Base), PrintExpr(e.Index))
+
+	case *loneanalyzer.TMemberExpr:
+		return fmt.Sprintf("%s.%s", PrintExpr(e.Base), e.Member)
+
+	case *loneanalyzer.TStructLitExpr:
+		var fields []string
+		for _, f := range e.Fields {
+			fields = append(fields, fmt.Sprintf(".%s: %s", f.Name, PrintExpr(f.Expr)))
+		}
+		return fmt.Sprintf("%s::{ %s }", e.StructType.Name, strings.Join(fields, ", "))
+
+	case *loneanalyzer.TTraitMatExpr:
+		return e.Typ.String()
 
 	default:
 		return fmt.Sprintf("<expr %T: %s>", expr, expr.ExprType().String())

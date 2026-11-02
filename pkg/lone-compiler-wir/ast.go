@@ -34,6 +34,14 @@ type Local struct {
 	Type WasmType
 }
 
+// Global represents a module-level WebAssembly global variable.
+type Global struct {
+	Name    string
+	Type    WasmType
+	Mutable bool
+	InitVal string // e.g. "i32.const 131072"
+}
+
 // Import represents a Wasm module import.
 type Import struct {
 	Module string
@@ -72,6 +80,7 @@ type WasmModule struct {
 	Imports        []Import
 	MemoryPages    int
 	MemoryExport   string
+	Globals        []Global
 	DataSegments   []DataSegment
 	Functions      []*WasmFunc
 	Exports        []Export
@@ -135,6 +144,54 @@ func (i InstLocalTee) FormatWat(indent int) string {
 }
 func (i InstLocalTee) IsPure() bool { return false }
 
+// InstGlobalGet represents a global.get instruction.
+type InstGlobalGet struct {
+	Name string
+}
+
+func (i InstGlobalGet) FormatWat(indent int) string {
+	return fmt.Sprintf("%sglobal.get %s", strings.Repeat("  ", indent), i.Name)
+}
+func (i InstGlobalGet) IsPure() bool { return true }
+
+// InstGlobalSet represents a global.set instruction.
+type InstGlobalSet struct {
+	Name string
+}
+
+func (i InstGlobalSet) FormatWat(indent int) string {
+	return fmt.Sprintf("%sglobal.set %s", strings.Repeat("  ", indent), i.Name)
+}
+func (i InstGlobalSet) IsPure() bool { return false }
+
+// InstLoad represents a linear memory load instruction (e.g. i32.load, i32.load8_u).
+type InstLoad struct {
+	Op     string // "i32.load", "i32.load8_u", "i32.load8_s", etc.
+	Offset int
+}
+
+func (i InstLoad) FormatWat(indent int) string {
+	if i.Offset > 0 {
+		return fmt.Sprintf("%s%s offset=%d", strings.Repeat("  ", indent), i.Op, i.Offset)
+	}
+	return fmt.Sprintf("%s%s", strings.Repeat("  ", indent), i.Op)
+}
+func (i InstLoad) IsPure() bool { return false }
+
+// InstStore represents a linear memory store instruction (e.g. i32.store, i32.store8).
+type InstStore struct {
+	Op     string // "i32.store", "i32.store8", "i32.store16", etc.
+	Offset int
+}
+
+func (i InstStore) FormatWat(indent int) string {
+	if i.Offset > 0 {
+		return fmt.Sprintf("%s%s offset=%d", strings.Repeat("  ", indent), i.Op, i.Offset)
+	}
+	return fmt.Sprintf("%s%s", strings.Repeat("  ", indent), i.Op)
+}
+func (i InstStore) IsPure() bool { return false }
+
 // InstBinaryOp represents a binary operation instruction (e.g. i32.add).
 type InstBinaryOp struct {
 	Op string // "i32.add", "i32.sub", "i32.mul", etc.
@@ -178,6 +235,30 @@ func (i InstNop) FormatWat(indent int) string {
 	return fmt.Sprintf("%snop", strings.Repeat("  ", indent))
 }
 func (i InstNop) IsPure() bool { return true }
+
+// InstIf represents a structured WebAssembly if/else/end block.
+type InstIf struct {
+	Then []WasmInst
+	Else []WasmInst
+}
+
+func (i InstIf) FormatWat(indent int) string {
+	pad := strings.Repeat("  ", indent)
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("%sif\n", pad))
+	for _, inst := range i.Then {
+		sb.WriteString(inst.FormatWat(indent+1) + "\n")
+	}
+	if len(i.Else) > 0 {
+		sb.WriteString(fmt.Sprintf("%selse\n", pad))
+		for _, inst := range i.Else {
+			sb.WriteString(inst.FormatWat(indent+1) + "\n")
+		}
+	}
+	sb.WriteString(fmt.Sprintf("%send", pad))
+	return sb.String()
+}
+func (i InstIf) IsPure() bool { return false }
 
 // InstBlock represents a structured block.
 type InstBlock struct {

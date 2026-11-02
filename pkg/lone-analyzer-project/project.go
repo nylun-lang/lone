@@ -123,6 +123,9 @@ func extractProvidedSymbols(decls []any) ([]string, map[string]loneast.Position)
 		case loneast.BIND_DEC:
 			symbols = append(symbols, v.Name)
 			positions[v.Name] = v.Pos
+		case loneast.TYPE_DEC:
+			symbols = append(symbols, v.Name)
+			positions[v.Name] = v.Pos
 		}
 	}
 	return symbols, positions

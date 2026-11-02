@@ -11,6 +11,7 @@ import (
 	"sync"
 
 	loneanalyzer "lone/pkg/lone-analyzer"
+	loneproject "lone/pkg/lone-analyzer-project"
 	loneast "lone/pkg/lone-parser-ast"
 	loneparser "lone/pkg/lone-parser"
 )
@@ -183,9 +184,11 @@ func (s *Server) validateDocument(uri string, text string) {
 			Message:  err.Error(),
 		})
 	} else {
-		// Semantic analysis
+		// Module resolution & semantic analysis
+		resolvedAst, resolveDiags := loneproject.ResolveAST(fileName, rawAst)
 		analyzer := loneanalyzer.NewAnalyzer(fileName, loneanalyzer.DefaultConfig())
-		_, diags := analyzer.AnalyzeTyped(rawAst)
+		_, diags := analyzer.AnalyzeTyped(resolvedAst)
+		diags = append(resolveDiags, diags...)
 
 		for _, d := range diags {
 			line := d.Pos.Line - 1

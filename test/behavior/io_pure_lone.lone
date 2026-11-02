@@ -1,0 +1,11 @@
+-- Pure-Lone Standard I/O Behavior Test
+import .print, .println, .Stdout, .Writer from :std:io
+
+fn main() void {
+    print("Hello from ")
+    println("Pure Lone std:io!")
+
+    var out = Stdout.new()
+    let writer = Writer::|Stdout|
+    drop writer.write(out, "Materialized Writer::|Stdout| works!\n")
+}

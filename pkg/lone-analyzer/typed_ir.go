@@ -42,10 +42,11 @@ func (p *TProgram) Pos() ir.Position { return p.Pos_ }
 
 // TVarDec represents a typed variable declaration where the type is resolved (never infer).
 type TVarDec struct {
-	Name  string
-	Type  Type
-	Value TExpr
-	Pos_  ir.Position
+	Name         string
+	Type         Type
+	Value        TExpr
+	AddressTaken bool
+	Pos_         ir.Position
 }
 
 func (v *TVarDec) Pos() ir.Position { return v.Pos_ }
@@ -64,11 +65,38 @@ type TImportDecl struct {
 func (i *TImportDecl) Pos() ir.Position { return i.Pos_ }
 func (i *TImportDecl) isDecl()          {}
 
+// THostImport represents an authorized host WebAssembly function import (via ---fa:wasm).
+type THostImport struct {
+	Namespace      string
+	WasmModule     string
+	WasmName       string
+	LocalName      string
+	Params         []TFnParam
+	ReturnType     Type
+	WasmParams     []string
+	ReturnWasmType string
+	Pos_           ir.Position
+}
+
+func (h *THostImport) Pos() ir.Position { return h.Pos_ }
+func (h *THostImport) isDecl()          {}
+
+// TTypeDec represents a typed struct, trait, or type alias declaration.
+type TTypeDec struct {
+	Name string
+	Typ  Type
+	Pos_ ir.Position
+}
+
+func (t *TTypeDec) Pos() ir.Position { return t.Pos_ }
+func (t *TTypeDec) isDecl()          {}
+
 // TFnParam represents a typed function parameter.
 type TFnParam struct {
-	Name string
-	Type Type
-	Pos_ ir.Position
+	Name         string
+	Type         Type
+	AddressTaken bool
+	Pos_         ir.Position
 }
 
 func (p *TFnParam) Pos() ir.Position { return p.Pos_ }
@@ -99,6 +127,16 @@ type TBlock struct {
 func (b *TBlock) Pos() ir.Position { return b.Pos_ }
 func (b *TBlock) isStmt()          {}
 func (b *TBlock) ExprType() Type   { return b.Typ }
+
+// TAssignStmt represents a mutation assignment statement (target = value).
+type TAssignStmt struct {
+	Target TExpr
+	Value  TExpr
+	Pos_   ir.Position
+}
+
+func (a *TAssignStmt) Pos() ir.Position { return a.Pos_ }
+func (a *TAssignStmt) isStmt()          {}
 
 // TReturnStmt represents a return statement.
 type TReturnStmt struct {
@@ -235,10 +273,50 @@ type TCallExpr struct {
 func (c *TCallExpr) Pos() ir.Position { return c.Pos_ }
 func (c *TCallExpr) ExprType() Type   { return c.Typ }
 
+type TIndexExpr struct {
+	Base  TExpr
+	Index TExpr
+	Typ   Type
+	Pos_  ir.Position
+}
+
+func (i *TIndexExpr) Pos() ir.Position { return i.Pos_ }
+func (i *TIndexExpr) ExprType() Type   { return i.Typ }
+
+type TMemberExpr struct {
+	Base   TExpr
+	Member string
+	Offset int
+	Typ    Type
+	Pos_   ir.Position
+}
+
+func (m *TMemberExpr) Pos() ir.Position { return m.Pos_ }
+func (m *TMemberExpr) ExprType() Type   { return m.Typ }
+
 type TFieldAssign struct {
 	Name string
 	Expr TExpr
 }
+
+type TStructLitExpr struct {
+	StructType *StructType
+	Fields     []TFieldAssign
+	Pos_       ir.Position
+}
+
+func (s *TStructLitExpr) Pos() ir.Position { return s.Pos_ }
+func (s *TStructLitExpr) ExprType() Type   { return s.StructType }
+
+type TTraitMatExpr struct {
+	Trait  *TraitType
+	Target Type
+	Typ    *TraitMatType
+	Pos_   ir.Position
+}
+
+func (t *TTraitMatExpr) Pos() ir.Position { return t.Pos_ }
+func (t *TTraitMatExpr) ExprType() Type   { return t.Typ }
 
 type TObjectExpr struct {
 	Fields []TFieldAssign

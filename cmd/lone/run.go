@@ -25,6 +25,8 @@ var runCmd = &cobra.Command{
 
 		watPath := filepath.Join(tmpDir, "out.wat")
 		buildOutFlag = watPath
+		buildAdapterFlag = ""
+		buildQuietFlag = true
 
 		if err := runBuild(filePath, lonecompiler.TargetWasi); err != nil {
 			return err

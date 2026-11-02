@@ -35,7 +35,11 @@ func IsPrimitiveType(name string) bool {
 	case "i8", "i16", "i32", "i64", "i128",
 		"u8", "u16", "u32", "u64", "u128",
 		"f32", "f64",
-		"bool", "str", "string", "char", "void", "any", "infer":
+		"int", "int8", "int16", "int32", "int64",
+		"uint", "uint8", "uint16", "uint32", "uint64",
+		"float", "float32", "float64",
+		"bool", "str", "string", "char", "void", "any", "infer",
+		"ptr", "ref", "Self":
 		return true
 	default:
 		return false

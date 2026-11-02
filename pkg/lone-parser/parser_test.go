@@ -919,3 +919,104 @@ fn test() void {
 		t.Errorf("expected op %q, got %q", ir.UNARY_OP_REF, un2.Op)
 	}
 }
+
+func TestWasmDirectiveStructTraitAndIndex(t *testing.T) {
+	code := `
+-- normal inline comment
+---
+normal multiline comment
+---
+---fa:wasm
+import .fd_write, .fd_read from :wasi:snapshot_preview1
+---
+
+pub type Ciovec = struct {
+	buf: ptr<u8>,
+	len: i32,
+
+	pub fn make(b: ptr<u8>, l: i32) Ciovec {
+		return Ciovec::{ .buf: b, .len: l, }
+	}
+}
+
+pub type Writer = trait {
+	fn write(self, msg: str) i32
+}
+
+impl Writer on Ciovec {
+	fn write(self, msg: str) i32 {
+		return self.len
+	}
+}
+
+pub fn demo(s: str) i32 {
+	let w = Writer::|Ciovec|
+	let i = 0
+	var b = s[i]
+	i = (i + 1) % 4
+	return i
+}
+`
+	ast, err := loneparser.Parse("test_full_grammar.lone", []byte(code))
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+
+	rawList := ast.([]any)
+	if len(rawList) != 5 {
+		t.Fatalf("expected 5 top-level decls, got %d", len(rawList))
+	}
+
+	wd, ok := rawList[0].([]any)[1].(ir.WasmDirective)
+	if !ok || wd.Inline || len(wd.Imports) != 1 {
+		t.Fatalf("expected block WasmDirective with 1 import, got %+v", rawList[0].([]any)[1])
+	}
+	if wd.Imports[0].Source != ":wasi:snapshot_preview1" || len(wd.Imports[0].Symbols) != 2 {
+		t.Errorf("unexpected directive import: %+v", wd.Imports[0])
+	}
+
+	stDec, ok := rawList[1].([]any)[1].(ir.TYPE_DEC)
+	if !ok || stDec.Kind != ir.TYPE_DEC_STRUCT || !stDec.IsPublic || stDec.Name != "Ciovec" {
+		t.Fatalf("expected pub struct Ciovec, got %+v", rawList[1].([]any)[1])
+	}
+	if len(stDec.Fields) != 2 || len(stDec.Methods) != 1 {
+		t.Errorf("expected 2 fields and 1 method, got fields=%d methods=%d", len(stDec.Fields), len(stDec.Methods))
+	}
+
+	trDec, ok := rawList[2].([]any)[1].(ir.TYPE_DEC)
+	if !ok || trDec.Kind != ir.TYPE_DEC_TRAIT || trDec.Name != "Writer" || len(trDec.TraitSigs) != 1 {
+		t.Fatalf("expected trait Writer with 1 sig, got %+v", rawList[2].([]any)[1])
+	}
+	if len(trDec.TraitSigs[0].Params) != 2 || trDec.TraitSigs[0].Params[0].Name != "self" {
+		t.Errorf("expected self param on trait sig, got %+v", trDec.TraitSigs[0].Params)
+	}
+
+	implDec, ok := rawList[3].([]any)[1].(ir.IMPL_DEC)
+	if !ok || implDec.TraitName != "Writer" || len(implDec.Methods) != 1 {
+		t.Fatalf("expected impl Writer on Ciovec, got %+v", rawList[3].([]any)[1])
+	}
+
+	fnDec, ok := rawList[4].([]any)[1].(ir.FN_DEC)
+	if !ok || !fnDec.IsPublic || len(fnDec.Body.Stmts) != 5 {
+		t.Fatalf("expected pub fn demo with 5 stmts, got %+v", rawList[4].([]any)[1])
+	}
+
+	// let w = Writer::|Ciovec|
+	wBind := fnDec.Body.Stmts[0].(ir.BIND_DEC)
+	wPf := wBind.Value.(ir.PostFixExpr)
+	if len(wPf.Suffix) != 1 || wPf.Suffix[0].IsSuffix() != ir.SUFFIX_KIND_TRAIT_MAT {
+		t.Errorf("expected SUFFIX_KIND_TRAIT_MAT, got %+v", wPf.Suffix)
+	}
+
+	// var b = s[i]
+	bBind := fnDec.Body.Stmts[2].(ir.BIND_DEC)
+	bPf := bBind.Value.(ir.PostFixExpr)
+	if len(bPf.Suffix) != 1 || bPf.Suffix[0].IsSuffix() != ir.SUFFIX_KIND_INDEX {
+		t.Errorf("expected SUFFIX_KIND_INDEX, got %+v", bPf.Suffix)
+	}
+
+	// i = (i + 1) % 4
+	if _, ok := fnDec.Body.Stmts[3].(ir.AssignStmt); !ok {
+		t.Errorf("expected AssignStmt, got %T", fnDec.Body.Stmts[3])
+	}
+}

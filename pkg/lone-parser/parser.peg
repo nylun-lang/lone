@@ -119,7 +119,34 @@ PROGRAM <- decls:(_ TOP_LEVEL)* _ EOF {
 
 EOF <- !.
 
-TOP_LEVEL <- IMPORT_STMT / BIND_DEC / FN_DEC / IF_STMT / WHILE_STMT / LABEL_DEC / DROP_STMT
+TOP_LEVEL <- WASM_DIRECTIVE / IMPORT_STMT / TYPE_DEC / IMPL_DEC / BIND_DEC / FN_DEC / IF_STMT / WHILE_STMT / LABEL_DEC / DROP_STMT
+
+WASM_DIRECTIVE <- WASM_BLOCK_DIRECTIVE / WASM_INLINE_DIRECTIVE
+
+WASM_BLOCK_DIRECTIVE <- "---fa:wasm" ![a-zA-Z0-9_] imports:(_DIRECTIVE_WS IMPORT_STMT)* _DIRECTIVE_WS "---" {
+    var impList []ir.ImportDecl
+    if rawSlice, ok := imports.([]any); ok {
+        for _, item := range rawSlice {
+            if tuple, ok := item.([]any); ok && len(tuple) >= 2 {
+                if imp, ok := tuple[1].(ir.ImportDecl); ok {
+                    impList = append(impList, imp)
+                }
+            }
+        }
+    }
+    return ir.WasmDirective{
+        Imports: impList,
+        Inline:  false,
+        Pos:     currentPosition(c),
+    }, nil
+}
+
+WASM_INLINE_DIRECTIVE <- "--fa:wasm" ![a-zA-Z0-9_] _SPACE* (_EOL / EOF) {
+    return ir.WasmDirective{
+        Inline: true,
+        Pos:    currentPosition(c),
+    }, nil
+}
 
 IMPORT_STMT <- IMPORT_SYMBOLS_STMT / IMPORT_ALIAS_STMT
 
@@ -179,9 +206,15 @@ RELATIVE_SOURCE <- "."+ [a-zA-Z0-9_./-]* {
 KW_IMPORT <- "import" ![a-zA-Z0-9_]
 KW_FROM <- "from" ![a-zA-Z0-9_]
 KW_AS <- "as" ![a-zA-Z0-9_]
+KW_PUB <- "pub" ![a-zA-Z0-9_]
 KW_FN <- "fn" ![a-zA-Z0-9_]
 KW_VAR <- "var" ![a-zA-Z0-9_]
+KW_LET <- "let" ![a-zA-Z0-9_]
 KW_TYPE <- "type" ![a-zA-Z0-9_]
+KW_STRUCT <- "struct" ![a-zA-Z0-9_]
+KW_TRAIT <- "trait" ![a-zA-Z0-9_]
+KW_IMPL <- "impl" ![a-zA-Z0-9_]
+KW_ON <- "on" ![a-zA-Z0-9_]
 KW_NONE <- "none" ![a-zA-Z0-9_]
 KW_BOOL <- ("true" / "false") ![a-zA-Z0-9_]
 KW_READONLY <- "ro" ![a-zA-Z0-9_]
@@ -197,8 +230,13 @@ KEYWORD <-
     KW_IMPORT /
     KW_FROM /
     KW_AS /
+    KW_PUB /
     KW_VAR /
+    KW_LET /
     KW_TYPE /
+    KW_STRUCT /
+    KW_TRAIT /
+    KW_IMPL /
     KW_FN /
     KW_BOOL /
     KW_NONE /
@@ -221,10 +259,11 @@ IDENTIFIER <- !KEYWORD [a-zA-Z_] [a-zA-Z0-9_]* {
 
 _EOL <- "\r\n" / "\n"
 _SPACE <- [ \t]
-_INLINE_COMMENT     <- "--" ("fa:" IDENTIFIER)? (!EOL .)*
-_MULTI_LINE_COMMENT <- "---" ("fa:" IDENTIFIER)? (!"---" .)*
+_INLINE_COMMENT     <- "--" !"-" !("fa:wasm" ![a-zA-Z0-9_]) (!_EOL .)*
+_MULTI_LINE_COMMENT <- "---" !("fa:wasm" ![a-zA-Z0-9_]) (!"---" .)* "---"
 _COMMENT <- (_MULTI_LINE_COMMENT / _INLINE_COMMENT)
 _INLINE_WS <- (_SPACE / _INLINE_COMMENT)*
+_DIRECTIVE_WS <- (!"---" (_SPACE / _EOL / _INLINE_COMMENT))*
 
 _ <- (_SPACE / _EOL / _COMMENT)*
 
@@ -353,6 +392,7 @@ NAME_REF <- "#"? IDENTIFIER {
 Field_val_list 
     <- first:Field_val_assign 
        list:(_ "," _ Field_val_assign)* 
+       (_ ",")?
        {
         
         fields := []ir.FieldAssign{
@@ -371,7 +411,7 @@ Field_val_list
     }
 
 Field_val_assign 
-    <- "." field_name:IDENTIFIER":" _ field_val:EXPR {
+    <- "." field_name:IDENTIFIER (_ ":" _ / _SPACE+) field_val:EXPR {
         name := AnySliceToString("Field_val_assign.name", []any{field_name})
         expr := AnyValToType[ir.Expr]("Field_val_assign.expr", field_val)
 
@@ -391,7 +431,7 @@ OBJECT_LITERAL
     }
 
 EXPR_LIST
-<- first:EXPR rest:("," _ EXPR)* {
+<- first:EXPR rest:(_ "," _ EXPR)* (_ ",")? {
     args := []ir.Expr{
         AnyValToType[ir.Expr]("EXPR_LIST.first", first),
     }
@@ -401,7 +441,7 @@ EXPR_LIST
 
         args = append(
             args,
-            AnyValToType[ir.Expr]("EXPR_LIST.arg", tuple[2]),
+            AnyValToType[ir.Expr]("EXPR_LIST.arg", tuple[3]),
         )
     }
 
@@ -485,13 +525,29 @@ Call_type_make <- "::" data:(OBJECT_LITERAL / LIST_LITERAL) {
     return call, nil
 }
 
+Trait_materialize <- "::|" _ target:TYPE_REF _ "|" {
+    return ir.SuffixTraitMat{
+        TargetType: AnyValToType[ir.TYPE_REF]("Trait_materialize.target", target),
+        Pos:        currentPosition(c),
+    }, nil
+}
+
+Index_access <- "[" _ idx:EXPR _ "]" {
+    return ir.SuffixIndex{
+        Index: AnyValToType[ir.Expr]("Index_access.idx", idx),
+        Pos:   currentPosition(c),
+    }, nil
+}
+
 Postfix_suffix <- 
     Member_access
     / Namespace_access
+    / Trait_materialize
     / Associated_access
     / Call
     / Call_type_init
     / Call_type_make
+    / Index_access
 
 
 POSTFIX_EXPR
@@ -522,7 +578,7 @@ UNARY_EXPR
 / POSTFIX_EXPR
 
 MUL_BINARY_EXPR 
-<- left:UNARY_EXPR right:(_ ("*" / "/") _ UNARY_EXPR)* {
+<- left:UNARY_EXPR right:(_ ("*" / "/" / "%") _ UNARY_EXPR)* {
     expr := FoldBinaryExpr("MUL_BINARY_EXPR", c, left, right)
     return expr, nil
 } / UNARY_EXPR
@@ -642,8 +698,22 @@ TYPE_LIST <-
         }, nil
     }
 
-FN_PARAM <- 
-    name:(IDENTIFIER _ ":" _)? 
+SELF_PARAM <- "self" ![a-zA-Z0-9_] !(_ ":" / _SPACE+ TYPE_REF) {
+    return ir.FnParam{
+        Name: "self",
+        Type: ir.TYPE_REF{
+            Pos:  currentPosition(c),
+            Kind: ir.TYPE_BASE,
+            Value: ir.TypeBase{
+                Name: "Self",
+                Args: []ir.TYPE_REF{},
+            },
+        },
+    }, nil
+}
+
+TYPED_FN_PARAM <- 
+    name:(IDENTIFIER (_ ":" _ / _SPACE+))? 
     ptype:TYPE_REF {
         param_name := ""
         if name != nil {
@@ -656,6 +726,8 @@ FN_PARAM <-
             Type: param_type,
         }, nil
     }
+
+FN_PARAM <- SELF_PARAM / TYPED_FN_PARAM
 
 FN_PARAM_LIST <- 
     first:FN_PARAM 
@@ -737,11 +809,18 @@ TYPE_REF <-
         }, nil
     }
 
+BIND_TYPE_ANNOT <- _ ":" _ tr:TYPE_REF {
+    return tr, nil
+} / _SPACE+ tr:TYPE_REF {
+    return tr, nil
+}
+
 BIND_DEC <- 
-    KW_VAR 
+    pub:(KW_PUB _)?
+    (KW_VAR / KW_LET)
     _ 
     name:IDENTIFIER 
-    vtype:(":" _ TYPE_REF)?
+    vtype:BIND_TYPE_ANNOT?
     value:(_ "=" _ EXPR)? {
 
     pos := currentPosition(c)
@@ -756,8 +835,7 @@ BIND_DEC <-
 
     var resolved_type ir.TYPE_REF
     if vtype != nil {
-        extracted_type := AnyValToType[[]any]("BIND_DEC.resolved_type", vtype)[2]
-        resolved_type = AnyValToType[ir.TYPE_REF]("BIND_DEC.resolved_type", extracted_type)
+        resolved_type = AnyValToType[ir.TYPE_REF]("BIND_DEC.resolved_type", vtype)
     } else {
         resolved_type = ir.TYPE_REF{
             Kind: ir.TYPE_BASE,
@@ -772,6 +850,7 @@ BIND_DEC <-
 
     return ir.BIND_DEC{
         Pos: pos,
+        IsPublic: pub != nil,
         Name: string(AnyValToType[[]uint8]("BIND_DEC.name", name)),
         Value: resolved,
         Type: resolved_type,
@@ -844,7 +923,15 @@ DROP_STMT <- KW_DROP _ expr:EXPR {
     }, nil
 }
 
-STMT <- BIND_DEC / RETURN_STMT / BREAK_STMT / DROP_STMT / IF_STMT / WHILE_STMT / EXPR
+ASSIGN_STMT <- target:UNARY_EXPR _ "=" !"=" _ val:EXPR {
+    return ir.AssignStmt{
+        Target: AnyValToType[ir.Expr]("ASSIGN_STMT.target", target),
+        Value:  AnyValToType[ir.Expr]("ASSIGN_STMT.val", val),
+        Pos:    currentPosition(c),
+    }, nil
+}
+
+STMT <- BIND_DEC / RETURN_STMT / BREAK_STMT / DROP_STMT / IF_STMT / WHILE_STMT / ASSIGN_STMT / EXPR
 
 BLOCK <- "{" _ stmts:(_ STMT)* _ "}" {
     var stmt_list []any = []any{}
@@ -881,6 +968,7 @@ LABEL_DEC <- name:IDENTIFIER _ ":" !":" _ body:LABELABLE {
 }
 
 FN_DEC <- 
+    pub:(KW_PUB _)?
     KW_FN 
     _ 
     name:FN_NAME 
@@ -907,9 +995,207 @@ FN_DEC <-
 
         return ir.FN_DEC{
             Pos: currentPosition(c),
+            IsPublic: pub != nil,
             Name: AnyValToType[string]("FN_DEC.name", name),
             Params: fn_params,
             ReturnType: return_type,
             Body: AnyValToType[ir.Block]("FN_DEC.body", body),
         }, nil
     }
+
+TYPE_PARAM_ITEM <- id:IDENTIFIER (_ "where" ![a-zA-Z0-9_] _ BLOCK)? {
+    return string(AnyValToType[[]uint8]("TYPE_PARAM_ITEM.id", id)), nil
+}
+
+TYPE_PARAMS <- "<" _ first:TYPE_PARAM_ITEM rest:(_ "," _ TYPE_PARAM_ITEM)* _ ">" {
+    res := []string{AnyValToType[string]("TYPE_PARAMS.first", first)}
+    if restSlice, ok := rest.([]any); ok {
+        for _, item := range restSlice {
+            tuple := AnyValToType[[]any]("TYPE_PARAMS.tuple", item)
+            res = append(res, AnyValToType[string]("TYPE_PARAMS.item", tuple[3]))
+        }
+    }
+    return res, nil
+}
+
+STRUCT_FIELD <- "."? name:IDENTIFIER (_ ":" _ / _SPACE+) ftype:TYPE_REF (_ ",")? {
+    return ir.StructField{
+        Name: string(AnyValToType[[]uint8]("STRUCT_FIELD.name", name)),
+        Type: AnyValToType[ir.TYPE_REF]("STRUCT_FIELD.ftype", ftype),
+        Pos:  currentPosition(c),
+    }, nil
+}
+
+STRUCT_BODY <- "{" members:(_ (FN_DEC / STRUCT_FIELD))* _ "}" {
+    var fields []ir.StructField
+    var methods []ir.FN_DEC
+    if rawSlice, ok := members.([]any); ok {
+        for _, item := range rawSlice {
+            tuple := AnyValToType[[]any]("STRUCT_BODY.tuple", item)
+            switch m := tuple[1].(type) {
+            case ir.StructField:
+                fields = append(fields, m)
+            case ir.FN_DEC:
+                methods = append(methods, m)
+            }
+        }
+    }
+    return ir.TYPE_DEC{
+        Kind:    ir.TYPE_DEC_STRUCT,
+        Fields:  fields,
+        Methods: methods,
+        Pos:     currentPosition(c),
+    }, nil
+}
+
+TRAIT_SIG_FN <- KW_FN _ name:FN_NAME _ "(" _ params:FN_PARAM_LIST? _ ")" ret:(_INLINE_WS TYPE_REF)? (_ ",")? {
+    var fn_params []ir.FnParam
+    if params != nil {
+        fn_params = AnyValToType[[]ir.FnParam]("TRAIT_SIG_FN.params", params)
+    }
+    var return_type *ir.TYPE_REF
+    if ret != nil {
+        r := AnyValToType[[]any]("TRAIT_SIG_FN.ret", ret)[1]
+        t := AnyValToType[ir.TYPE_REF]("TRAIT_SIG_FN.ret_type", r)
+        return_type = &t
+    }
+    return ir.TraitMethodSig{
+        Name:       AnyValToType[string]("TRAIT_SIG_FN.name", name),
+        Params:     fn_params,
+        ReturnType: return_type,
+        Pos:        currentPosition(c),
+    }, nil
+}
+
+TRAIT_SIG_FIELD <- name:IDENTIFIER (_ ":" _ / _SPACE+) fnType:TYPE_FN (_ ",")? {
+    tf := AnyValToType[ir.TypeFn]("TRAIT_SIG_FIELD.fnType", fnType)
+    return ir.TraitMethodSig{
+        Name:       string(AnyValToType[[]uint8]("TRAIT_SIG_FIELD.name", name)),
+        Params:     tf.Params,
+        ReturnType: tf.ReturnType,
+        Pos:        currentPosition(c),
+    }, nil
+}
+
+TRAIT_METHOD_SIG <- TRAIT_SIG_FN / TRAIT_SIG_FIELD
+
+TRAIT_BODY <- "{" sigs:(_ TRAIT_METHOD_SIG)* _ "}" {
+    var list []ir.TraitMethodSig
+    if rawSlice, ok := sigs.([]any); ok {
+        for _, item := range rawSlice {
+            tuple := AnyValToType[[]any]("TRAIT_BODY.tuple", item)
+            list = append(list, AnyValToType[ir.TraitMethodSig]("TRAIT_BODY.sig", tuple[1]))
+        }
+    }
+    return ir.TYPE_DEC{
+        Kind:      ir.TYPE_DEC_TRAIT,
+        TraitSigs: list,
+        Pos:       currentPosition(c),
+    }, nil
+}
+
+TYPE_RHS_STRUCT <- KW_STRUCT _ body:STRUCT_BODY {
+    return body, nil
+}
+
+TYPE_RHS_TRAIT <- KW_TRAIT _ body:TRAIT_BODY {
+    return body, nil
+}
+
+TYPE_DEC <-
+    pub:(KW_PUB _)?
+    KW_TYPE
+    _
+    name:IDENTIFIER
+    tparams:TYPE_PARAMS?
+    _
+    "="
+    _
+    rhs:(TYPE_RHS_STRUCT / TYPE_RHS_TRAIT / STRUCT_BODY / TYPE_REF) {
+        var tp []string
+        if tparams != nil {
+            tp = AnyValToType[[]string]("TYPE_DEC.tparams", tparams)
+        }
+        typeName := string(AnyValToType[[]uint8]("TYPE_DEC.name", name))
+        switch v := rhs.(type) {
+        case ir.TYPE_DEC:
+            v.Name = typeName
+            v.IsPublic = pub != nil
+            v.TypeParams = tp
+            v.Pos = currentPosition(c)
+            return v, nil
+        case ir.TYPE_REF:
+            alias := v
+            return ir.TYPE_DEC{
+                Name:       typeName,
+                IsPublic:   pub != nil,
+                TypeParams: tp,
+                Kind:       ir.TYPE_DEC_ALIAS,
+                AliasType:  &alias,
+                Pos:        currentPosition(c),
+            }, nil
+        default:
+            gpanic("TYPE_DEC", fmt.Sprintf("unexpected rhs %T", rhs))
+            return nil, nil
+        }
+    }
+
+IMPL_TRAIT_DEC <-
+    KW_IMPL
+    _
+    traitName:IDENTIFIER
+    traitArgs:TYPE_REF_ARGS?
+    _
+    KW_ON
+    _
+    target:TYPE_REF
+    _
+    "{"
+    methods:(_ FN_DEC)*
+    _
+    "}" {
+        var targs []ir.TYPE_REF
+        if traitArgs != nil {
+            targs = AnySliceToSliceOfType[ir.TYPE_REF]("IMPL_TRAIT_DEC.traitArgs", traitArgs)
+        }
+        var fnList []ir.FN_DEC
+        if rawSlice, ok := methods.([]any); ok {
+            for _, item := range rawSlice {
+                tuple := AnyValToType[[]any]("IMPL_TRAIT_DEC.tuple", item)
+                fnList = append(fnList, AnyValToType[ir.FN_DEC]("IMPL_TRAIT_DEC.fn", tuple[1]))
+            }
+        }
+        return ir.IMPL_DEC{
+            TraitName:  string(AnyValToType[[]uint8]("IMPL_TRAIT_DEC.traitName", traitName)),
+            TraitArgs:  targs,
+            TargetType: AnyValToType[ir.TYPE_REF]("IMPL_TRAIT_DEC.target", target),
+            Methods:    fnList,
+            Pos:        currentPosition(c),
+        }, nil
+    }
+
+IMPL_INHERENT_DEC <-
+    KW_IMPL
+    _
+    target:TYPE_REF
+    _
+    "{"
+    methods:(_ FN_DEC)*
+    _
+    "}" {
+        var fnList []ir.FN_DEC
+        if rawSlice, ok := methods.([]any); ok {
+            for _, item := range rawSlice {
+                tuple := AnyValToType[[]any]("IMPL_INHERENT_DEC.tuple", item)
+                fnList = append(fnList, AnyValToType[ir.FN_DEC]("IMPL_INHERENT_DEC.fn", tuple[1]))
+            }
+        }
+        return ir.IMPL_DEC{
+            TraitName:  "",
+            TargetType: AnyValToType[ir.TYPE_REF]("IMPL_INHERENT_DEC.target", target),
+            Methods:    fnList,
+            Pos:        currentPosition(c),
+        }, nil
+    }
+
+IMPL_DEC <- IMPL_TRAIT_DEC / IMPL_INHERENT_DEC

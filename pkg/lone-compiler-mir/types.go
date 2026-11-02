@@ -74,9 +74,9 @@ type MirInst interface {
 	InstString() string
 }
 
-// MirBinOp represents binary arithmetic: %dest = add/sub/mul/div <type> <left>, <right>
+// MirBinOp represents binary arithmetic: %dest = add/sub/mul/div/mod/and/or <type> <left>, <right>
 type MirBinOp struct {
-	Op    string // add, sub, mul, div
+	Op    string // add, sub, mul, div, mod, and, or
 	Type  MirT
 	Dest  string
 	Left  MirOperand
@@ -163,6 +163,80 @@ func (c MirCallInst) InstString() string {
 	return fmt.Sprintf("call %s%s", callee, argsStr)
 }
 
+// MirSlotAddr computes the linear memory address of a datastack frame slot: %dest = slot.addr +<offset>
+type MirSlotAddr struct {
+	Dest   string
+	Offset int
+}
+
+func (s MirSlotAddr) InstString() string {
+	dest := s.Dest
+	if len(dest) > 0 && dest[0] != '%' {
+		dest = "%" + dest
+	}
+	return fmt.Sprintf("%s = slot.addr +%d", dest, s.Offset)
+}
+
+// MirLoad loads a value of Size bytes from linear memory at Addr + Offset.
+type MirLoad struct {
+	Dest   string
+	Type   MirT
+	Size   int
+	Signed bool
+	Addr   MirOperand
+	Offset int
+}
+
+func (l MirLoad) InstString() string {
+	dest := l.Dest
+	if len(dest) > 0 && dest[0] != '%' {
+		dest = "%" + dest
+	}
+	sign := "u"
+	if l.Signed {
+		sign = "s"
+	}
+	return fmt.Sprintf("%s = load.%d%s %s [%s+%d]", dest, l.Size, sign, l.Type.String(), l.Addr.OperandString(), l.Offset)
+}
+
+// MirStore stores a value of Size bytes into linear memory at Addr + Offset.
+type MirStore struct {
+	Type   MirT
+	Size   int
+	Addr   MirOperand
+	Offset int
+	Value  MirOperand
+}
+
+func (s MirStore) InstString() string {
+	return fmt.Sprintf("store.%d %s [%s+%d], %s", s.Size, s.Type.String(), s.Addr.OperandString(), s.Offset, s.Value.OperandString())
+}
+
+// MirGlobalSet assigns a value to a mutable module global.
+type MirGlobalSet struct {
+	Name  string
+	Type  MirT
+	Value MirOperand
+}
+
+func (g MirGlobalSet) InstString() string {
+	return fmt.Sprintf("global.set $%s, %s", g.Name, g.Value.OperandString())
+}
+
+// MirHeapAlloc bump-allocates Size bytes from the linear memory heap arena.
+type MirHeapAlloc struct {
+	Dest string
+	Size MirOperand
+}
+
+func (h MirHeapAlloc) InstString() string {
+	dest := h.Dest
+	if len(dest) > 0 && dest[0] != '%' {
+		dest = "%" + dest
+	}
+	return fmt.Sprintf("%s = heap.alloc %s", dest, h.Size.OperandString())
+}
+
 // =====================
 // TERMINATORS
 // =====================
@@ -194,6 +268,7 @@ type MirBranch struct {
 	Cond       MirOperand
 	ThenTarget string
 	ElseTarget string
+	JoinTarget string // structured join block for if/else reconstruction
 }
 
 func (b MirBranch) TerminatorString() string {
@@ -221,6 +296,7 @@ type MirFunction struct {
 	Name       string
 	Params     []MirParam
 	ReturnType MirT
+	FrameSize  int // aligned datastack frame size in bytes (0 if no stack slots used)
 	Blocks     []*MirBlock
 	Locals     map[string]MirT // All allocated registers and their types
 }
@@ -246,8 +322,19 @@ type MirDataSegment struct {
 	Value  string
 }
 
+type MirHostImport struct {
+	WasmModule string
+	WasmName   string
+	LocalName  string
+	Params     []string
+	Result     string
+}
+
 type MirModule struct {
 	Functions    []*MirFunction
 	Globals      map[string]MirT
+	GlobalInits  map[string]any
 	DataSegments []MirDataSegment
+	HostImports  []MirHostImport
+	UsesHeap     bool
 }

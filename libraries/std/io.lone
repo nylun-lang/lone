@@ -1,0 +1,126 @@
+-- Lone Standard Library: Pure-Lone Standard I/O (:std:io)
+-- Built cleanly atop :std:sys without C dependencies or inline WebAssembly.
+
+import .sys_write, .sys_read, .STDIN_FD, .STDOUT_FD, .STDERR_FD from :std:sys
+
+-- Computes the UTF-8 byte length of a null-terminated string in linear memory.
+pub fn str_len(s: str) i32 {
+    var n: i32 = 0
+    while s[n] != 0 {
+        n = n + 1
+    }
+    return n
+}
+
+-- Stream writing contract.
+pub type Writer = trait {
+    fn write(self, msg: str) i32
+}
+
+-- Stream reading contract.
+pub type Reader = trait {
+    fn read(self, buf: ptr<u8>, max_len: i32) i32
+}
+
+-- Standard output stream handle (fd 1).
+pub type Stdout = struct {
+    fd: i32,
+
+    pub fn new() Stdout {
+        return Stdout::{ .fd: STDOUT_FD }
+    }
+}
+
+-- Standard error stream handle (fd 2).
+pub type Stderr = struct {
+    fd: i32,
+
+    pub fn new() Stderr {
+        return Stderr::{ .fd: STDERR_FD }
+    }
+}
+
+-- Standard input stream handle (fd 0).
+pub type Stdin = struct {
+    fd: i32,
+
+    pub fn new() Stdin {
+        return Stdin::{ .fd: STDIN_FD }
+    }
+}
+
+impl Writer on Stdout {
+    fn write(self, msg: str) i32 {
+        return sys_write(self.fd, &raw msg[0], str_len(msg))
+    }
+}
+
+impl Writer on Stderr {
+    fn write(self, msg: str) i32 {
+        return sys_write(self.fd, &raw msg[0], str_len(msg))
+    }
+}
+
+impl Reader on Stdin {
+    fn read(self, buf: ptr<u8>, max_len: i32) i32 {
+        return sys_read(self.fd, buf, max_len)
+    }
+}
+
+-- Writes `msg` to standard output without a trailing newline.
+pub fn print(msg: str) void {
+    var out = Stdout.new()
+    drop out.write(msg)
+}
+
+-- Writes `msg` followed by a newline to standard output.
+pub fn println(msg: str) void {
+    var out = Stdout.new()
+    drop out.write(msg)
+    drop out.write("\n")
+}
+
+-- Writes `msg` to standard error without a trailing newline.
+pub fn eprint(msg: str) void {
+    var err = Stderr.new()
+    drop err.write(msg)
+}
+
+-- Writes `msg` followed by a newline to standard error.
+pub fn eprintln(msg: str) void {
+    var err = Stderr.new()
+    drop err.write(msg)
+    drop err.write("\n")
+}
+
+-- Reads a single line from standard input (stripping trailing \r and \n),
+-- promotes the resulting UTF-8 buffer to the managed heap store, and returns it as `str`.
+pub fn read_line() str {
+    var tmp: [1024]u8
+    var len: i32 = 0
+    var ch: u8 = 0
+    var inp = Stdin.new()
+
+    while len < 1023 {
+        var n: i32 = inp.read(&raw ch, 1)
+        if n <= 0 {
+            break
+        }
+        if ch == 10 {
+            break
+        }
+        if ch != 13 {
+            tmp[len] = ch
+            len = len + 1
+        }
+    }
+
+    var out: ptr<u8> = #heap_alloc(len + 1)
+    var i: i32 = 0
+    while i < len {
+        out[i] = tmp[i]
+        i = i + 1
+    }
+    out[len] = 0
+    return #ptr_to_str(out)
+}

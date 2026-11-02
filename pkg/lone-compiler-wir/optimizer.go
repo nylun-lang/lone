@@ -46,13 +46,17 @@ func (opt *Optimizer) OptimizeInsts(insts []WasmInst) []WasmInst {
 			}
 		}
 
-		// 3. Recurse into structured blocks and loops
+		// 3. Recurse into structured blocks, loops, and conditionals
 		switch block := curr.(type) {
 		case InstBlock:
 			block.Body = opt.OptimizeInsts(block.Body)
 			curr = block
 		case InstLoop:
 			block.Body = opt.OptimizeInsts(block.Body)
+			curr = block
+		case InstIf:
+			block.Then = opt.OptimizeInsts(block.Then)
+			block.Else = opt.OptimizeInsts(block.Else)
 			curr = block
 		}
 

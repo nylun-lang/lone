@@ -1,6 +1,4 @@
-// Lone Standard Library: Root Entrypoint (std.lone)
-// Similar to Zig's lib/std/std.zig
+-- Lone Standard Library: Root Entrypoint (:std)
+-- Re-exports core standard I/O abstractions and functions.
 
-fn print(msg: str) void {
-    #print(msg)
-}
+import .print, .println, .eprint, .eprintln, .read_line, .str_len, .Stdout, .Stderr, .Stdin, .Writer, .Reader from :std:io

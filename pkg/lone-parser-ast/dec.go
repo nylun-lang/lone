@@ -8,19 +8,106 @@ type ImportDecl struct {
 	Pos         Position
 }
 
+type WasmDirective struct {
+	Imports []ImportDecl
+	Inline  bool // True for single-line --fa:wasm directive
+	Pos     Position
+}
+
+type HostImportParam struct {
+	Name     string
+	LoneType string
+	WasmType string
+}
+
+type HostImportDecl struct {
+	Namespace      string
+	WasmModule     string
+	WasmName       string
+	LocalName      string
+	Params         []HostImportParam
+	ReturnLoneType string
+	ReturnWasmType string
+	Pos            Position
+}
+
+type ModuleScopeDecl struct {
+	ModuleID string
+	FilePath string
+	Decls    []any
+	Exports  map[string]bool
+}
+
+type ResolvedImportDecl struct {
+	ModuleID string
+	Source   string
+	Symbols  []string
+	Alias    string
+	Pos      Position
+}
+
 type BIND_DEC struct {
-	Name  string
-	Pos   Position
-	Value Expr
-	Type  TYPE_REF
+	Name     string
+	IsPublic bool
+	Pos      Position
+	Value    Expr
+	Type     TYPE_REF
 }
 
 type FN_DEC struct {
 	Name       string
+	IsPublic   bool
 	Pos        Position
 	Params     []FnParam
 	ReturnType *TYPE_REF
 	Body       Block
+}
+
+type AssignStmt struct {
+	Target Expr
+	Value  Expr
+	Pos    Position
+}
+
+type TypeDecKind int
+
+const (
+	TYPE_DEC_ALIAS TypeDecKind = iota
+	TYPE_DEC_STRUCT
+	TYPE_DEC_TRAIT
+)
+
+type StructField struct {
+	Name string
+	Type TYPE_REF
+	Pos  Position
+}
+
+type TraitMethodSig struct {
+	Name       string
+	Params     []FnParam
+	ReturnType *TYPE_REF
+	Pos        Position
+}
+
+type TYPE_DEC struct {
+	Name       string
+	IsPublic   bool
+	TypeParams []string
+	Kind       TypeDecKind
+	AliasType  *TYPE_REF
+	Fields     []StructField
+	Methods    []FN_DEC
+	TraitSigs  []TraitMethodSig
+	Pos        Position
+}
+
+type IMPL_DEC struct {
+	TraitName  string
+	TraitArgs  []TYPE_REF
+	TargetType TYPE_REF
+	Methods    []FN_DEC
+	Pos        Position
 }
 
 func (f FN_DEC) HasReturn() bool {

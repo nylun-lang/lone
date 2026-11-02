@@ -7,6 +7,7 @@ import (
 
 	loneanalyzer "lone/pkg/lone-analyzer"
 	loneanalyzerdiag "lone/pkg/lone-analyzer-diag"
+	loneproject "lone/pkg/lone-analyzer-project"
 	loneparser "lone/pkg/lone-parser"
 	lonelogger "lone/pkg/lone-shared-logger"
 
@@ -49,8 +50,10 @@ var checkCmd = &cobra.Command{
 			return nil
 		}
 
+		resolvedAst, resolveDiags := loneproject.ResolveAST(filePath, rawAst)
 		analyzer := loneanalyzer.NewAnalyzer(filePath, loneanalyzer.DefaultConfig())
-		typedProg, diags := analyzer.AnalyzeTyped(rawAst)
+		typedProg, diags := analyzer.AnalyzeTyped(resolvedAst)
+		diags = append(resolveDiags, diags...)
 
 		if checkAirJsonFlag {
 			out, err := loneanalyzerdiag.PrintNodesJSON(typedProg)

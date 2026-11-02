@@ -46,8 +46,26 @@ func (p *PassNamingConventions) walkNode(node any) {
 	}
 
 	switch n := node.(type) {
-	case ir.ImportDecl, *ir.ImportDecl:
+	case ir.ImportDecl, *ir.ImportDecl,
+		ir.WasmDirective, *ir.WasmDirective,
+		ir.HostImportDecl, *ir.HostImportDecl,
+		ir.ResolvedImportDecl, *ir.ResolvedImportDecl,
+		ir.ModuleScopeDecl, *ir.ModuleScopeDecl:
 		return
+	case ir.TYPE_DEC:
+		p.checkTypeDec(&n)
+	case *ir.TYPE_DEC:
+		p.checkTypeDec(n)
+	case ir.IMPL_DEC:
+		p.checkImplDec(&n)
+	case *ir.IMPL_DEC:
+		p.checkImplDec(n)
+	case ir.AssignStmt:
+		p.walkNode(n.Target)
+		p.walkNode(n.Value)
+	case *ir.AssignStmt:
+		p.walkNode(n.Target)
+		p.walkNode(n.Value)
 	case ir.BIND_DEC:
 		p.checkBindDec(&n)
 	case *ir.BIND_DEC:
@@ -167,6 +185,76 @@ func (p *PassNamingConventions) walkSuffix(suffix ir.Suffix) {
 		p.walkNode(s.Arg)
 	case *ir.SuffixCallTypeMake:
 		p.walkNode(s.Arg)
+	case ir.SuffixIndex:
+		p.walkNode(s.Index)
+	case *ir.SuffixIndex:
+		p.walkNode(s.Index)
+	case ir.SuffixTraitMat:
+		p.checkTypeRef(&s.TargetType)
+	case *ir.SuffixTraitMat:
+		p.checkTypeRef(&s.TargetType)
+	}
+}
+
+func (p *PassNamingConventions) checkTypeDec(td *ir.TYPE_DEC) {
+	if !IsCamelCase(td.Name) {
+		p.addDiagnostic(
+			SeverityWarning,
+			td.Pos,
+			"naming/type",
+			fmt.Sprintf("type name %q should follow CamelCase convention", td.Name),
+		)
+	}
+	if td.AliasType != nil {
+		p.checkTypeRef(td.AliasType)
+	}
+	for _, f := range td.Fields {
+		if !IsSnakeCase(f.Name) && !IsAllCaps(f.Name) {
+			p.addDiagnostic(
+				SeverityWarning,
+				f.Pos,
+				"naming/field",
+				fmt.Sprintf("field %q should follow snake_case convention", f.Name),
+			)
+		}
+		p.checkTypeRef(&f.Type)
+	}
+	for i := range td.Methods {
+		p.checkFnDec(&td.Methods[i])
+	}
+	for _, sig := range td.TraitSigs {
+		if !IsSnakeCase(sig.Name) && !IsIntrinsic(sig.Name) {
+			p.addDiagnostic(
+				SeverityWarning,
+				sig.Pos,
+				"naming/function",
+				fmt.Sprintf("trait method %q should follow snake_case convention", sig.Name),
+			)
+		}
+		for _, param := range sig.Params {
+			if param.Name != "" && !IsSnakeCase(param.Name) {
+				p.addDiagnostic(
+					SeverityWarning,
+					param.Type.Pos,
+					"naming/parameter",
+					fmt.Sprintf("parameter %q should follow snake_case convention", param.Name),
+				)
+			}
+			p.checkTypeRef(&param.Type)
+		}
+		if sig.ReturnType != nil {
+			p.checkTypeRef(sig.ReturnType)
+		}
+	}
+}
+
+func (p *PassNamingConventions) checkImplDec(im *ir.IMPL_DEC) {
+	p.checkTypeRef(&im.TargetType)
+	for i := range im.TraitArgs {
+		p.checkTypeRef(&im.TraitArgs[i])
+	}
+	for i := range im.Methods {
+		p.checkFnDec(&im.Methods[i])
 	}
 }
 

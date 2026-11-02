@@ -43,10 +43,19 @@ func (m *WasmModule) FormatWat() string {
 		}
 	}
 
+	// 2.5. Globals
+	for _, g := range m.Globals {
+		typeSpec := string(g.Type)
+		if g.Mutable {
+			typeSpec = fmt.Sprintf("(mut %s)", g.Type)
+		}
+		sb.WriteString(fmt.Sprintf("  (global %s %s (%s))\n", g.Name, typeSpec, g.InitVal))
+	}
+
 	// 3. Data segments
 	for _, data := range m.DataSegments {
 		escaped := escapeWatString(data.RawStr)
-		sb.WriteString(fmt.Sprintf("  (data (i32.const %d) %q)\n", data.Offset, escaped))
+		sb.WriteString(fmt.Sprintf("  (data (i32.const %d) \"%s\")\n", data.Offset, escaped))
 	}
 
 	if len(m.DataSegments) > 0 {
@@ -120,9 +129,9 @@ func escapeWatString(s string) string {
 		case '\t':
 			sb.WriteString(`\09`)
 		case '\\':
-			sb.WriteString(`\\`)
+			sb.WriteString(`\5c`)
 		case '"':
-			sb.WriteString(`\"`)
+			sb.WriteString(`\22`)
 		case 0:
 			sb.WriteString(`\00`)
 		default:
@@ -133,10 +142,6 @@ func escapeWatString(s string) string {
 			}
 		}
 	}
-	// Append null terminator if not present
-	res := sb.String()
-	if !strings.HasSuffix(res, `\00`) {
-		res += `\00`
-	}
-	return res
+	sb.WriteString(`\00`)
+	return sb.String()
 }

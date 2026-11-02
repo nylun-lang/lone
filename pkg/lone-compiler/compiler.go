@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	loneanalyzer "lone/pkg/lone-analyzer"
+	loneproject "lone/pkg/lone-analyzer-project"
 	loneadapter "lone/pkg/lone-compiler-adapter"
 	lonemir "lone/pkg/lone-compiler-mir"
 	lonewir "lone/pkg/lone-compiler-wir"
@@ -82,9 +83,13 @@ func (c *Compiler) CompileSource(fileName string, source []byte) (*Result, error
 		return nil, fmt.Errorf("syntax error: %w", err)
 	}
 
+	// 1.5. Module & Host Capability Resolution
+	resolvedAst, resolveDiags := loneproject.ResolveAST(fileName, rawAst)
+
 	// 2. Semantic Analysis & Type Inference
 	analyzer := loneanalyzer.NewAnalyzer(fileName, loneanalyzer.DefaultConfig())
-	typedProg, diags := analyzer.AnalyzeTyped(rawAst)
+	typedProg, diags := analyzer.AnalyzeTyped(resolvedAst)
+	diags = append(resolveDiags, diags...)
 
 	hasErrors := false
 	for _, d := range diags {

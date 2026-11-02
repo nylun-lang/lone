@@ -15,11 +15,13 @@ import (
 )
 
 var (
-	buildMirFlag     bool
-	buildOutFlag     string
-	buildTargetFlag  string
-	buildAdapterFlag string
-	buildNoOptFlag   bool
+	buildMirFlag        bool
+	buildOutFlag        string
+	buildTargetFlag     string
+	buildAdapterFlag    string
+	buildWebAdapterFlag string
+	buildNoOptFlag      bool
+	buildQuietFlag      bool
 )
 
 var buildCmd = &cobra.Command{
@@ -55,6 +57,7 @@ var buildWebCmd = &cobra.Command{
 	Short:   "Compile Lone source code targeting Web/Browser environments",
 	Args:    cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		buildAdapterFlag = buildWebAdapterFlag
 		return runBuild(args[0], lonecompiler.TargetWeb)
 	},
 }
@@ -72,7 +75,7 @@ func init() {
 
 	buildWebCmd.Flags().BoolVar(&buildMirFlag, "mir", false, "Output lowered Falone MIR instead of WAT")
 	buildWebCmd.Flags().StringVarP(&buildOutFlag, "out", "o", "", "Output file path (default: stdout or <file>.wat)")
-	buildWebCmd.Flags().StringVar(&buildAdapterFlag, "with-adapter", "browser", "Generate JavaScript runtime loader glue (browser | node)")
+	buildWebCmd.Flags().StringVar(&buildWebAdapterFlag, "with-adapter", "browser", "Generate JavaScript runtime loader glue (browser | node)")
 
 	buildCmd.AddCommand(buildWasmCmd)
 	buildCmd.AddCommand(buildWebCmd)
@@ -159,14 +162,18 @@ func runBuild(path string, target lonecompiler.Target) error {
 		if err := os.WriteFile(buildOutFlag, []byte(res.WatOutput), 0644); err != nil {
 			return fmt.Errorf("failed to write output: %w", err)
 		}
-		fmt.Printf("Wrote WebAssembly output to %s\n", buildOutFlag)
+		if !buildQuietFlag {
+			fmt.Printf("Wrote WebAssembly output to %s\n", buildOutFlag)
+		}
 
 		if res.AdapterGlue != "" && res.AdapterFile != "" {
 			adapterPath := filepath.Join(filepath.Dir(buildOutFlag), res.AdapterFile)
 			if err := os.WriteFile(adapterPath, []byte(res.AdapterGlue), 0644); err != nil {
 				return fmt.Errorf("failed to write adapter glue: %w", err)
 			}
-			fmt.Printf("Generated runtime adapter glue at %s\n", adapterPath)
+			if !buildQuietFlag {
+				fmt.Printf("Generated runtime adapter glue at %s\n", adapterPath)
+			}
 		}
 	} else {
 		fmt.Print(res.WatOutput)

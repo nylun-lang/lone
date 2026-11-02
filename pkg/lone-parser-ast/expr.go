@@ -92,6 +92,8 @@ const (
 	SUFFIX_KIND_CALL
 	SUFFIX_KIND_CALL_TYPE_INIT
 	SUFFIX_KIND_CALL_TYPE_MAKE
+	SUFFIX_KIND_INDEX
+	SUFFIX_KIND_TRAIT_MAT
 )
 
 type Suffix interface {
@@ -168,6 +170,24 @@ type SuffixNamespaceAccess struct {
 
 func (SuffixNamespaceAccess) IsSuffix() SuffixKind {
 	return SUFFIX_KIND_NAMESPACE
+}
+
+type SuffixIndex struct {
+	Index Expr
+	Pos   Position
+}
+
+func (SuffixIndex) IsSuffix() SuffixKind {
+	return SUFFIX_KIND_INDEX
+}
+
+type SuffixTraitMat struct {
+	TargetType TYPE_REF
+	Pos        Position
+}
+
+func (SuffixTraitMat) IsSuffix() SuffixKind {
+	return SUFFIX_KIND_TRAIT_MAT
 }
 
 // =====================
