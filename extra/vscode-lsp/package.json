@@ -4,6 +4,11 @@
   "description": "Language Server Protocol client and syntax highlighting for the Lone programming language",
   "version": "0.1.0",
   "publisher": "lone-lang",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ctlinker/lone"
+  },
   "engines": {
     "vscode": "^1.75.0"
   },
