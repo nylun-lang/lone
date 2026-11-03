@@ -613,7 +613,7 @@ EQUALITY_BINARY_EXPR
 }
 
 BITWISE_OR_BINARY_EXPR 
-<- left:EQUALITY_BINARY_EXPR right:(_ "|" _ EQUALITY_BINARY_EXPR)* {
+<- left:EQUALITY_BINARY_EXPR right:(_ "|" !"|" _ EQUALITY_BINARY_EXPR)* {
     expr := FoldBinaryExpr("BITWISE_OR_BINARY_EXPR", c, left, right)
     return expr, nil
 }
@@ -625,19 +625,19 @@ BITWISE_XOR_BINARY_EXPR
 }
 
 BITWISE_AND_BINARY_EXPR 
-<- left:BITWISE_OR_BINARY_EXPR right:(_ "&" _ BITWISE_OR_BINARY_EXPR)* {
+<- left:BITWISE_OR_BINARY_EXPR right:(_ "&" !"&" _ BITWISE_OR_BINARY_EXPR)* {
     expr := FoldBinaryExpr("BITWISE_AND_BINARY_EXPR", c, left, right)
     return expr, nil
 }
 
 LOGICAL_AND_BINARY_EXPR 
-<- left:BITWISE_AND_BINARY_EXPR right:(_ "and" _ BITWISE_AND_BINARY_EXPR)* {
+<- left:BITWISE_AND_BINARY_EXPR right:(_ ("and" / "&&") _ BITWISE_AND_BINARY_EXPR)* {
     expr := FoldBinaryExpr("LOGICAL_AND_BINARY_EXPR", c, left, right)
     return expr, nil
 }
 
 LOGICAL_OR_BINARY_EXPR 
-<- left:LOGICAL_AND_BINARY_EXPR right:(_ "or" _ LOGICAL_AND_BINARY_EXPR)* {
+<- left:LOGICAL_AND_BINARY_EXPR right:(_ ("or" / "||") _ LOGICAL_AND_BINARY_EXPR)* {
     expr := FoldBinaryExpr("LOGICAL_OR_BINARY_EXPR", c, left, right)
     return expr, nil
 }

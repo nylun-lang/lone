@@ -94,7 +94,7 @@ var defaultHostRegistry = map[string]map[string]HostFuncSpec{
 			WasmModule: "wasi_snapshot_preview1",
 			Name:       "random_get",
 			Params: []HostParamSpec{
-				{Name: "buf", LoneType: "ptr<u8>", WasmType: "i32"},
+				{Name: "buf", LoneType: "ptr<any>", WasmType: "i32"},
 				{Name: "buf_len", LoneType: "i32", WasmType: "i32"},
 			},
 			ReturnLoneType: "i32",

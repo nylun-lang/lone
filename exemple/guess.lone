@@ -1,0 +1,75 @@
+-- Lone Example: Number Guessing Game
+-- Demonstrates module imports, standard I/O, struct methods, and WASI random number generation.
+
+import .print, .println, .print_int, .println_int, .read_line, .parse_int, .random_range from :std:io
+
+pub type Game = struct {
+    secret: i32,
+    attempts: i32,
+    max_val: i32,
+
+    pub fn new(max_num: i32) Game {
+        return Game::{
+            .secret: random_range(1, max_num),
+            .attempts: 0,
+            .max_val: max_num,
+        }
+    }
+
+    pub fn check(self, guess: i32) i32 {
+        if guess < self.secret {
+            return -1
+        }
+        if guess > self.secret {
+            return 1
+        }
+        return 0
+    }
+}
+
+fn main() void {
+    println("==========================================")
+    println("    Welcome to the Lone Guessing Game!    ")
+    println("==========================================")
+    println("I have chosen a secret number between 1 and 100.")
+    println("Can you guess what it is? (Enter 0 to surrender)\n")
+
+    var game = Game.new(100)
+    var playing = true
+
+    while playing {
+        print("Your guess: ")
+        var input = read_line()
+        var guess: i32 = parse_int(input)
+
+        if guess == 0 {
+            print("Giving up? The secret number was: ")
+            println_int(game.secret)
+            println("Better luck next time!")
+            playing = false
+        } else {
+            game.attempts = game.attempts + 1
+            var outcome = game.check(guess)
+
+            if outcome == -1 {
+                println("-> Too low! Try a higher number.\n")
+            } else if outcome == 1 {
+                println("-> Too high! Try a lower number.\n")
+            } else {
+                println("\n🎉 BINGO! You guessed the secret number!")
+                print("Total attempts: ")
+                println_int(game.attempts)
+
+                if game.attempts <= 5 {
+                    println("Rank: Master Mind! Outstanding intuition!")
+                } else if game.attempts <= 8 {
+                    println("Rank: Expert Guesser! Great strategy!")
+                } else {
+                    println("Rank: Victorious! You got there in the end!")
+                }
+
+                playing = false
+            }
+        }
+    }
+}

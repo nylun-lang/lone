@@ -1,4 +1,4 @@
 -- Lone Standard Library: Root Entrypoint (:std)
 -- Re-exports core standard I/O abstractions and functions.
 
-import .print, .println, .eprint, .eprintln, .read_line, .str_len, .Stdout, .Stderr, .Stdin, .Writer, .Reader from :std:io
+import .print, .println, .eprint, .eprintln, .read_line, .str_len, .Stdout, .Stderr, .Stdin, .Writer, .Reader, .print_int, .println_int, .int_to_str, .parse_int, .random_i32, .random_range from :std:io

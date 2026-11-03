@@ -144,3 +144,51 @@ fn main() void {
 		t.Errorf("unexpected stdout from wasmtime:\ngot:  %q\nwant: %q", got, want)
 	}
 }
+
+func TestGuessingGameExampleE2EWasmtime(t *testing.T) {
+	comp := lonecompiler.NewCompiler(lonecompiler.DefaultConfig())
+	res, err := comp.CompileFile("../../exemple/guess.lone")
+	if err != nil {
+		t.Fatalf("failed to compile exemple/guess.lone: %v (diags: %+v)", err, res)
+	}
+
+	output := runWatWithWasmtime(t, res.WatOutput, "0\n")
+	if !strings.Contains(output, "Welcome to the Lone Guessing Game!") {
+		t.Errorf("expected welcome banner in output, got:\n%s", output)
+	}
+	if !strings.Contains(output, "Giving up? The secret number was: ") {
+		t.Errorf("expected giving up message in output, got:\n%s", output)
+	}
+	if !strings.Contains(output, "Better luck next time!") {
+		t.Errorf("expected better luck message, got:\n%s", output)
+	}
+}
+
+func TestParseIntAndIntToStrE2EWasmtime(t *testing.T) {
+	code := `
+import .print, .println, .println_int, .int_to_str, .parse_int from :std:io
+
+fn main() void {
+	var a = parse_int("12345")
+	var b = parse_int("  -678")
+	var sum = a + b
+	print("sum=")
+	println_int(sum)
+
+	var s = int_to_str(sum)
+	print("str=")
+	println(s)
+}
+`
+	comp := lonecompiler.NewCompiler(lonecompiler.DefaultConfig())
+	res, err := comp.CompileSource("parse_test.lone", []byte(code))
+	if err != nil {
+		t.Fatalf("failed to compile: %v", err)
+	}
+
+	output := runWatWithWasmtime(t, res.WatOutput, "")
+	want := "sum=11667\nstr=11667\n"
+	if output != want {
+		t.Errorf("unexpected output from parse_int/int_to_str test:\ngot:  %q\nwant: %q", output, want)
+	}
+}

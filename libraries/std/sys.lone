@@ -2,7 +2,7 @@
 -- Authorizes low-level WebAssembly host syscalls strictly within this module.
 
 ---fa:wasm
-import .fd_write, .fd_read, .fd_close, .proc_exit from :wasi:snapshot_preview1
+import .fd_write, .fd_read, .fd_close, .proc_exit, .random_get from :wasi:snapshot_preview1
 ---
 
 pub var STDIN_FD: i32 = 0
@@ -47,4 +47,10 @@ pub fn sys_close(fd: i32) i32 {
 -- Terminates the WASI process with exit status `code`.
 pub fn sys_exit(code: i32) void {
     proc_exit(code)
+}
+
+-- Fills `buf` with `len` random bytes via WASI `random_get`.
+-- Returns 0 on success.
+pub fn sys_random(buf: ptr<any>, len: i32) i32 {
+    return random_get(buf, len)
 }

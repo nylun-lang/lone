@@ -1241,7 +1241,7 @@ func (te *TypeEvaluator) evalBinaryExpr(b *ir.BinaryExpr) *TBinaryExpr {
 		resType = tLeft.ExprType()
 	case ir.BINARY_OP_EQ, ir.BINARY_OP_NOT_EQ, ir.BINARY_OP_LESS, ir.BINARY_OP_LESS_EQ, ir.BINARY_OP_GREATER, ir.BINARY_OP_GREATER_EQ:
 		resType = TypeBool
-	case ir.BINARY_OP_AND, ir.BINARY_OP_OR:
+	case ir.BINARY_OP_AND, ir.BINARY_OP_OR, "&&", "||", "&", "|", "^":
 		resType = TypeBool
 	default:
 		resType = tLeft.ExprType()

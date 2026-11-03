@@ -818,11 +818,11 @@ func (l *lowerer) lowerExpr(expr loneanalyzer.TExpr) MirOperand {
 			l.curBlk.Insts = append(l.curBlk.Insts, MirBinOp{
 				Op: "mod", Type: mType, Dest: destReg, Left: leftOp, Right: rightOp,
 			})
-		case "and", "&":
+		case "and", "&", "&&":
 			l.curBlk.Insts = append(l.curBlk.Insts, MirBinOp{
 				Op: "and", Type: mType, Dest: destReg, Left: leftOp, Right: rightOp,
 			})
-		case "or", "|":
+		case "or", "|", "||":
 			l.curBlk.Insts = append(l.curBlk.Insts, MirBinOp{
 				Op: "or", Type: mType, Dest: destReg, Left: leftOp, Right: rightOp,
 			})
