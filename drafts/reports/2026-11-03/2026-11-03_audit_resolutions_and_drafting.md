@@ -22,15 +22,19 @@ Following the comprehensive language and compiler audit, the user requested a fu
 10. **Structured Control Flow in WIR**: In-depth pros and cons discussion of Relooper vs. AST-directed structured lowering.
 11. **Linear Memory Architecture**: Draft safe memory layout, stack-heap collision detection, dynamic `memory.grow`, and free lists.
 12. **Language Evolution**: Draft specifications for Generics/Monomorphization, Tagged Unions (`enum`), Pattern Matching (`match`), and `Result<T, E>` with the `?` operator.
+13. **Scoped Condition Headers (`if: [let x = 0] ...`)**: Unify `: [...]` as a core scoped header construct across both standard and packed `if`.
+14. **Greenfield Architecture Layout (`pkg2/`, `lib2/`, `cmd2/`)**: Formulate a parallel clean-slate compiler engine to build the Pratt parser, AST-directed lowering, and register allocator without legacy downtime.
 
 ---
 
 ## 2. Key Accomplishments & Deliverables
 
-1. **Delivered Comprehensive RFC**: Created [`drafts/research/rfc_language_refinements_and_compiler_architecture.md`](file:///home/char-c/Projects/lone/drafts/research/rfc_language_refinements_and_compiler_architecture.md) containing full specifications, code snippets, grammar definitions, and algorithm designs across all 12 areas.
-2. **Detailed Architectural Pros & Cons**: Analyzed options for structured WebAssembly generation (Relooper vs AST-directed lowering vs heuristic region matching), establishing AST-directed lowering as the optimal path for Lone.
-3. **Memory Safety Roadmap**: Formulated a partitioned linear memory layout with guard pages, collision detection, and dynamic page growth to eliminate stack smashing.
-4. **Clean Phased Implementation Plan**: Structured the implementation into 4 sequential phases (Phase 0 Quick Fixes $\rightarrow$ Phase 1 Core Subsystems $\rightarrow$ Phase 2 Engine Upgrades $\rightarrow$ Phase 3 Language Expansion).
+1. **Delivered Comprehensive RFC**: Created [`drafts/research/rfc_language_refinements_and_compiler_architecture.md`](file:///home/char-c/Projects/lone/drafts/research/rfc_language_refinements_and_compiler_architecture.md) containing full specifications, code snippets, grammar definitions, and algorithm designs across all 14 areas.
+2. **Scoped Condition Headers Specification**: Detailed the grammar and scoping rules for `if: [let x = 0] x != 9 { break }` and packed `if: [let x = 0, let y = 7] { ... }`, establishing `: [...]` as a unified Lone language idiom.
+3. **Greenfield Architecture Specification (`pkg2/`, `lib2/`, `cmd2/`)**: Laid out the clean directory blueprint and phased execution strategy to implement the Pratt parser, unified semantic analyzer, AST-directed WIR, and linear scan allocator side-by-side with the existing engine.
+4. **Detailed Architectural Pros & Cons**: Analyzed options for structured WebAssembly generation (Relooper vs AST-directed lowering vs heuristic region matching), establishing AST-directed lowering as the optimal path for Lone.
+5. **Memory Safety Roadmap**: Formulated a partitioned linear memory layout with guard pages, collision detection, and dynamic page growth to eliminate stack smashing.
+6. **Clean Phased Implementation Plan**: Structured the implementation into 5 sequential steps leading to atomic cutover.
 
 ---
 

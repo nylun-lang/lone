@@ -25,6 +25,8 @@ This Request for Comments (RFC) establishes the concrete design, grammar modific
 10. **Structured Control Flow Reconstruction in WIR**: Analyze trade-offs (Relooper vs AST-directed vs Region trees).
 11. **Production Linear Memory Architecture**: Define safe stack/heap partitioning, collision checks, `memory.grow`, and free lists.
 12. **Drafting Key Language Evolution**: Generics/Monomorphization, Algebraic Data Types (`enum`), Exhaustive `match`, and `Result<T, E>`.
+13. **Scoped Condition Headers (`if: [bindings] ...`)**: Unify `: [...]` as a core scoped header idiom across both standard and packed `if`.
+14. **Greenfield Engine Architecture (`pkg2/`, `lib2/`, `cmd2/`)**: Build the next-generation Pratt-based compiler engine in parallel to eliminate legacy technical debt without workflow disruption.
 
 ---
 
@@ -166,8 +168,9 @@ const (
 
 ---
 
-### 2.4 Control Flow Syntactic Rationale
+### 2.4 Control Flow Syntactic Rationale & Scoped Condition Headers
 
+#### 2.4.1 Control Flow Syntactic Framing
 Lone intentionally utilizes distinct syntactic framing across control flow constructs to prevent ambiguity without relying on mandatory statement semicolons:
 
 | Construct | Syntax | Design Invariant & Rationale |
@@ -177,6 +180,88 @@ Lone intentionally utilizes distinct syntactic framing across control flow const
 | **Post-Condition Loop** | `loop { ... } while: [cond]` | **Trailing Line-Bleed Prevention**: In C/Java, `do { ... } while (x > 0);` requires a trailing semicolon; omitting it causes the parser to treat the next line as part of an expression. By requiring `while:` with bracketed `[cond]`, Lone provides a rigid closing boundary without semicolons. |
 | **Iteration Loop** | `for item in iter { ... }` | **Explicit Iteration**: Keyword `in` unambiguously binds the variable to an iterator protocol without parentheses. |
 | **Packed `if`** | `if { c1 => e1, else => e2 }` | **Concise Branching**: Fat arrow `=>` separates condition from body arm within an expression block. |
+
+---
+
+#### 2.4.2 Scoped Condition Headers: `if: [bindings] ...`
+
+##### Motivation & Pattern Generalization
+In Lone, the `: [...]` punctuation was initially introduced for post-condition loops (`loop { ... } while: [cond]`). We now generalize `: [...]` into a **unified header clause** across Lone's control flow statements. 
+
+Specifically, developers frequently need to compute or extract values immediately before testing them, without leaking those variables into the outer lexical scope. Lone introduces **Scoped Condition Headers** for both standard `if` and packed `if`:
+
+```lone
+-- 1. Standard if with a scoped binding header
+if: [let x = 0] x != 9 {
+    break 
+}
+
+-- 2. Packed if with multiple scoped bindings in the header
+if: [let x = 0, let y = 7] {
+    x is int and y is int => {
+        print("Both are integers")
+    },
+    else => {
+        print("Fallback")
+    }
+}
+```
+
+##### Syntactic Specification
+1. **Header Clause**: An optional `: [` followed by a comma-separated list of `let` or `var` bindings, terminated by `]`.
+2. **Standard `if` Form**:
+   ```lone
+   if: [binding_list] condition {
+       -- then branch
+   } else if: [binding_list] condition {
+       -- else-if branch
+   } else {
+       -- else branch
+   }
+   ```
+3. **Packed `if` Form**:
+   ```lone
+   if: [binding_list] {
+       cond1 => expr1,
+       cond2 => expr2,
+       else => expr3,
+   }
+   ```
+
+##### Scoping & Lifetime Semantics
+- **Strict Scope Isolation**: Bindings defined in `if: [let a = expr]` exist strictly within the evaluated conditional construct:
+  - Accessible in the condition expression `cond`.
+  - Accessible within the then-block `{ ... }`.
+  - Accessible within subsequent `else if` and `else` branches of the same chain.
+  - Drop out of scope immediately when the entire `if` statement finishes.
+- **Mutability in Headers**: Both immutable bindings (`let`) and mutable bindings (`var`) are supported:
+  - `if: [let res = compute()] res > 0 { ... }` (res is immutable).
+  - `if: [var cursor = stream.read()] cursor.has_more() { cursor.advance() }` (cursor can be mutated).
+- **Multiple Bindings**: Comma-separated: `if: [let a = 1, var b = 2] ...`.
+
+##### AST Representation
+In [`pkg/lone-parser-ast/expr.go`](file:///home/char-c/Projects/lone/pkg/lone-parser-ast/expr.go):
+```go
+type IfStmt struct {
+    Header []BIND_DEC // Scoped header bindings (empty if no ': [...]')
+    Cond   Expr
+    Then   Block
+    Else   any        // nil, Block, or IfStmt
+    Pos    Position
+}
+```
+
+##### Desugaring & Lowering
+During semantic analysis, an `if: [bindings] cond { body } else { el }` statement desugars cleanly into a scoped synthetic block containing the bindings followed by the branching statement:
+```lone
+{
+    let x = 0
+    if x != 9 {
+        break
+    }
+}
+```
+This guarantees zero runtime overhead and preserves optimal WebAssembly structured control flow emission.
 
 ---
 
@@ -426,6 +511,66 @@ PROPOSED (Safe, Partitioned & Dynamic):
 
 ---
 
+### 3.5 Greenfield Engine Architecture: `pkg2/`, `lib2/`, `cmd2/`
+
+#### 3.5.1 The Strategic Rationale for a Parallel Greenfield
+Replacing Pigeon PEG with a hand-crafted Pratt parser, transitioning WIR to AST-directed structured lowering, and revamping register allocation represents a foundational rewrite of the compiler frontend and backend. Attempting in-place edits within `pkg/` risks regressions across existing tests and toolchains.
+
+Adopting a parallel **`pkg2/`**, **`lib2/`**, and **`cmd2/`** tree provides:
+1. **Zero Regressions**: The active compiler (`pkg/`, `cmd/lone`) remains 100% stable, green, and operational throughout development.
+2. **Clean-Room Design**: No residual baggage from Pigeon PEG generated code (`generated-parser.go`), ad-hoc block name heuristics, or unmonomorphized MIR templates.
+3. **Instant Verification**: Both compilers can be run concurrently on identical `.lone` test programs:
+   ```bash
+   go run ./cmd/lone build test.lone   # Legacy v1 compiler
+   go run ./cmd2/lone build test.lone  # Greenfield v2 compiler
+   ```
+4. **Atomic Cutover**: Once `cmd2/lone` passes all conformance suites, promotion to primary (`pkg2` $\rightarrow$ `pkg`, `lib2` $\rightarrow$ `lib`, `cmd2` $\rightarrow$ `cmd`) is an instantaneous directory swap.
+
+#### 3.5.2 Greenfield Directory Layout
+
+```
+cmd2/
+  └── lone/                    # Unified Next-Gen CLI (lone build, check, run, lsp)
+pkg2/
+  ├── lone-lexer/              # Hand-crafted, zero-allocation token scanner
+  ├── lone-parser-ast/         # Clean AST (IsMutable, [lists], if:[headers], Tr traits, as casts)
+  ├── lone-parser/             # Pratt expression parser + Recursive Descent statements
+  ├── lone-analyzer/           # Unified semantic analyzer (single-pass, arena scope stack)
+  ├── lone-compiler-mir/       # Mid-level IR with Monomorphization engine
+  ├── lone-compiler-wir/       # AST-directed structured Wasm IR + Linear scan allocator
+  ├── lone-shared-logger/      # Diagnostic span emitter with inline carets and notes
+  └── lone-lsp/                # Next-generation LSP server
+lib2/
+  ├── std/                     # Target standard library written in Lone (:std:io, :std:str, :std:sys)
+  └── runtime/                 # Minimal WASI Preview 1 stubs & Node/Browser adapters
+```
+
+#### 3.5.3 Greenfield Subsystem Blueprints
+
+1. **`pkg2/lone-lexer`**:
+   - Single-pass scanning over UTF-8 bytes into a flat slice of `Token` structs.
+   - Eliminates regex and Pigeon lookahead backtracking entirely.
+   - Tracks line, column, byte offsets, and trivia (comments/whitespace) cleanly for the LSP.
+
+2. **`pkg2/lone-parser`**:
+   - **Declarations & Statements**: Clean, readable recursive descent functions (`parseFnDec()`, `parseIfStmt()`, `parseLoopStmt()`).
+   - **Expressions**: $O(N)$ Pratt Parser using a static precedence binding power table (`parseExpr(minPrec)`).
+   - Zero Pigeon dependency, zero 9,500-line generated files, blazing-fast Go compile times.
+
+3. **`pkg2/lone-analyzer`**:
+   - Enforces `let` immutability by default.
+   - Validates `if: [bindings]` scoping rules.
+   - Enforces `Tr` + PascalCase trait definitions.
+   - Forbids implicit cross-type numeric coercions; requires explicit `as` casts.
+   - Arena-backed symbol tables eliminating map allocations on block entry/exit.
+
+4. **`pkg2/lone-compiler-wir`**:
+   - AST-directed structured control flow: translates high-level loops and branches directly into nested Wasm `block`, `loop`, and `if` AST nodes without string-based block name matching.
+   - Linear scan register allocator: maps virtual registers to a compact pool of typed locals (`$i32_0`, `$i32_1`).
+   - Emits collision detection checks between stack pointer and heap pointer.
+
+---
+
 ## 4. Pillar IV: Key Language Gaps & Proposals
 
 ### 4.1 Generics & Monomorphization Engine
@@ -525,35 +670,34 @@ Align the repository structure with **Architecture v2** (`AGENT.md`):
 
 ---
 
-## 5. Implementation Roadmap & Phasing
+## 5. Implementation Roadmap & Phasing (Greenfield Strategy)
 
 ```mermaid
 flowchart TD
-    P0["Phase 0: Quick Consistency Fixes<br/>• let immutability<br/>• Inverted comparison operators<br/>• Explicit 'as' cast operator<br/>• Tr Prefix for Traits"]
-    P1["Phase 1: Collection Syntax & Linear Memory<br/>• [1, 2, 3] and [] list syntax<br/>• Stack/Heap collision check<br/>• Linear Scan Register Allocator"]
-    P2["Phase 2: Compiler Engine Upgrades<br/>• Pratt expression parser<br/>• AST-directed structured WIR<br/>• lib/ directory migration"]
-    P3["Phase 3: Advanced Language Features<br/>• Monomorphized Generics<br/>• Tagged Unions (enum) & match<br/>• Result<T, E> and ? operator"]
+    G0["Step 1: Greenfield Foundation (pkg2/ & cmd2/)<br/>• cmd2/lone CLI entrypoint<br/>• pkg2/lone-lexer (handcrafted scanner)<br/>• pkg2/lone-parser-ast (clean AST nodes)"]
+    G1["Step 2: Pratt Parser & Grammar Modernization<br/>• Fast Pratt expression parser in pkg2/lone-parser<br/>• let (immutable) vs var (mutable)<br/>• [1, 2, 3] and [] list syntax<br/>• if: [let x = 0] scoped headers<br/>• Tr Prefix for Traits<br/>• as cast operator"]
+    G2["Step 3: Greenfield Analyzer & Memory Safety<br/>• pkg2/lone-analyzer with single-pass arena scopes<br/>• Explicit numeric conversions only<br/>• lib2/std runtime allocator & collision detection"]
+    G3["Step 4: Structured WIR & Register Allocator<br/>• AST-directed structured control flow<br/>• Linear scan register coalescer (small Wasm locals)<br/>• Direct WAT code emission"]
+    G4["Step 5: Conformance, Parity & Atomic Promotion<br/>• Run all test/behavior suites with cmd2/lone<br/>• Atomic directory promotion (pkg2 -> pkg, lib2 -> lib, cmd2 -> cmd)"]
 
-    P0 --> P1 --> P2 --> P3
+    G0 --> G1 --> G2 --> G3 --> G4
 ```
 
-- **Phase 0 (Immediate)**:
-  - `let` vs `var` immutability enforcement.
-  - Fix `BINARY_OP_LESS` and `BINARY_OP_GREATER` in `lone-parser-ast/expr.go`.
-  - Introduce `as` operator for numeric casts; reject implicit conversions in `lone-analyzer`.
-  - Update trait naming convention to `Tr` + PascalCase.
-- **Phase 1 (Core Subsystems)**:
-  - Migrate list literals to `[...]` and allow `[]`.
-  - Add datastack/heap collision detection in WIR function frames.
-  - Implement linear scan register coalescing in `lone-compiler-wir`.
-- **Phase 2 (Architecture v2 Realization)**:
-  - Replace PEG expression cascades with a Go Pratt Parser.
-  - Adopt AST-directed structured lowering in WIR.
-  - Relocate `libraries/` to `lib/`.
-- **Phase 3 (Language Expansion)**:
-  - Generics monomorphization pass.
-  - Algebraic data types (`enum`) and exhaustive `match`.
-  - Built-in `Result<T, E>` and `?` error unwrapping.
+- **Step 1: Greenfield Foundation (`pkg2/`, `cmd2/`, `lib2/`)**:
+  - Establish `cmd2/lone` driver and `pkg2/lone-lexer`.
+  - Establish `pkg2/lone-parser-ast` with clean immutable `let`, bracketed lists, scoped headers (`if: [bindings]`), and `Tr` trait names.
+- **Step 2: Hand-Crafted Pratt Parser**:
+  - Implement recursive descent statement parsing + $O(N)$ Pratt expression parsing in `pkg2/lone-parser`.
+  - Zero Pigeon PEG dependency, zero 9,500-line generated files.
+- **Step 3: Greenfield Semantic Analyzer & Safe Memory**:
+  - Implement `pkg2/lone-analyzer` enforcing `let` immutability, `if: [bindings]` scoping, `as` casts, and `Tr` traits.
+  - Implement safe memory layout with datastack/heap collision detection in `lib2/std`.
+- **Step 4: Greenfield Backend (MIR & Structured WIR)**:
+  - Implement AST-directed structured lowering in `pkg2/lone-compiler-wir`.
+  - Implement linear scan register allocator to eliminate Wasm local explosion.
+- **Step 5: Parity Verification & Atomic Cutover**:
+  - Run all behavior and test suites against `cmd2/lone`.
+  - Promote `pkg2/` $\rightarrow$ `pkg/`, `lib2/` $\rightarrow$ `lib/`, `cmd2/` $\rightarrow$ `cmd/`.
 
 ---
 
