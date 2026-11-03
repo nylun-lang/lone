@@ -9,7 +9,9 @@ import (
 
 	loneanalyzer "lone/pkg2/lone-analyzer"
 	lonecompiler "lone/pkg2/lone-compiler"
+	lonelexer "lone/pkg2/lone-lexer"
 	loneparser "lone/pkg2/lone-parser"
+	loneproject "lone/pkg2/lone-project"
 )
 
 func main() {
@@ -52,12 +54,20 @@ func main() {
 			fmt.Fprintf(os.Stderr, "Error reading file %s: %v\n", filePath, err)
 			os.Exit(1)
 		}
-		analyzer := loneanalyzer.NewAnalyzer()
-		_, diags, err := analyzer.AnalyzeSource(src)
+		tokens, err := lonelexer.NewLexer(src).Tokenize()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Lexer error in %s: %v\n", filePath, err)
+			os.Exit(1)
+		}
+		rawAst, err := loneparser.NewParser(tokens).ParseProgram()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Syntax error in %s: %v\n", filePath, err)
 			os.Exit(1)
 		}
+		resolvedAst, resolveDiags := loneproject.ResolveAST(filePath, rawAst)
+		evaluator := loneanalyzer.NewTypeEvaluator()
+		_ = evaluator.EvaluateProgram(resolvedAst)
+		diags := append(resolveDiags, evaluator.Diagnostics()...)
 		if len(diags) > 0 {
 			for _, d := range diags {
 				fmt.Fprintf(os.Stderr, "%s\n", d)

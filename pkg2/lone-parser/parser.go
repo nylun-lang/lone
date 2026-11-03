@@ -1116,6 +1116,9 @@ func (p *Parser) parseTypeRef() (loneast.TYPE_REF, error) {
 		if p.peek().Kind == lonelexer.TokenRo {
 			p.advance()
 			constrain.ReadOnly = true
+		} else if p.peek().Kind == lonelexer.TokenQuestion {
+			p.advance()
+			constrain.Optional = true
 		} else if p.peek().Kind == lonelexer.TokenComptime {
 			p.advance()
 			constrain.Comptime = true
@@ -1205,7 +1208,7 @@ func (p *Parser) parseTypeRef() (loneast.TYPE_REF, error) {
 
 		var fnRet *loneast.TYPE_REF
 		endPos := rp.End
-		if p.peek().Kind == lonelexer.TokenIdent || p.peek().Kind == lonelexer.TokenLBracket || p.peek().Kind == lonelexer.TokenFn {
+		if isTypeStart(p.peek().Kind) {
 			rt, err := p.parseTypeRef()
 			if err != nil {
 				return loneast.TYPE_REF{}, err
@@ -1315,4 +1318,14 @@ func (p *Parser) expect(kind lonelexer.TokenKind) (lonelexer.Token, error) {
 		return tok, fmt.Errorf("expected %s at %s, got %s (%q)", kind, tok.Start, tok.Kind, tok.Text)
 	}
 	return p.advance(), nil
+}
+
+func isTypeStart(k lonelexer.TokenKind) bool {
+	return k == lonelexer.TokenIdent ||
+		k == lonelexer.TokenNone ||
+		k == lonelexer.TokenLBracket ||
+		k == lonelexer.TokenFn ||
+		k == lonelexer.TokenQuestion ||
+		k == lonelexer.TokenRo ||
+		k == lonelexer.TokenComptime
 }

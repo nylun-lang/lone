@@ -118,6 +118,8 @@ func (l *Lexer) NextToken() (Token, error) {
 		return Token{Kind: TokenRBrace, Text: "}", Start: start, End: end}, nil
 	case '.':
 		return Token{Kind: TokenDot, Text: ".", Start: start, End: end}, nil
+	case '?':
+		return Token{Kind: TokenQuestion, Text: "?", Start: start, End: end}, nil
 
 	case '&':
 		// Check for '&raw'

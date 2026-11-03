@@ -1,0 +1,7 @@
+fn main() void {
+    let items: [3]int = [10, 20, 30]
+    let first = items[0]
+    if first == 10 {
+        #print("Bracketed list literal syntax verified!\n")
+    }
+}

@@ -1,0 +1,9 @@
+fn main() void {
+    var score = 50
+    let final_score = calc_blk: {
+        break calc_blk: score + 49
+    }
+    if final_score == 99 {
+        #print("Labeled block expression verified!\n")
+    }
+}

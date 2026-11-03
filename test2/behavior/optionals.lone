@@ -1,0 +1,13 @@
+fn get_value(flag: bool) ?int {
+    if flag {
+        return 100
+    }
+    return none
+}
+
+fn main() void {
+    let val = get_value(true)
+    if val is not none {
+        #print("Optional type and none verified!\n")
+    }
+}

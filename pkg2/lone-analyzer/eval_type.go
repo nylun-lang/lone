@@ -439,6 +439,11 @@ func (te *TypeEvaluator) analyzeTopLevel(decl any) TNode {
 		expr := te.EvalExpr(d.Expr)
 		return &TDropStmt{Expr: expr, Span_: d.Span_}
 
+	case loneast.LabelDec:
+		return te.analyzeLabelDec(&d, TypeVoid)
+	case *loneast.LabelDec:
+		return te.analyzeLabelDec(d, TypeVoid)
+
 	default:
 		return nil
 	}
@@ -455,7 +460,7 @@ func (te *TypeEvaluator) analyzeVarDec(b *loneast.BIND_DEC) *TVarDec {
 		} else {
 			resolvedType = TypeUnknown
 		}
-	} else if tVal != nil && tVal.ExprType() != TypeUnknown {
+	} else if tVal != nil && tVal.ExprType() != TypeUnknown && !tVal.ExprType().Equals(TypeInfer) {
 		// Type mismatch check
 		if !tVal.ExprType().AssignableTo(declaredType) {
 			te.addDiag(SeverityError, b.Span_, "type/mismatch",
@@ -545,16 +550,22 @@ func (te *TypeEvaluator) analyzeBlock(b *loneast.Block, expectedRet Type) TBlock
 	defer te.stack.Pop()
 
 	var stmts []TStmt
+	blockType := Type(TypeVoid)
 	for _, s := range b.Stmts {
 		tStmt := te.analyzeStmt(s, expectedRet)
 		if tStmt != nil {
 			stmts = append(stmts, tStmt)
+			if brk, ok := tStmt.(*TBreakStmt); ok && brk.Value != nil {
+				blockType = brk.Value.ExprType()
+			} else if expr, ok := tStmt.(TExpr); ok {
+				blockType = expr.ExprType()
+			}
 		}
 	}
 
 	return TBlock{
 		Stmts: stmts,
-		Typ:   TypeVoid,
+		Typ:   blockType,
 		Span_: b.Span_,
 	}
 }
@@ -618,6 +629,11 @@ func (te *TypeEvaluator) analyzeStmt(raw any, expectedRet Type) TStmt {
 		return te.analyzeForStmt(&s, expectedRet)
 	case *loneast.ForStmt:
 		return te.analyzeForStmt(s, expectedRet)
+
+	case loneast.LabelDec:
+		return te.analyzeLabelDec(&s, expectedRet)
+	case *loneast.LabelDec:
+		return te.analyzeLabelDec(s, expectedRet)
 
 	case loneast.Expr:
 		return te.EvalExpr(s)
@@ -823,6 +839,16 @@ func (te *TypeEvaluator) analyzeForStmt(f *loneast.ForStmt, expectedRet Type) *T
 	}
 }
 
+func (te *TypeEvaluator) analyzeLabelDec(l *loneast.LabelDec, expectedRet Type) *TLabelDec {
+	body := te.analyzeBlock(&l.Body, expectedRet)
+	return &TLabelDec{
+		Name:  l.Name,
+		Body:  body,
+		Typ:   body.Typ,
+		Span_: l.Span_,
+	}
+}
+
 // =====================
 // EXPRESSION EVALUATION
 // =====================
@@ -865,6 +891,11 @@ func (te *TypeEvaluator) EvalExpr(e loneast.Expr) TExpr {
 
 	case loneast.PostFixExpr:
 		return te.evalPostfixExpr(expr)
+
+	case loneast.LabelDec:
+		return te.analyzeLabelDec(&expr, TypeUnknown)
+	case *loneast.LabelDec:
+		return te.analyzeLabelDec(expr, TypeUnknown)
 
 	default:
 		return nil
@@ -1082,11 +1113,42 @@ func (te *TypeEvaluator) evalPostfixExpr(p loneast.PostFixExpr) TExpr {
 }
 
 func (te *TypeEvaluator) resolveType(tr loneast.TYPE_REF) Type {
+	base := te.resolveBaseType(tr)
+	if tr.Constrain.Optional {
+		return &OptionalType{Inner: base}
+	}
+	return base
+}
+
+func (te *TypeEvaluator) resolveBaseType(tr loneast.TYPE_REF) Type {
 	switch tr.Kind {
 	case loneast.TYPE_LIST:
 		if tl, ok := tr.Value.(*loneast.TypeList); ok {
 			elemType := te.resolveType(tl.ItemType)
-			return &ListType{Elem: elemType, Fixed: tl.IsFixed()}
+			size := 0
+			if tl.Size != nil {
+				if lit, ok := tl.Size.(loneast.Literal); ok && lit.Kind == loneast.LiteralInt {
+					if v, ok := lit.Value.(int64); ok {
+						size = int(v)
+					}
+				}
+			}
+			return &ListType{Elem: elemType, Fixed: tl.IsFixed(), Size: size}
+		}
+	case loneast.TYPE_FN:
+		if tf, ok := tr.Value.(*loneast.TypeFn); ok {
+			var params []FnParamInfo
+			for _, p := range tf.Params {
+				params = append(params, FnParamInfo{
+					Name: p.Name,
+					Type: te.resolveType(p.Type),
+				})
+			}
+			retType := Type(TypeVoid)
+			if tf.ReturnType != nil {
+				retType = te.resolveType(*tf.ReturnType)
+			}
+			return &FnType{Params: params, Return: retType}
 		}
 	case loneast.TYPE_BASE:
 		if tb, ok := tr.Value.(*loneast.TypeBase); ok {

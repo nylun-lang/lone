@@ -146,6 +146,19 @@ func (p *Parser) parsePrefix() (loneast.Expr, error) {
 		}, nil
 
 	case lonelexer.TokenIdent:
+		if p.peek().Kind == lonelexer.TokenColon && p.peekN(1).Kind == lonelexer.TokenLBrace {
+			label := tok.Text
+			p.advance() // consume ':'
+			blk, err := p.parseBlock()
+			if err != nil {
+				return nil, err
+			}
+			return loneast.LabelDec{
+				Name:  label,
+				Body:  blk,
+				Span_: lonelexer.Span{Start: tok.Start, End: blk.NodeSpan().End},
+			}, nil
+		}
 		return loneast.NameRef{
 			Name:  tok.Text,
 			Span_: tok.Span(),

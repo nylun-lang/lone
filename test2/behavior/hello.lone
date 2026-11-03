@@ -1,0 +1,3 @@
+fn main() void {
+    #print("Hello from Greenfield Lone (v2)!\n")
+}

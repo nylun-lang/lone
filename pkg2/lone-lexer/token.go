@@ -98,6 +98,7 @@ const (
 
 	TokenDot      // .
 	TokenColon    // :
+	TokenQuestion // ?
 	TokenColon2   // ::
 	TokenColon2Pipe // ::|
 	TokenComma    // ,
@@ -174,6 +175,7 @@ var tokenNames = map[TokenKind]string{
 	TokenFatArrow:   "=>",
 	TokenDot:        ".",
 	TokenColon:      ":",
+	TokenQuestion:   "?",
 	TokenColon2:     "::",
 	TokenColon2Pipe: "::|",
 	TokenComma:      ",",

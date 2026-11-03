@@ -8,6 +8,7 @@ import (
 	lonewir "lone/pkg2/lone-compiler-wir"
 	lonelexer "lone/pkg2/lone-lexer"
 	loneparser "lone/pkg2/lone-parser"
+	loneproject "lone/pkg2/lone-project"
 )
 
 // Config defines configuration options for the compiler pipeline.
@@ -81,10 +82,14 @@ func (c *Compiler) CompileSource(fileName string, source []byte) (*Result, error
 		return nil, fmt.Errorf("syntax error in %s: %w", fileName, err)
 	}
 
+	// 2.5. Module Resolution
+	resolvedAst, resolveDiags := loneproject.ResolveAST(fileName, ast)
+	diags := resolveDiags
+
 	// 3. Semantic Analysis & Type Evaluation
 	evaluator := loneanalyzer.NewTypeEvaluator()
-	typedProg := evaluator.EvaluateProgram(ast)
-	diags := evaluator.Diagnostics()
+	typedProg := evaluator.EvaluateProgram(resolvedAst)
+	diags = append(diags, evaluator.Diagnostics()...)
 
 	hasErrors := false
 	for _, d := range diags {

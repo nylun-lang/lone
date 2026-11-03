@@ -1,0 +1,8 @@
+fn main() void {
+    let integer: int = 42
+    let flt: float = integer as float
+    let back: int = flt as int
+    if back == 42 {
+        #print("Explicit as cast verified!\n")
+    }
+}

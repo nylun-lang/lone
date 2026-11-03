@@ -1,0 +1,5 @@
+fn main() void {
+    if: [let a = 15, let b = 25] a + b == 40 {
+        #print("Scoped condition header bindings verified!\n")
+    }
+}

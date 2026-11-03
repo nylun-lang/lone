@@ -170,6 +170,16 @@ type TForStmt struct {
 
 func (f *TForStmt) Span() loneast.Span { return f.Span_ }
 
+type TLabelDec struct {
+	Name  string
+	Body  TBlock
+	Typ   Type
+	Span_ loneast.Span
+}
+
+func (l *TLabelDec) Span() loneast.Span { return l.Span_ }
+func (l *TLabelDec) ExprType() Type     { return l.Typ }
+
 // =====================
 // TYPED EXPRESSIONS
 // =====================

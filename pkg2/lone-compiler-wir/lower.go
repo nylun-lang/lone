@@ -309,6 +309,17 @@ func (l *lowerer) lowerStmt(stmt loneanalyzer.TStmt, alloc *LocalAllocator) []Wa
 		}
 		return insts
 
+	case *loneanalyzer.TLabelDec:
+		bodyInsts := l.lowerBlock(s.Body, alloc)
+		wType := toWasmType(s.Typ)
+		return []WasmInst{
+			InstBlock{
+				Label:  "$" + s.Name,
+				Result: wType,
+				Body:   bodyInsts,
+			},
+		}
+
 	case loneanalyzer.TExpr:
 		var insts []WasmInst
 		insts = append(insts, l.lowerExpr(s, alloc)...)
@@ -575,6 +586,17 @@ func (l *lowerer) lowerExpr(expr loneanalyzer.TExpr, alloc *LocalAllocator) []Wa
 	case *loneanalyzer.TBlock:
 		// Expression block: calc_blk: { ... }
 		return l.lowerBlock(*e, alloc)
+
+	case *loneanalyzer.TLabelDec:
+		bodyInsts := l.lowerBlock(e.Body, alloc)
+		wType := toWasmType(e.Typ)
+		return []WasmInst{
+			InstBlock{
+				Label:  "$" + e.Name,
+				Result: wType,
+				Body:   bodyInsts,
+			},
+		}
 
 	default:
 		return nil

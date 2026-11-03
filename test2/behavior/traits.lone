@@ -1,0 +1,24 @@
+pub type TrDisplayer = trait {
+    fn display(self) void
+}
+
+pub type Counter = struct {
+    value: int,
+
+    pub fn new(v: int) Counter {
+        return Counter::{ .value: v }
+    }
+}
+
+impl TrDisplayer on Counter {
+    fn display(self) void {
+        if self.value > 0 {
+            #print("Tr trait convention verified!\n")
+        }
+    }
+}
+
+fn main() void {
+    let c = Counter.new(5)
+    c.display()
+}

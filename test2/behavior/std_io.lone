@@ -1,0 +1,6 @@
+import .print, .println from :std:io
+
+fn main() void {
+    print("Hello from ")
+    println("Pure Lone v2 :std:io!")
+}

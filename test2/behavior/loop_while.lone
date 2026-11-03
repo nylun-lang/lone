@@ -1,0 +1,9 @@
+fn main() void {
+    var count = 3
+    loop {
+        count = count - 1
+    } while: [count > 0]
+    if count == 0 {
+        #print("Post-condition loop verified!\n")
+    }
+}
