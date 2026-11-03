@@ -119,11 +119,14 @@ PROGRAM <- decls:(_ TOP_LEVEL)* _ EOF {
 
 EOF <- !.
 
-TOP_LEVEL <- WASM_DIRECTIVE / IMPORT_STMT / TYPE_DEC / IMPL_DEC / BIND_DEC / FN_DEC / IF_STMT / WHILE_STMT / LABEL_DEC / DROP_STMT
+TOP_LEVEL <- COMPILER_DIRECTIVE / IMPORT_STMT / TYPE_DEC / IMPL_DEC / BIND_DEC / FN_DEC / IF_STMT / WHILE_STMT / LABEL_DEC / DROP_STMT
 
-WASM_DIRECTIVE <- WASM_BLOCK_DIRECTIVE / WASM_INLINE_DIRECTIVE
+COMPILER_DIRECTIVE <- FA_DIRECTIVE / LEGACY_WASM_DIRECTIVE
 
-WASM_BLOCK_DIRECTIVE <- "---fa:wasm" ![a-zA-Z0-9_] imports:(_DIRECTIVE_WS IMPORT_STMT)* _DIRECTIVE_WS "---" {
+FA_DIRECTIVE <- FA_DIRECTIVE_BLOCK / FA_DIRECTIVE_STMT / FA_DIRECTIVE_BARE
+
+FA_DIRECTIVE_BLOCK <- "@" _ "fa:" name:IDENTIFIER _ "{" imports:(_ IMPORT_STMT)* _ "}" {
+    nameBytes := AnyValToType[[]byte]("FA_DIRECTIVE_BLOCK.name", name)
     var impList []ir.ImportDecl
     if rawSlice, ok := imports.([]any); ok {
         for _, item := range rawSlice {
@@ -135,14 +138,57 @@ WASM_BLOCK_DIRECTIVE <- "---fa:wasm" ![a-zA-Z0-9_] imports:(_DIRECTIVE_WS IMPORT
         }
     }
     return ir.WasmDirective{
+        Name:    string(nameBytes),
         Imports: impList,
         Inline:  false,
         Pos:     currentPosition(c),
     }, nil
 }
 
-WASM_INLINE_DIRECTIVE <- "--fa:wasm" ![a-zA-Z0-9_] _SPACE* (_EOL / EOF) {
+FA_DIRECTIVE_STMT <- "@" _ "fa:" name:IDENTIFIER _ imp:IMPORT_STMT {
+    nameBytes := AnyValToType[[]byte]("FA_DIRECTIVE_STMT.name", name)
+    impDecl := AnyValToType[ir.ImportDecl]("FA_DIRECTIVE_STMT.imp", imp)
     return ir.WasmDirective{
+        Name:    string(nameBytes),
+        Imports: []ir.ImportDecl{impDecl},
+        Inline:  false,
+        Pos:     currentPosition(c),
+    }, nil
+}
+
+FA_DIRECTIVE_BARE <- "@" _ "fa:" name:IDENTIFIER _SPACE* (_EOL / EOF) {
+    nameBytes := AnyValToType[[]byte]("FA_DIRECTIVE_BARE.name", name)
+    return ir.WasmDirective{
+        Name:    string(nameBytes),
+        Inline:  true,
+        Pos:     currentPosition(c),
+    }, nil
+}
+
+LEGACY_WASM_DIRECTIVE <- LEGACY_WASM_BLOCK / LEGACY_WASM_INLINE
+
+LEGACY_WASM_BLOCK <- "---fa:wasm" ![a-zA-Z0-9_] imports:(_DIRECTIVE_WS IMPORT_STMT)* _DIRECTIVE_WS "---" {
+    var impList []ir.ImportDecl
+    if rawSlice, ok := imports.([]any); ok {
+        for _, item := range rawSlice {
+            if tuple, ok := item.([]any); ok && len(tuple) >= 2 {
+                if imp, ok := tuple[1].(ir.ImportDecl); ok {
+                    impList = append(impList, imp)
+                }
+            }
+        }
+    }
+    return ir.WasmDirective{
+        Name:    "wasm",
+        Imports: impList,
+        Inline:  false,
+        Pos:     currentPosition(c),
+    }, nil
+}
+
+LEGACY_WASM_INLINE <- "--fa:wasm" ![a-zA-Z0-9_] _SPACE* (_EOL / EOF) {
+    return ir.WasmDirective{
+        Name:   "wasm",
         Inline: true,
         Pos:    currentPosition(c),
     }, nil

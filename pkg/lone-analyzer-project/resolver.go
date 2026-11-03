@@ -179,7 +179,7 @@ func (r *Resolver) resolveSingleImport(filePath string, imp loneast.ImportDecl, 
 	if loneruntime.IsHostNamespace(imp.Source) {
 		if !wasmAuthorized {
 			r.addError(imp.Pos, "capability/unauthorized-host-import",
-				fmt.Sprintf("unauthorized host capability import from %q in %s: wrap host imports in an explicit ---fa:wasm directive",
+				fmt.Sprintf("unauthorized host capability import from %q in %s: wrap host imports in an explicit @fa:wasm directive",
 					imp.Source, filepath.Base(filePath)))
 			return nil
 		}

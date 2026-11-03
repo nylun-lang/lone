@@ -638,7 +638,7 @@ func (te *TypeEvaluator) analyzeRawImport(imp *ir.ImportDecl) []TNode {
 	if loneruntime.IsHostNamespace(imp.Source) {
 		if !te.inlineWasmAuthorized {
 			te.addDiag(SeverityError, imp.Pos, "capability/unauthorized-host-import",
-				fmt.Sprintf("unauthorized host capability import from %q: wrap host imports in an explicit ---fa:wasm directive", imp.Source))
+				fmt.Sprintf("unauthorized host capability import from %q: wrap host imports in an explicit @fa:wasm directive", imp.Source))
 			return nil
 		}
 		return te.analyzeAuthorizedHostImport(imp)

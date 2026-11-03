@@ -43,7 +43,7 @@ break     if        else      while     drop      and
 or        true      false     none      ro        comptime
 ```
 
-### 2.3 Comments & Directives
+### 2.3 Comments
 - **Single-line comments**: Begin with `--` and extend to end-of-line:
   ```lone
   -- This is a single line comment
@@ -55,22 +55,23 @@ or        true      false     none      ro        comptime
   comment block
   ---
   ```
-- **Compiler Directives**: Comments with the `fa:` namespace prefix (e.g. `Falone` compiler directives):
+
+### 2.4 Compiler Directives (`@fa:name`)
+Compiler directives are first-class language constructs prefixed with `@` and namespaced under `fa:` (Falone compiler engine):
+
+- **Block Directive (`@fa:name { ... }`)**: Encloses structured declarations, imports, or compiler configurations:
   ```lone
-  --fa:doc Single-line doc directive
-  ---fa:doc
-  Multiline documentation directive
-  ---
-  ```
-- **Wasm Directives (`--fa:wasm`)**: Directives for declaring host and WASI imports directly in Lone modules:
-  ```lone
-  --fa:wasm {
+  @fa:wasm {
       import .fd_write, .fd_read from :wasi:snapshot_preview1
   }
   ```
-  Also supported as inline directives:
+- **Statement Directive (`@fa:name <stmt>`)**: Directs an individual statement or import:
   ```lone
-  --fa:wasm import .random_get from :wasi:snapshot_preview1
+  @fa:wasm import .random_get from :wasi:snapshot_preview1
+  ```
+- **Inline / Capability Directive (`@fa:name`)**: Marks file-level capability authorization:
+  ```lone
+  @fa:wasm
   ```
 
 ---
@@ -408,7 +409,7 @@ From highest precedence (evaluated first) to lowest:
 | Source Syntax | IR Node (`pkg/lone-parser-ast`) |
 | :--- | :--- |
 | `import .a, .b from :ns` | `ir.ImportDecl` |
-| `--fa:wasm { ... }` | `ir.WasmDirective` |
+| `@fa:wasm { ... }` | `ir.WasmDirective` |
 | `var x: T = val`, `let x = val` | `ir.BIND_DEC` |
 | `fn name(args) T { ... }` | `ir.FN_DEC` |
 | `type Name = struct { ... }` | `ir.TYPE_DEC` (Kind `TYPE_DEC_STRUCT`) |

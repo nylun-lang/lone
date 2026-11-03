@@ -1020,3 +1020,49 @@ pub fn demo(s: str) i32 {
 		t.Errorf("expected AssignStmt, got %T", fnDec.Body.Stmts[3])
 	}
 }
+
+func TestFaCompilerDirectives(t *testing.T) {
+	code := `
+@fa:wasm {
+	import .fd_write, .fd_read from :wasi:snapshot_preview1
+	import .random_get from :wasi:snapshot_preview1
+}
+
+@fa:wasm import .proc_exit from :wasi:snapshot_preview1
+
+@fa:wasm
+`
+	ast, err := loneparser.Parse("test_directives.lone", []byte(code))
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+
+	rawList := ast.([]any)
+	if len(rawList) != 3 {
+		t.Fatalf("expected 3 directives, got %d", len(rawList))
+	}
+
+	// 1. Block directive
+	d1, ok := rawList[0].([]any)[1].(ir.WasmDirective)
+	if !ok || d1.Name != "wasm" || d1.Inline || len(d1.Imports) != 2 {
+		t.Fatalf("expected block @fa:wasm with 2 imports, got %+v", rawList[0].([]any)[1])
+	}
+	if len(d1.Imports[0].Symbols) != 2 || d1.Imports[0].Source != ":wasi:snapshot_preview1" {
+		t.Errorf("unexpected first import: %+v", d1.Imports[0])
+	}
+
+	// 2. Statement directive
+	d2, ok := rawList[1].([]any)[1].(ir.WasmDirective)
+	if !ok || d2.Name != "wasm" || d2.Inline || len(d2.Imports) != 1 {
+		t.Fatalf("expected stmt @fa:wasm with 1 import, got %+v", rawList[1].([]any)[1])
+	}
+	if d2.Imports[0].Symbols[0] != "proc_exit" {
+		t.Errorf("unexpected import symbol: %v", d2.Imports[0].Symbols)
+	}
+
+	// 3. Bare inline directive
+	d3, ok := rawList[2].([]any)[1].(ir.WasmDirective)
+	if !ok || d3.Name != "wasm" || !d3.Inline {
+		t.Fatalf("expected bare @fa:wasm inline directive, got %+v", rawList[2].([]any)[1])
+	}
+}

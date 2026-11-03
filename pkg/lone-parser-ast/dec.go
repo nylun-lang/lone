@@ -9,8 +9,9 @@ type ImportDecl struct {
 }
 
 type WasmDirective struct {
+	Name    string       // Directive identifier (e.g. "wasm", "doc")
 	Imports []ImportDecl
-	Inline  bool // True for single-line --fa:wasm directive
+	Inline  bool // True for single-line directive
 	Pos     Position
 }
 

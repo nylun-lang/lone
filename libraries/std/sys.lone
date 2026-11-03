@@ -1,9 +1,9 @@
 -- Lone Standard Library: System & WASI Preview 1 Bridge (:std:sys)
 -- Authorizes low-level WebAssembly host syscalls strictly within this module.
 
----fa:wasm
-import .fd_write, .fd_read, .fd_close, .proc_exit, .random_get from :wasi:snapshot_preview1
----
+@fa:wasm {
+    import .fd_write, .fd_read, .fd_close, .proc_exit, .random_get from :wasi:snapshot_preview1
+}
 
 pub var STDIN_FD: i32 = 0
 pub var STDOUT_FD: i32 = 1

@@ -36,7 +36,7 @@ fn main() void {
 }
 
 func TestCapabilityIsolationAcrossStdImport(t *testing.T) {
-	// 1. User file importing :std:io WITHOUT ---fa:wasm succeeds
+	// 1. User file importing :std:io WITHOUT @fa:wasm succeeds
 	validUser := `
 import .println from :std:io
 
@@ -65,7 +65,7 @@ fn main() void {
 		t.Fatalf("expected type/undefined-identifier for leaked fd_write, got: %+v", resLeak)
 	}
 
-	// 3. Importing :std:io MUST NOT leak ---fa:wasm permission to the user file
+	// 3. Importing :std:io MUST NOT leak @fa:wasm permission to the user file
 	permLeakCheck := `
 import .println from :std:io
 import .fd_write from :wasi:snapshot_preview1
@@ -76,10 +76,24 @@ fn main() void {
 `
 	resPerm, err := comp.CompileSource("perm_leak.lone", []byte(permLeakCheck))
 	if err == nil {
-		t.Fatalf("expected compilation to fail when user file imports :wasi:snapshot_preview1 without ---fa:wasm")
+		t.Fatalf("expected compilation to fail when user file imports :wasi:snapshot_preview1 without @fa:wasm")
 	}
 	if resPerm == nil || !hasRule(resPerm.Diagnostics, "capability/unauthorized-host-import") {
 		t.Fatalf("expected capability/unauthorized-host-import, got: %+v", resPerm)
+	}
+
+	// 4. File WITH explicit @fa:wasm block DOES succeed in importing WASI capability
+	authCheck := `
+@fa:wasm {
+	import .proc_exit from :wasi:snapshot_preview1
+}
+
+fn main() void {
+	proc_exit(0)
+}
+`
+	if res, err := comp.CompileSource("auth.lone", []byte(authCheck)); err != nil {
+		t.Fatalf("expected file with @fa:wasm to compile cleanly, got: %v (diags: %+v)", err, res)
 	}
 }
 
