@@ -28,7 +28,7 @@ Shorthand:
   lone debug <scope> <symbol> Alias for 'lone debug whatis <scope> <symbol>'
 
 Scopes can be a Lone source file (e.g. 'main.lone') or a module namespace (e.g. ':std:io').
-Symbols can be unscoped (e.g. 'Stdout') or scoped with ':' or '.' (e.g. 'main:guess', 'Stdout:write').`,
+Symbols can be unscoped (e.g. 'Stdout') or scoped with '->', ':', or '.' (e.g. 'main->guess', 'main:guess', 'Stdout:write').`,
 	Args: cobra.RangeArgs(1, 2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if len(args) == 1 {

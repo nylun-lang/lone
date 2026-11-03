@@ -98,6 +98,15 @@ func TestDebugInspectScopedSymbol(t *testing.T) {
 	if dotInfo.Kind != DebugKindMethod || dotInfo.Name != "write" {
 		t.Errorf("unexpected dot syntax method info: %+v", dotInfo)
 	}
+
+	// 4. Arrow syntax for fn->var: str_len->n
+	arrowInfo, err := InspectSymbol(":std:io", "str_len->n")
+	if err != nil {
+		t.Fatalf("InspectSymbol str_len->n failed: %v", err)
+	}
+	if arrowInfo.Kind != DebugKindVar || arrowInfo.Name != "n" || arrowInfo.EnclosingFn != "str_len" {
+		t.Errorf("unexpected arrow syntax info: %+v", arrowInfo)
+	}
 }
 
 func TestDebugInspectVariableAddressTaken(t *testing.T) {

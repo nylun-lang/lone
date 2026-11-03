@@ -15,7 +15,7 @@ Implemented the `lone debug` command suite providing deep inspection of Lone sym
   - **Traits**: Required method contracts and list of concrete structs implementing them.
   - **Variables**: Declared vs inferred/resolved types, initialization state, defined location, storage location (`datastack frame` vs `static linear memory`), and address-taken tracking (`&raw`).
   - **Functions**: Signatures, parameters, return types, public visibility, and local variables.
-  - **Scoped Symbols**: Supports `foo:bar` and `foo.bar` to inspect inner function variables (`fn:var`) or struct fields/methods (`struct:field`, `struct:method`).
+  - **Scoped Symbols**: Supports `foo->bar` (or `foo:bar` / `foo.bar`) to inspect inner function variables (`fn->var`), parameters, or struct fields/methods (`struct:field`, `struct:method`).
   - **Shorthands**: `lone debug <scope>` aliases `dump`, and `lone debug <scope> <symbol>` aliases `whatis`.
   - **JSON Output**: `--json` flag for machine-readable integrations.
 

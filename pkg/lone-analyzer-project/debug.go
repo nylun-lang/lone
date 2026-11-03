@@ -243,7 +243,7 @@ func LoadDebugContext(scope string) (*DebugContext, error) {
 	}, nil
 }
 
-// InspectSymbol inspects a symbol in scope, supporting scoped paths like "main:guess" or "Stdout:write_str".
+// InspectSymbol inspects a symbol in scope, supporting scoped paths like "main->guess", "main:guess", or "Stdout:write_str".
 func InspectSymbol(scope, symbol string) (*DebugSymbolInfo, error) {
 	ctx, err := LoadDebugContext(scope)
 	if err != nil {
@@ -252,24 +252,103 @@ func InspectSymbol(scope, symbol string) (*DebugSymbolInfo, error) {
 
 	symbol = strings.TrimSpace(symbol)
 	var parent, child string
-	if idx := strings.IndexAny(symbol, ":."); idx != -1 {
-		parent = symbol[:idx]
-		child = symbol[idx+1:]
+	preferFunction := false
+
+	if idx := strings.Index(symbol, "->"); idx != -1 {
+		parent = strings.TrimSpace(symbol[:idx])
+		child = strings.TrimSpace(symbol[idx+2:])
+		preferFunction = true
+	} else if idx := strings.IndexAny(symbol, ":."); idx != -1 {
+		parent = strings.TrimSpace(symbol[:idx])
+		child = strings.TrimSpace(symbol[idx+1:])
 		if strings.HasPrefix(child, ":") || strings.HasPrefix(child, ".") {
-			child = child[1:]
+			child = strings.TrimSpace(child[1:])
 		}
 	} else {
 		child = symbol
 	}
 
 	if parent != "" {
-		return inspectScopedSymbol(ctx, parent, child, symbol)
+		return inspectScopedSymbol(ctx, parent, child, symbol, preferFunction)
 	}
 
 	return inspectUnscopedSymbol(ctx, child)
 }
 
-func inspectScopedSymbol(ctx *DebugContext, parent, child, rawQuery string) (*DebugSymbolInfo, error) {
+func inspectScopedSymbol(ctx *DebugContext, parent, child, rawQuery string, preferFunction bool) (*DebugSymbolInfo, error) {
+	lookupInFn := func(fn *loneanalyzer.TFnDec) (*DebugSymbolInfo, error) {
+		// 1. Check parameter
+		for _, p := range fn.Params {
+			if p.Name == child {
+				return &DebugSymbolInfo{
+					Name:          child,
+					ScopedName:    rawQuery,
+					Kind:          DebugKindVar,
+					Scope:         ctx.ScopeName,
+					FilePath:      ctx.FilePath,
+					DefinedPos:    formatPos(ctx.FilePath, p.Pos()),
+					DeclaredType:  p.Type.String(),
+					ResolvedType:  p.Type.String(),
+					IsInitialized: true,
+					Storage:       "datastack frame (parameter)",
+					AddressTaken:  p.AddressTaken,
+					EnclosingFn:   parent,
+				}, nil
+			}
+		}
+
+		// 2. Check local variables in function body
+		localVars := collectLocalVars(&fn.Body)
+		for _, v := range localVars {
+			if v.Name == child {
+				return &DebugSymbolInfo{
+					Name:          child,
+					ScopedName:    rawQuery,
+					Kind:          DebugKindVar,
+					Scope:         ctx.ScopeName,
+					FilePath:      ctx.FilePath,
+					DefinedPos:    formatPos(ctx.FilePath, v.Pos()),
+					DeclaredType:  v.Type.String(),
+					ResolvedType:  v.Type.String(),
+					IsInitialized: v.Value != nil,
+					Storage:       "datastack frame",
+					AddressTaken:  v.AddressTaken,
+					EnclosingFn:   parent,
+				}, nil
+			}
+		}
+
+		// 3. Check symbols visible from function's lexical scope (e.g. globals or imports)
+		if ctx.Evaluator != nil && ctx.Evaluator.Stack() != nil {
+			for _, s := range ctx.Evaluator.Stack().All() {
+				if s.Kind == loneanalyzer.ScopeFunction && s.Name == parent {
+					if sym := s.Lookup(child); sym != nil {
+						if v, ok := sym.DeclNode.(*loneanalyzer.TVarDec); ok {
+							info := inspectGlobalVar(ctx, v)
+							info.ScopedName = rawQuery
+							info.EnclosingFn = parent
+							return info, nil
+						}
+						if targetFn := findFunction(ctx, child); targetFn != nil {
+							info := inspectFunction(ctx, targetFn)
+							info.ScopedName = rawQuery
+							info.EnclosingFn = parent
+							return info, nil
+						}
+					}
+				}
+			}
+		}
+
+		return nil, fmt.Errorf("variable or symbol %q not found inside function %q", child, parent)
+	}
+
+	if preferFunction {
+		if fn := findFunction(ctx, parent); fn != nil {
+			return lookupInFn(fn)
+		}
+	}
+
 	// 1. Is parent a Struct?
 	if st := findStructType(ctx, parent); st != nil {
 		// Field check
@@ -305,48 +384,7 @@ func inspectScopedSymbol(ctx *DebugContext, parent, child, rawQuery string) (*De
 
 	// 2. Is parent a Function?
 	if fn := findFunction(ctx, parent); fn != nil {
-		// Check parameter
-		for _, p := range fn.Params {
-			if p.Name == child {
-				return &DebugSymbolInfo{
-					Name:          child,
-					ScopedName:    rawQuery,
-					Kind:          DebugKindVar,
-					Scope:         ctx.ScopeName,
-					FilePath:      ctx.FilePath,
-					DefinedPos:    formatPos(ctx.FilePath, p.Pos()),
-					DeclaredType:  p.Type.String(),
-					ResolvedType:  p.Type.String(),
-					IsInitialized: true,
-					Storage:       "datastack frame (parameter)",
-					AddressTaken:  p.AddressTaken,
-					EnclosingFn:   parent,
-				}, nil
-			}
-		}
-
-		// Check local variables in function body
-		localVars := collectLocalVars(&fn.Body)
-		for _, v := range localVars {
-			if v.Name == child {
-				return &DebugSymbolInfo{
-					Name:          child,
-					ScopedName:    rawQuery,
-					Kind:          DebugKindVar,
-					Scope:         ctx.ScopeName,
-					FilePath:      ctx.FilePath,
-					DefinedPos:    formatPos(ctx.FilePath, v.Pos()),
-					DeclaredType:  v.Type.String(),
-					ResolvedType:  v.Type.String(),
-					IsInitialized: v.Value != nil,
-					Storage:       "datastack frame",
-					AddressTaken:  v.AddressTaken,
-					EnclosingFn:   parent,
-				}, nil
-			}
-		}
-
-		return nil, fmt.Errorf("variable %q not found inside function %q", child, parent)
+		return lookupInFn(fn)
 	}
 
 	// 3. Is parent a Trait?
