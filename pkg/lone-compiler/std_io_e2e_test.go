@@ -498,7 +498,7 @@ pub fn main() void {
 	var x = 100
 	loop {
 		println_int(x)
-	} while [false]
+	} while: [false]
 
 	-- 2. Multi-iteration post-condition with inner variable accessible in while [condition]
 	var count = 0
@@ -506,13 +506,13 @@ pub fn main() void {
 		count = count + 1
 		var current = count
 		println_int(current)
-	} while [current < 3]
+	} while: [current < 3]
 
 	-- 3. Break inside loop while
 	loop {
 		println("broken")
 		break
-	} while [true]
+	} while: [true]
 }
 `
 	comp := lonecompiler.NewCompiler(lonecompiler.DefaultConfig())

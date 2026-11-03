@@ -516,7 +516,7 @@ fn test_loop_scope() void {
 	loop {
 		var step = 1
 		total = total + step
-	} while [step < 5]
+	} while: [step < 5]
 }
 `
 	ast, err := loneparser.Parse("valid_loop_while.lone", []byte(validCode))
@@ -535,7 +535,7 @@ fn test_loop_scope() void {
 fn test_loop_outside() void {
 	loop {
 		var inner = 42
-	} while [inner > 0]
+	} while: [inner > 0]
 	var y = inner
 }
 `

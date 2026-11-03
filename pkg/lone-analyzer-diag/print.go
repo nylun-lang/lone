@@ -275,7 +275,7 @@ func PrintNode(node loneanalyzer.TNode, indent int) string {
 		for _, s := range n.Body.Stmts {
 			res += PrintNode(s, indent+1) + "\n"
 		}
-		res += fmt.Sprintf("%s} while [%s]", pad, PrintExpr(n.Cond))
+		res += fmt.Sprintf("%s} while: [%s]", pad, PrintExpr(n.Cond))
 		return res
 
 	case *loneanalyzer.TIfStmt:

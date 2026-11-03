@@ -1110,7 +1110,11 @@ WHILE_STMT <- KW_WHILE _ cond:EXPR _ body:BLOCK {
     }, nil
 }
 
-LOOP_STMT <- KW_LOOP _ body:BLOCK whilePart:(_ KW_WHILE _ "[" _ EXPR _ "]")? {
+LOOP_WHILE_TAIL <- _ KW_WHILE _ ":" !":" _ "[" _ cond:EXPR _ "]" {
+    return cond, nil
+}
+
+LOOP_STMT <- KW_LOOP _ body:BLOCK whilePart:LOOP_WHILE_TAIL? {
     bodyBlock := AnyValToType[ir.Block]("LOOP_STMT.body", body)
     if whilePart == nil {
         return ir.WhileStmt{
@@ -1124,8 +1128,7 @@ LOOP_STMT <- KW_LOOP _ body:BLOCK whilePart:(_ KW_WHILE _ "[" _ EXPR _ "]")? {
         }, nil
     }
 
-    parts := AnyValToType[[]any]("LOOP_STMT.whilePart", whilePart)
-    condExpr := AnyValToType[ir.Expr]("LOOP_STMT.cond", parts[5])
+    condExpr := AnyValToType[ir.Expr]("LOOP_STMT.cond", whilePart)
 
     return ir.DoWhileStmt{
         Body: bodyBlock,

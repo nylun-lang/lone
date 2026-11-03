@@ -931,7 +931,7 @@ fn run_post_condition() void {
 	var count = 0
 	loop {
 		count = count + 1
-	} while [count < 5]
+	} while: [count < 5]
 }
 
 fn consecutive_loops() void {

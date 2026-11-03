@@ -8,14 +8,14 @@ Lone introduces an unambiguous, semicolon-free post-condition (do-while) loop co
 ```lone
 loop {
     var x = read()
-} while [x > 0]
+} while: [x > 0]
 ```
 
 Key attributes:
 1. **At Least One Execution**: The loop body executes before the condition is ever evaluated.
-2. **Semicolon-Free**: Enclosing the condition in brackets `[...]` creates a hard syntactic boundary, preventing line-bleed without requiring a trailing semicolon.
-3. **No Collision with Consecutive Loops**: A subsequent `while count < 10 { ... }` lacks `[` and is unambiguously parsed as a pre-condition while loop rather than attaching to the prior `loop`.
-4. **Smart Scoping**: Variables declared inside the `loop` block are accessible inside the condition `while [cond]`, but strictly out of scope after the loop terminates.
+2. **Semicolon-Free**: Enclosing the condition in brackets `[...]` with a `while:` clause label creates a hard syntactic boundary, preventing line-bleed without requiring a trailing semicolon.
+3. **No Collision with Consecutive Loops**: A subsequent `while count < 10 { ... }` lacks `:` and `[` and is unambiguously parsed as a pre-condition while loop rather than attaching to the prior `loop`.
+4. **Smart Scoping**: Variables declared inside the `loop` block are accessible inside the condition `while: [cond]`, but strictly out of scope after the loop terminates.
 
 ## 2. Changes Made
 
@@ -24,7 +24,8 @@ Key attributes:
   - Added `EXPR_DO_WHILE` to `ExprKind`.
   - Added `type DoWhileStmt struct { Body Block; Cond Expr; Pos Position }`.
 - **File**: `pkg/lone-parser/parser.peg`
-  - Updated `LOOP_STMT` to parse optional `whilePart:(_ KW_WHILE _ "[" _ EXPR _ "]")?`.
+  - Added `LOOP_WHILE_TAIL <- _ KW_WHILE _ ":" !":" _ "[" _ cond:EXPR _ "]"`.
+  - Updated `LOOP_STMT` to parse optional `whilePart:LOOP_WHILE_TAIL?`.
   - When absent, desugars into `ir.WhileStmt` with `true` (infinite loop).
   - When present, returns `ir.DoWhileStmt{ Body, Cond, Pos }`.
 - **File**: `pkg/lone-parser/generated-parser.go`

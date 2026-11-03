@@ -374,13 +374,13 @@ loop {
     count = count + 1
     var step = count
     println_int(step)
-} while [step < 5]
+} while: [step < 5]
 ```
-- **Post-Condition `while [cond]`**:
+- **Post-Condition `while: [cond]`**:
   - Executes the loop body **at least once** before evaluating `cond`.
-  - The condition is enclosed in brackets `[...]`, completely avoiding semicolon requirements and line bleed-through.
-  - **Smart Scoping**: Variables declared inside the `loop { ... }` body remain in scope and are accessible inside `while [cond]`. Once the loop exits, those variables fall out of scope.
-  - Can also be labeled for targeted breaks: `outer: loop { inner: loop { break outer } } while [true]`.
+  - The condition is prefixed with `while:` and enclosed in brackets `[...]`, completely avoiding semicolon requirements and line bleed-through.
+  - **Smart Scoping**: Variables declared inside the `loop { ... }` body remain in scope and are accessible inside `while: [cond]`. Once the loop exits, those variables fall out of scope.
+  - Can also be labeled for targeted breaks: `outer: loop { inner: loop { break outer } } while: [true]`.
   - Infinite `loop { ... }` desugars into an `ir.WhileStmt` with constant `true` condition; post-condition loops parse as `ir.DoWhileStmt` and lower directly into structured Wasm blocks and branch-back instructions.
 
 #### 6.4.2 For-In Loop (`FOR_STMT`)
