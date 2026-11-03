@@ -168,7 +168,7 @@ pub type Padded = struct {
 
 func TestTraitMaterializationAndMissingImpl(t *testing.T) {
 	goodCode := `
-type Measurable = trait {
+type MeasurableTrait = trait {
 	fn area(self) i32
 }
 
@@ -177,7 +177,7 @@ type Rect = struct {
 	h: i32,
 }
 
-impl Measurable on Rect {
+impl MeasurableTrait on Rect {
 	fn area(self) i32 {
 		return self.w * self.h
 	}
@@ -185,7 +185,7 @@ impl Measurable on Rect {
 
 fn check() i32 {
 	var r = Rect::{ .w: 6, .h: 7 }
-	let m = Measurable::|Rect|
+	let m = MeasurableTrait::|Rect|
 	return m.area(r)
 }
 `
@@ -201,7 +201,7 @@ fn check() i32 {
 	}
 
 	badCode := `
-type Measurable = trait {
+type MeasurableTrait = trait {
 	fn area(self) i32
 }
 
@@ -210,7 +210,7 @@ type Circle = struct {
 }
 
 fn check() void {
-	let m = Measurable::|Circle|
+	let m = MeasurableTrait::|Circle|
 	drop m
 }
 `

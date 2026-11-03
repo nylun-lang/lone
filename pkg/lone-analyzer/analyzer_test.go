@@ -374,3 +374,112 @@ fn main() void {
 		t.Fatalf("expected callee '#print', got %+v", callExpr.Callee)
 	}
 }
+
+func TestTraitNamingConventions(t *testing.T) {
+	// 1. Valid trait with Trait suffix and legitimate English words (portrait, strait)
+	validCode := `
+type ComparableTrait = trait {
+	fn compare(self, other: i32) i32
+}
+
+type Canvas = struct {
+	portrait: i32,
+	bering_strait: i32,
+}
+
+fn draw_portrait(strait_width: i32) void {
+	var local_portrait = 10
+	var obj = { .portrait: 42 }
+}
+`
+	astValid, err := loneparser.Parse("valid_trait.lone", []byte(validCode))
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	diagsValid := NewAnalyzer("valid_trait.lone", DefaultConfig()).Analyze(astValid)
+	for _, d := range diagsValid {
+		if d.Severity == SeverityWarning || d.Severity == SeverityError {
+			t.Fatalf("unexpected diagnostic in valid_trait.lone: %v", d)
+		}
+	}
+
+	// 2. Trait missing "Trait" suffix
+	badTraitCode := `
+type Comparable = trait {
+	fn compare(self, other: i32) i32
+}
+`
+	astBadTrait, err := loneparser.Parse("bad_trait.lone", []byte(badTraitCode))
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	diagsBadTrait := NewAnalyzer("bad_trait.lone", DefaultConfig()).Analyze(astBadTrait)
+	if !hasDiagRule(diagsBadTrait, "naming/trait") {
+		t.Fatalf("expected naming/trait warning for trait not ending with Trait, got: %v", diagsBadTrait)
+	}
+
+	// 3. Non-trait types (struct, alias) ending in Trait or named Trait
+	badNonTraitTypes := `
+type PointTrait = struct {
+	x: i32,
+}
+
+type Trait = struct {
+	y: i32,
+}
+
+type NumTrait = i32
+`
+	astBadTypes, err := loneparser.Parse("bad_types.lone", []byte(badNonTraitTypes))
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	diagsBadTypes := NewAnalyzer("bad_types.lone", DefaultConfig()).Analyze(astBadTypes)
+	var typeWarnCount int
+	for _, d := range diagsBadTypes {
+		if d.Rule == "naming/type" {
+			typeWarnCount++
+		}
+	}
+	if typeWarnCount < 3 {
+		t.Fatalf("expected at least 3 naming/type warnings for non-trait types ending in Trait, got %d: %v", typeWarnCount, diagsBadTypes)
+	}
+
+	// 4. Non-trait function, variables, fields, params ending in trait
+	badOtherDecls := `
+var global_trait = 1
+var TRAIT = 2
+
+fn run_trait(param_trait: i32) void {
+	var local_trait = 3
+	lbl_trait: {
+		break lbl_trait: 0
+	}
+	var o = { .bad_trait: 4 }
+}
+`
+	astBadOther, err := loneparser.Parse("bad_other.lone", []byte(badOtherDecls))
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	diagsBadOther := NewAnalyzer("bad_other.lone", DefaultConfig()).Analyze(astBadOther)
+
+	expectedRules := map[string]bool{
+		"naming/global":    false,
+		"naming/function":  false,
+		"naming/parameter": false,
+		"naming/variable":  false,
+		"naming/label":     false,
+		"naming/field":     false,
+	}
+	for _, d := range diagsBadOther {
+		if _, ok := expectedRules[d.Rule]; ok {
+			expectedRules[d.Rule] = true
+		}
+	}
+	for rule, found := range expectedRules {
+		if !found {
+			t.Errorf("expected diagnostic for rule %q in badOtherDecls, got: %v", rule, diagsBadOther)
+		}
+	}
+}

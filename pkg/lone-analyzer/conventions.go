@@ -1,6 +1,9 @@
 package loneanalyzer
 
-import "regexp"
+import (
+	"regexp"
+	"strings"
+)
 
 var (
 	snakeCaseRegex  = regexp.MustCompile(`^[a-z_][a-z0-9_]*$`)
@@ -22,6 +25,28 @@ func IsAllCaps(ident string) bool {
 // IsCamelCase checks if an identifier follows CamelCase / PascalCase (e.g. `Option`, `HttpServer`).
 func IsCamelCase(ident string) bool {
 	return camelCaseRegex.MatchString(ident)
+}
+
+// HasTraitSuffix checks if a trait type identifier ends with the "Trait" suffix (e.g. "ComparableTrait").
+func HasTraitSuffix(name string) bool {
+	return strings.HasSuffix(name, "Trait")
+}
+
+// EndsWithTraitOrNamedTrait returns true if an identifier ends with "trait" (case-insensitive)
+// or is named "Trait" / "trait", while ignoring unrelated English words like "portrait" or "strait".
+func EndsWithTraitOrNamedTrait(name string) bool {
+	lower := strings.ToLower(name)
+	if lower == "trait" {
+		return true
+	}
+	if !strings.HasSuffix(lower, "trait") {
+		return false
+	}
+	// Exclude legitimate words that end with "trait" but are not referring to traits
+	if strings.HasSuffix(lower, "portrait") || strings.HasSuffix(lower, "strait") || strings.HasSuffix(lower, "distrait") {
+		return false
+	}
+	return true
 }
 
 // IsIntrinsic checks if an identifier is an intrinsic prefixed with '#' (e.g. `#panic`, `#print`).

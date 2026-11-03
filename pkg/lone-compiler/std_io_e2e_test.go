@@ -78,7 +78,7 @@ fn main() void {
 
 func TestStructSretDatastackRewindAndTraitMatWasmtime(t *testing.T) {
 	code := `
-import .Stdout, .Writer from :std:io
+import .Stdout, .WriterTrait from :std:io
 import .print from :std
 import :std:io as io
 
@@ -127,7 +127,7 @@ fn main() void {
 
 	-- 3. Materialized zero-sized trait call + aliased module call
 	var out = Stdout.new()
-	let w = Writer::|Stdout|
+	let w = WriterTrait::|Stdout|
 	drop w.write(out, "trait:ok ")
 	io.println("alias:ok")
 }

@@ -13,12 +13,12 @@ pub fn str_len(s: str) i32 {
 }
 
 -- Stream writing contract.
-pub type Writer = trait {
+pub type WriterTrait = trait {
     fn write(self, msg: str) i32
 }
 
 -- Stream reading contract.
-pub type Reader = trait {
+pub type ReaderTrait = trait {
     fn read(self, buf: ptr<u8>, max_len: i32) i32
 }
 
@@ -49,19 +49,19 @@ pub type Stdin = struct {
     }
 }
 
-impl Writer on Stdout {
+impl WriterTrait on Stdout {
     fn write(self, msg: str) i32 {
         return sys_write(self.fd, &raw msg[0], str_len(msg))
     }
 }
 
-impl Writer on Stderr {
+impl WriterTrait on Stderr {
     fn write(self, msg: str) i32 {
         return sys_write(self.fd, &raw msg[0], str_len(msg))
     }
 }
 
-impl Reader on Stdin {
+impl ReaderTrait on Stdin {
     fn read(self, buf: ptr<u8>, max_len: i32) i32 {
         return sys_read(self.fd, buf, max_len)
     }

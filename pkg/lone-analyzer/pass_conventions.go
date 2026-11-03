@@ -205,6 +205,27 @@ func (p *PassNamingConventions) checkTypeDec(td *ir.TYPE_DEC) {
 			fmt.Sprintf("type name %q should follow CamelCase convention", td.Name),
 		)
 	}
+
+	if td.Kind == ir.TYPE_DEC_TRAIT {
+		if !HasTraitSuffix(td.Name) {
+			p.addDiagnostic(
+				SeverityWarning,
+				td.Pos,
+				"naming/trait",
+				fmt.Sprintf("trait type name %q must end with \"Trait\" (e.g. %sTrait)", td.Name, td.Name),
+			)
+		}
+	} else {
+		if EndsWithTraitOrNamedTrait(td.Name) {
+			p.addDiagnostic(
+				SeverityWarning,
+				td.Pos,
+				"naming/type",
+				fmt.Sprintf("non-trait type %q must not end with \"trait\" or be named \"Trait\"", td.Name),
+			)
+		}
+	}
+
 	if td.AliasType != nil {
 		p.checkTypeRef(td.AliasType)
 	}
@@ -215,6 +236,14 @@ func (p *PassNamingConventions) checkTypeDec(td *ir.TYPE_DEC) {
 				f.Pos,
 				"naming/field",
 				fmt.Sprintf("field %q should follow snake_case convention", f.Name),
+			)
+		}
+		if EndsWithTraitOrNamedTrait(f.Name) {
+			p.addDiagnostic(
+				SeverityWarning,
+				f.Pos,
+				"naming/field",
+				fmt.Sprintf("field %q is not a trait and must not end with \"trait\" or be named \"Trait\"", f.Name),
 			)
 		}
 		p.checkTypeRef(&f.Type)
@@ -231,14 +260,32 @@ func (p *PassNamingConventions) checkTypeDec(td *ir.TYPE_DEC) {
 				fmt.Sprintf("trait method %q should follow snake_case convention", sig.Name),
 			)
 		}
+		if EndsWithTraitOrNamedTrait(sig.Name) {
+			p.addDiagnostic(
+				SeverityWarning,
+				sig.Pos,
+				"naming/function",
+				fmt.Sprintf("trait method %q is not a trait and must not end with \"trait\" or be named \"Trait\"", sig.Name),
+			)
+		}
 		for _, param := range sig.Params {
-			if param.Name != "" && !IsSnakeCase(param.Name) {
-				p.addDiagnostic(
-					SeverityWarning,
-					param.Type.Pos,
-					"naming/parameter",
-					fmt.Sprintf("parameter %q should follow snake_case convention", param.Name),
-				)
+			if param.Name != "" {
+				if !IsSnakeCase(param.Name) {
+					p.addDiagnostic(
+						SeverityWarning,
+						param.Type.Pos,
+						"naming/parameter",
+						fmt.Sprintf("parameter %q should follow snake_case convention", param.Name),
+					)
+				}
+				if EndsWithTraitOrNamedTrait(param.Name) {
+					p.addDiagnostic(
+						SeverityWarning,
+						param.Type.Pos,
+						"naming/parameter",
+						fmt.Sprintf("parameter %q is not a trait and must not end with \"trait\" or be named \"Trait\"", param.Name),
+					)
+				}
 			}
 			p.checkTypeRef(&param.Type)
 		}
@@ -271,6 +318,14 @@ func (p *PassNamingConventions) checkBindDec(b *ir.BIND_DEC) {
 				fmt.Sprintf("global variable %q should follow ALL_CAPS or snake_case convention", b.Name),
 			)
 		}
+		if EndsWithTraitOrNamedTrait(b.Name) {
+			p.addDiagnostic(
+				SeverityWarning,
+				b.Pos,
+				"naming/global",
+				fmt.Sprintf("global variable %q is not a trait and must not end with \"trait\" or be named \"Trait\"", b.Name),
+			)
+		}
 	} else {
 		// Locals must be snake_case
 		if !IsSnakeCase(b.Name) {
@@ -279,6 +334,14 @@ func (p *PassNamingConventions) checkBindDec(b *ir.BIND_DEC) {
 				b.Pos,
 				"naming/variable",
 				fmt.Sprintf("local variable %q should follow snake_case convention", b.Name),
+			)
+		}
+		if EndsWithTraitOrNamedTrait(b.Name) {
+			p.addDiagnostic(
+				SeverityWarning,
+				b.Pos,
+				"naming/variable",
+				fmt.Sprintf("local variable %q is not a trait and must not end with \"trait\" or be named \"Trait\"", b.Name),
 			)
 		}
 	}
@@ -297,6 +360,14 @@ func (p *PassNamingConventions) checkFnDec(fn *ir.FN_DEC) {
 			fmt.Sprintf("function %q should follow snake_case or #intrinsic convention", fn.Name),
 		)
 	}
+	if EndsWithTraitOrNamedTrait(fn.Name) {
+		p.addDiagnostic(
+			SeverityWarning,
+			fn.Pos,
+			"naming/function",
+			fmt.Sprintf("function %q is not a trait and must not end with \"trait\" or be named \"Trait\"", fn.Name),
+		)
+	}
 
 	p.stack.Push(ScopeFunction, fn.Name)
 	defer p.stack.Pop()
@@ -309,6 +380,14 @@ func (p *PassNamingConventions) checkFnDec(fn *ir.FN_DEC) {
 				param.Type.Pos,
 				"naming/parameter",
 				fmt.Sprintf("parameter %q should follow snake_case convention", param.Name),
+			)
+		}
+		if EndsWithTraitOrNamedTrait(param.Name) {
+			p.addDiagnostic(
+				SeverityWarning,
+				param.Type.Pos,
+				"naming/parameter",
+				fmt.Sprintf("parameter %q is not a trait and must not end with \"trait\" or be named \"Trait\"", param.Name),
 			)
 		}
 		p.checkTypeRef(&param.Type)
@@ -337,6 +416,14 @@ func (p *PassNamingConventions) checkLabelDec(lbl *ir.LabelDec) {
 			lbl.Pos,
 			"naming/label",
 			fmt.Sprintf("label %q should follow snake_case convention", lbl.Name),
+		)
+	}
+	if EndsWithTraitOrNamedTrait(lbl.Name) {
+		p.addDiagnostic(
+			SeverityWarning,
+			lbl.Pos,
+			"naming/label",
+			fmt.Sprintf("label %q is not a trait and must not end with \"trait\" or be named \"Trait\"", lbl.Name),
 		)
 	}
 
@@ -388,6 +475,14 @@ func (p *PassNamingConventions) checkObjectLiteral(obj *ir.ObjectLiteral) {
 				fmt.Sprintf("field %q should follow snake_case convention", f.Name),
 			)
 		}
+		if EndsWithTraitOrNamedTrait(f.Name) {
+			p.addDiagnostic(
+				SeverityWarning,
+				obj.Pos,
+				"naming/field",
+				fmt.Sprintf("field %q is not a trait and must not end with \"trait\" or be named \"Trait\"", f.Name),
+			)
+		}
 		p.walkNode(f.Expr)
 	}
 }
@@ -424,13 +519,23 @@ func (p *PassNamingConventions) checkTypeRef(tr *ir.TYPE_REF) {
 		fn := tr.AsFn()
 		if fn != nil {
 			for _, param := range fn.Params {
-				if param.Name != "" && !IsSnakeCase(param.Name) {
-					p.addDiagnostic(
-						SeverityWarning,
-						param.Type.Pos,
-						"naming/parameter",
-						fmt.Sprintf("parameter %q should follow snake_case convention", param.Name),
-					)
+				if param.Name != "" {
+					if !IsSnakeCase(param.Name) {
+						p.addDiagnostic(
+							SeverityWarning,
+							param.Type.Pos,
+							"naming/parameter",
+							fmt.Sprintf("parameter %q should follow snake_case convention", param.Name),
+						)
+					}
+					if EndsWithTraitOrNamedTrait(param.Name) {
+						p.addDiagnostic(
+							SeverityWarning,
+							param.Type.Pos,
+							"naming/parameter",
+							fmt.Sprintf("parameter %q is not a trait and must not end with \"trait\" or be named \"Trait\"", param.Name),
+						)
+					}
 				}
 				p.checkTypeRef(&param.Type)
 			}

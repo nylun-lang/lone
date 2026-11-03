@@ -939,18 +939,18 @@ pub type Ciovec = struct {
 	}
 }
 
-pub type Writer = trait {
+pub type WriterTrait = trait {
 	fn write(self, msg: str) i32
 }
 
-impl Writer on Ciovec {
+impl WriterTrait on Ciovec {
 	fn write(self, msg: str) i32 {
 		return self.len
 	}
 }
 
 pub fn demo(s: str) i32 {
-	let w = Writer::|Ciovec|
+	let w = WriterTrait::|Ciovec|
 	let i = 0
 	var b = s[i]
 	i = (i + 1) % 4
@@ -984,16 +984,16 @@ pub fn demo(s: str) i32 {
 	}
 
 	trDec, ok := rawList[2].([]any)[1].(ir.TYPE_DEC)
-	if !ok || trDec.Kind != ir.TYPE_DEC_TRAIT || trDec.Name != "Writer" || len(trDec.TraitSigs) != 1 {
-		t.Fatalf("expected trait Writer with 1 sig, got %+v", rawList[2].([]any)[1])
+	if !ok || trDec.Kind != ir.TYPE_DEC_TRAIT || trDec.Name != "WriterTrait" || len(trDec.TraitSigs) != 1 {
+		t.Fatalf("expected trait WriterTrait with 1 sig, got %+v", rawList[2].([]any)[1])
 	}
 	if len(trDec.TraitSigs[0].Params) != 2 || trDec.TraitSigs[0].Params[0].Name != "self" {
 		t.Errorf("expected self param on trait sig, got %+v", trDec.TraitSigs[0].Params)
 	}
 
 	implDec, ok := rawList[3].([]any)[1].(ir.IMPL_DEC)
-	if !ok || implDec.TraitName != "Writer" || len(implDec.Methods) != 1 {
-		t.Fatalf("expected impl Writer on Ciovec, got %+v", rawList[3].([]any)[1])
+	if !ok || implDec.TraitName != "WriterTrait" || len(implDec.Methods) != 1 {
+		t.Fatalf("expected impl WriterTrait on Ciovec, got %+v", rawList[3].([]any)[1])
 	}
 
 	fnDec, ok := rawList[4].([]any)[1].(ir.FN_DEC)
