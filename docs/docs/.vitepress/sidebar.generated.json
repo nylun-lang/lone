@@ -69,7 +69,7 @@
         "key": "toolchain",
         "items": [
           {
-            "text": "Falone CLI Reference",
+            "text": "Lone CLI Reference",
             "link": "/content/latest/toolchain/falone-cli",
             "order": 1
           },
@@ -82,6 +82,11 @@
             "text": "Runtime Glue & Adapters",
             "link": "/content/latest/toolchain/runtime-adapters",
             "order": 3
+          },
+          {
+            "text": "Lone Debug Toolchain",
+            "link": "/content/latest/toolchain/lone-debug",
+            "order": 4
           }
         ]
       }
@@ -155,7 +160,7 @@
         "key": "toolchain",
         "items": [
           {
-            "text": "Falone CLI Reference",
+            "text": "Lone CLI Reference",
             "link": "/content/0.4.0/toolchain/falone-cli",
             "order": 1
           },
@@ -168,6 +173,11 @@
             "text": "Runtime Glue & Adapters",
             "link": "/content/0.4.0/toolchain/runtime-adapters",
             "order": 3
+          },
+          {
+            "text": "Lone Debug Toolchain",
+            "link": "/content/0.4.0/toolchain/lone-debug",
+            "order": 4
           }
         ]
       }

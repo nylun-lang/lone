@@ -649,3 +649,25 @@ The Lone standard library provides a pure-Lone, zero-external-dependency standar
 - **System & Random Generation**:
   - `random_i32() i32`: Generates a cryptographically secure 32-bit random integer via WASI `random_get`.
   - `random_range(min: i32, max: i32) i32`: Generates a uniform random integer in `[min, max]`.
+
+---
+
+## 12. Toolchain & CLI Reference (`lone`)
+
+The unified `lone` CLI driver controls the entire compilation, semantic verification, debugging, and execution lifecycle.
+
+### 12.1 Subcommands
+- `lone build <entry.lone> [-o out.wat] [-t wasi|web]`: Compiles Lone sources into WebAssembly Text (`.wat`) or binary (`.wasm`).
+- `lone run <entry.lone>`: Compiles and immediately executes the binary in-process via embedded Wasmtime.
+- `lone check <entry.lone>`: Runs multi-pass type checking, safety analysis (Consume-or-Drop), and naming convention verification.
+- `lone debug <scope> [symbol]`: Deeply inspects symbols, scopes, memory layouts, trait contracts, and storage locations.
+- `lone lsp`: Starts the official Language Server Protocol daemon over standard I/O.
+
+### 12.2 Debug Toolchain Subcommands (`lone debug`)
+- `lone debug dump <scope>` (shorthand `lone debug <scope>`): Dumps an overview of all structs, traits, functions, globals, and imports in a file or namespace (e.g. `:std:io`).
+- `lone debug whatis <scope> <symbol>` (shorthand `lone debug <scope> <symbol>`): Inspects a symbol in depth:
+  - **Structs**: Total byte size, alignment, field offsets/sizes/types, constructors, methods, and implemented trait fulfillment.
+  - **Traits**: Required method contracts and concrete struct implementors in scope.
+  - **Variables**: Declared vs inferred types, initialization state, defined location, storage location (`datastack frame` vs `static linear memory`), and address-taken state (`&raw`).
+  - **Scoped Symbols**: Supports `->`, `:`, and `.` to inspect inner function variables (`fn->var`), struct fields (`struct:field`), and methods (`struct:method`).
+  - **JSON Output**: Supports `--json` flag for machine-readable integrations.

@@ -1,56 +1,68 @@
 ---
-title: "Falone CLI Reference"
+title: "Lone CLI Reference"
 order: 1
 ---
 
-# Falone CLI Reference
+# Lone CLI Reference
 
-`falone` is the official compiler and developer toolchain CLI for Lone.
+`lone` is the official compiler and developer toolchain CLI for the Lone programming language.
 
 ## Installation
 
 ```bash
-go build -o falone ./packages/falone/cmd
+go build -o lone ./cmd/lone
 ```
 
 ## Subcommands
 
-### `falone compile`
-Compiles Lone source files to Falone MIR and WebAssembly Text (WAT). Defaults to standalone WASI target.
+### `lone build`
+Compiles a Lone source file or project to WebAssembly Text (`.wat`) or binary WebAssembly (`.wasm`):
 
 ```bash
-falone compile <file.lone> [flags]
+lone build <file.lone> [-o output.wat] [-t wasi|web]
 ```
 
-### `falone compile wasm`
-Explicitly targets standalone WebAssembly using the WASI preview 1 system interface:
+### `lone run`
+Compiles a Lone program and immediately executes it using the embedded Wasmtime runtime:
 
 ```bash
-falone compile wasm <file.lone> [-o output.wat]
+lone run <file.lone>
 ```
 
-### `falone compile web`
-Explicitly targets Web and JavaScript browser environments:
+### `lone check`
+Performs static analysis, multi-pass type evaluation, safety invariant verification, and naming convention validation without emitting code:
 
 ```bash
-falone compile web <file.lone> [--with-adapter node|browser] [-o output.wat]
+lone check <file.lone>
 ```
 
-### `falone analyze`
-Performs static analysis and type checking using `lone-alyzer` without compiling to WebAssembly:
+### `lone debug`
+Deeply inspects scopes, symbols, memory layout, traits, and storage locations:
 
 ```bash
-falone analyze <file.lone> [flags]
+lone debug <scope>                  # Dumps all symbols in scope
+lone debug <scope> <symbol>         # Inspects a specific symbol
+lone debug dump <scope>             # Explicit dump subcommand
+lone debug whatis <scope> <symbol>  # Explicit whatis subcommand
 ```
 
-## Flags
+See the [Lone Debug Toolchain](/content/latest/toolchain/lone-debug) guide for full details.
 
-| Flag | Shorthand | Description |
-| :--- | :--- | :--- |
-| `--mir` | `-m` | Output Falone MIR assembly text |
-| `--wat` | `-w` | Output WebAssembly Text (WAT) |
-| `--output` | `-o` | Write WebAssembly output to a file |
-| `--target` | `-t` | Compilation target (`wasi` or `web`) |
-| `--with-adapter` | | Generate runtime glue adapter (`node` or `browser`) |
-| `--nodes` | `-n` | Print AST / IR node tree (in `analyze`) |
-| `--json` | `-j` | Print node tree as formatted JSON (in `analyze`) |
+### `lone lsp`
+Starts the official Lone Language Server Protocol daemon on standard I/O:
+
+```bash
+lone lsp
+```
+
+---
+
+## Global & Build Flags
+
+| Flag | Shorthand | Description | Default |
+| :--- | :--- | :--- | :--- |
+| `--output` | `-o` | Output file path for compiled WebAssembly | stdout / alongside file |
+| `--target` | `-t` | Compilation target (`wasi` or `web`) | `wasi` |
+| `--mir` | `-m` | Output Falone MIR assembly text | `false` |
+| `--wat` | `-w` | Output WebAssembly Text | `false` |
+| `--json` | `-j` | Output diagnostics or debug info in JSON format | `false` |
