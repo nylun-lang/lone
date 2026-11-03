@@ -197,6 +197,17 @@ func (w *TWhileStmt) Pos() ir.Position { return w.Pos_ }
 func (w *TWhileStmt) isStmt()          {}
 func (w *TWhileStmt) ExprType() Type   { return TypeVoid }
 
+// TDoWhileStmt represents a post-condition loop (loop { ... } while [cond]).
+type TDoWhileStmt struct {
+	Body TBlock
+	Cond TExpr
+	Pos_ ir.Position
+}
+
+func (d *TDoWhileStmt) Pos() ir.Position { return d.Pos_ }
+func (d *TDoWhileStmt) isStmt()          {}
+func (d *TDoWhileStmt) ExprType() Type   { return TypeVoid }
+
 // TLabelDec represents a labeled block expression/statement.
 type TLabelDec struct {
 	Name string

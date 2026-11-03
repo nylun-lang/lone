@@ -925,6 +925,75 @@ fn run_labeled() void {
 	}
 }
 
+func TestLoopWhilePostConditionParser(t *testing.T) {
+	code := `
+fn run_post_condition() void {
+	var count = 0
+	loop {
+		count = count + 1
+	} while [count < 5]
+}
+
+fn consecutive_loops() void {
+	loop {
+		break
+	}
+
+	while count < 10 {
+		count = count + 1
+	}
+}
+`
+	ast, err := loneparser.Parse("loop_while.lone", []byte(code))
+	if err != nil {
+		t.Fatalf("failed to parse loop while statement: %v", err)
+	}
+
+	rawList, ok := ast.([]any)
+	if !ok || len(rawList) != 2 {
+		t.Fatalf("expected 2 declarations, got %T (%d)", ast, len(rawList))
+	}
+
+	// 1. run_post_condition(): verifies ir.DoWhileStmt with Cond
+	fn1 := rawList[0].([]any)[1].(ir.FN_DEC)
+	if len(fn1.Body.Stmts) != 2 {
+		t.Fatalf("expected 2 stmts in fn1, got %d", len(fn1.Body.Stmts))
+	}
+	doWhile, ok := fn1.Body.Stmts[1].(ir.DoWhileStmt)
+	if !ok {
+		t.Fatalf("expected DoWhileStmt, got %T", fn1.Body.Stmts[1])
+	}
+	if len(doWhile.Body.Stmts) != 1 {
+		t.Errorf("expected 1 stmt in doWhile body, got %d", len(doWhile.Body.Stmts))
+	}
+	cmp, ok := doWhile.Cond.(ir.BinaryExpr)
+	if !ok || string(cmp.Op) != "<" {
+		t.Errorf("expected binary op '<' in condition, got: %+v", doWhile.Cond)
+	}
+
+	// 2. consecutive_loops(): verifies loop followed by while does not collide
+	fn2 := rawList[1].([]any)[1].(ir.FN_DEC)
+	if len(fn2.Body.Stmts) != 2 {
+		t.Fatalf("expected 2 stmts in fn2, got %d", len(fn2.Body.Stmts))
+	}
+	loop1, ok := fn2.Body.Stmts[0].(ir.WhileStmt)
+	if !ok {
+		t.Fatalf("expected WhileStmt (infinite loop) for stmt 0, got %T", fn2.Body.Stmts[0])
+	}
+	lit, ok := loop1.Cond.(ir.Literal)
+	if !ok || lit.Value != true {
+		t.Errorf("expected infinite loop with true, got %+v", loop1.Cond)
+	}
+	loop2, ok := fn2.Body.Stmts[1].(ir.WhileStmt)
+	if !ok {
+		t.Fatalf("expected WhileStmt for stmt 1, got %T", fn2.Body.Stmts[1])
+	}
+	cmp2, ok := loop2.Cond.(ir.BinaryExpr)
+	if !ok || string(cmp2.Op) != "<" {
+		t.Errorf("expected binary op '<' in while condition, got: %+v", loop2.Cond)
+	}
+}
+
 func TestForStmtAndImplFor(t *testing.T) {
 	code := `
 type IterableTrait<T> = trait {

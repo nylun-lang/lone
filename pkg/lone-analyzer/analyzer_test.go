@@ -507,3 +507,51 @@ fn check(a: i32, b: i32, c: i32) void {
 		t.Fatalf("expected diagnostic 'type/invalid-comparison' for parenthesized comparison chaining, got: %v", diags)
 	}
 }
+
+func TestLoopWhileSmartScopeAndAnalysis(t *testing.T) {
+	// 1. Valid: variable declared inside body accessible in while [condition]
+	validCode := `
+fn test_loop_scope() void {
+	var total = 0
+	loop {
+		var step = 1
+		total = total + step
+	} while [step < 5]
+}
+`
+	ast, err := loneparser.Parse("valid_loop_while.lone", []byte(validCode))
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	diags := NewAnalyzer("valid_loop_while.lone", DefaultConfig()).Analyze(ast)
+	for _, d := range diags {
+		if d.Severity == SeverityError {
+			t.Fatalf("unexpected error diagnostic: %+v", d)
+		}
+	}
+
+	// 2. Invalid: variable declared inside body NOT accessible outside the loop
+	invalidOutsideCode := `
+fn test_loop_outside() void {
+	loop {
+		var inner = 42
+	} while [inner > 0]
+	var y = inner
+}
+`
+	astBad, err := loneparser.Parse("bad_loop_outside.lone", []byte(invalidOutsideCode))
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	diagsBad := NewAnalyzer("bad_loop_outside.lone", DefaultConfig()).Analyze(astBad)
+	foundUndefined := false
+	for _, d := range diagsBad {
+		if d.Rule == "type/undefined-identifier" && strings.Contains(d.Message, "inner") {
+			foundUndefined = true
+			break
+		}
+	}
+	if !foundUndefined {
+		t.Fatalf("expected type/undefined-identifier for 'inner' outside loop, got: %v", diagsBad)
+	}
+}

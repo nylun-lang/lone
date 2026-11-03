@@ -356,9 +356,10 @@ while low <= high {
 }
 ```
 
-#### 6.4.1 Infinite Loop (`LOOP_STMT`)
-Runs an infinite loop until terminated by `break` or `return`:
+#### 6.4.1 Infinite & Post-Condition Loops (`LOOP_STMT`)
+Runs an infinite loop until terminated by `break` or `return`, or loops repeatedly while a bracketed post-condition holds:
 ```lone
+-- Infinite loop
 loop {
     var line = read_line()
     if line == "quit" {
@@ -366,9 +367,21 @@ loop {
     }
     println(line)
 }
+
+-- Post-condition loop (do-while)
+var count = 0
+loop {
+    count = count + 1
+    var step = count
+    println_int(step)
+} while [step < 5]
 ```
-- Can also be labeled for targeted breaks: `outer: loop { inner: loop { break outer } }`.
-- Desugars cleanly into an `ir.WhileStmt` with constant `true` condition.
+- **Post-Condition `while [cond]`**:
+  - Executes the loop body **at least once** before evaluating `cond`.
+  - The condition is enclosed in brackets `[...]`, completely avoiding semicolon requirements and line bleed-through.
+  - **Smart Scoping**: Variables declared inside the `loop { ... }` body remain in scope and are accessible inside `while [cond]`. Once the loop exits, those variables fall out of scope.
+  - Can also be labeled for targeted breaks: `outer: loop { inner: loop { break outer } } while [true]`.
+  - Infinite `loop { ... }` desugars into an `ir.WhileStmt` with constant `true` condition; post-condition loops parse as `ir.DoWhileStmt` and lower directly into structured Wasm blocks and branch-back instructions.
 
 #### 6.4.2 For-In Loop (`FOR_STMT`)
 Iterates over an iterable value using Lone's standard iterator protocol (`IteratorTrait<T>` and `IterableTrait<T>` in `:std:builtin`):

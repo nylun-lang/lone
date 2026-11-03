@@ -77,6 +77,13 @@ func PrintNodeTree(node loneanalyzer.TNode, indent int) string {
 		sb.WriteString(PrintNodeTree(&n.Body, indent+1))
 		return sb.String()
 
+	case *loneanalyzer.TDoWhileStmt:
+		var sb strings.Builder
+		sb.WriteString(fmt.Sprintf("%s├── TDoWhileStmt\n", pad))
+		sb.WriteString(PrintNodeTree(&n.Body, indent+1))
+		sb.WriteString(fmt.Sprintf("%s  ├── Cond:\n%s", pad, PrintNodeTree(n.Cond, indent+2)))
+		return sb.String()
+
 	case *loneanalyzer.TIfStmt:
 		var sb strings.Builder
 		sb.WriteString(fmt.Sprintf("%s├── TIfStmt\n", pad))
@@ -261,6 +268,14 @@ func PrintNode(node loneanalyzer.TNode, indent int) string {
 			res += PrintNode(s, indent+1) + "\n"
 		}
 		res += fmt.Sprintf("%s}", pad)
+		return res
+
+	case *loneanalyzer.TDoWhileStmt:
+		res := fmt.Sprintf("%sloop {\n", pad)
+		for _, s := range n.Body.Stmts {
+			res += PrintNode(s, indent+1) + "\n"
+		}
+		res += fmt.Sprintf("%s} while [%s]", pad, PrintExpr(n.Cond))
 		return res
 
 	case *loneanalyzer.TIfStmt:

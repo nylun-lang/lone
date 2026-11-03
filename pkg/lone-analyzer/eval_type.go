@@ -1006,6 +1006,11 @@ func (te *TypeEvaluator) analyzeStmt(raw any, expectedReturn Type, hasReturn *bo
 		tBody := te.analyzeBlock(&s.Body, expectedReturn, hasReturn)
 		return &TWhileStmt{Cond: tCond, Body: tBody, Pos_: s.Pos}
 
+	case ir.DoWhileStmt:
+		return te.analyzeDoWhileStmt(&s, expectedReturn, hasReturn)
+	case *ir.DoWhileStmt:
+		return te.analyzeDoWhileStmt(s, expectedReturn, hasReturn)
+
 	case ir.ForStmt:
 		return te.analyzeForStmt(&s, expectedReturn, hasReturn)
 	case *ir.ForStmt:
@@ -1056,6 +1061,40 @@ func (te *TypeEvaluator) analyzeAssignStmt(a *ir.AssignStmt) *TAssignStmt {
 		Target: tTarget,
 		Value:  tVal,
 		Pos_:   a.Pos,
+	}
+}
+
+func (te *TypeEvaluator) analyzeDoWhileStmt(s *ir.DoWhileStmt, expectedReturn Type, hasReturn *bool) *TDoWhileStmt {
+	te.stack.Push(ScopeBlock, "")
+	defer te.stack.Pop()
+
+	tBlock := TBlock{
+		Stmts: make([]TStmt, 0),
+		Pos_:  s.Body.Pos,
+		Typ:   TypeVoid,
+	}
+
+	for _, rawStmt := range s.Body.Stmts {
+		stmt := te.analyzeStmt(rawStmt, expectedReturn, hasReturn)
+		if stmt != nil {
+			tBlock.Stmts = append(tBlock.Stmts, stmt)
+			if brk, ok := stmt.(*TBreakStmt); ok && brk.Value != nil {
+				tBlock.Typ = brk.Value.ExprType()
+			}
+		}
+	}
+
+	// Condition is evaluated in the same scope, so body variables are accessible!
+	tCond := te.EvalExpr(s.Cond)
+	if tCond.ExprType() != TypeBool && tCond.ExprType() != TypeUnknown {
+		te.addDiag(SeverityError, tCond.Pos(), "type/condition-type",
+			fmt.Sprintf("loop while condition must be bool, got %q", tCond.ExprType().String()))
+	}
+
+	return &TDoWhileStmt{
+		Body: tBlock,
+		Cond: tCond,
+		Pos_: s.Pos,
 	}
 }
 
@@ -1501,6 +1540,19 @@ func (te *TypeEvaluator) EvalExpr(raw ir.Expr) TExpr {
 		stmt := te.analyzeStmt(*e, nil, nil)
 		if ws, ok := stmt.(*TWhileStmt); ok {
 			return ws
+		}
+		return &TLiteralExpr{Kind: ir.LITERAL_UNINITIALIZED, Typ: TypeVoid, Pos_: e.Pos}
+
+	case ir.DoWhileStmt:
+		stmt := te.analyzeStmt(e, nil, nil)
+		if ds, ok := stmt.(*TDoWhileStmt); ok {
+			return ds
+		}
+		return &TLiteralExpr{Kind: ir.LITERAL_UNINITIALIZED, Typ: TypeVoid, Pos_: e.Pos}
+	case *ir.DoWhileStmt:
+		stmt := te.analyzeStmt(*e, nil, nil)
+		if ds, ok := stmt.(*TDoWhileStmt); ok {
+			return ds
 		}
 		return &TLiteralExpr{Kind: ir.LITERAL_UNINITIALIZED, Typ: TypeVoid, Pos_: e.Pos}
 

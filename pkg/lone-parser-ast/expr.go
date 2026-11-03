@@ -17,6 +17,7 @@ const (
 	EXPR_FOR
 	EXPR_DROP
 	EXPR_IS
+	EXPR_DO_WHILE
 )
 
 type Expr interface {
@@ -334,6 +335,16 @@ type WhileStmt struct {
 
 func (WhileStmt) IsExpr() ExprKind {
 	return EXPR_WHILE
+}
+
+type DoWhileStmt struct {
+	Body Block
+	Cond Expr
+	Pos  Position
+}
+
+func (DoWhileStmt) IsExpr() ExprKind {
+	return EXPR_DO_WHILE
 }
 
 // =====================

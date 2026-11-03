@@ -111,6 +111,11 @@ func (p *PassNamingConventions) walkNode(node any) {
 	case *ir.WhileStmt:
 		p.checkWhileStmt(n)
 
+	case ir.DoWhileStmt:
+		p.checkDoWhileStmt(&n)
+	case *ir.DoWhileStmt:
+		p.checkDoWhileStmt(n)
+
 	case ir.ForStmt:
 		p.checkForStmt(&n)
 	case *ir.ForStmt:
@@ -473,6 +478,16 @@ func (p *PassNamingConventions) checkWhileStmt(stmt *ir.WhileStmt) {
 	for _, s := range stmt.Body.Stmts {
 		p.walkNode(s)
 	}
+}
+
+func (p *PassNamingConventions) checkDoWhileStmt(stmt *ir.DoWhileStmt) {
+	p.stack.Push(ScopeLoop, "")
+	defer p.stack.Pop()
+
+	for _, s := range stmt.Body.Stmts {
+		p.walkNode(s)
+	}
+	p.walkNode(stmt.Cond)
 }
 
 func (p *PassNamingConventions) checkForStmt(stmt *ir.ForStmt) {

@@ -352,6 +352,50 @@ func (cl *cfgLowerer) lowerRegion(startName string, stopTargets map[string]bool)
 			break
 		}
 
+		// Post-condition loop: wrap in structured (block $exit (loop $head ...))
+		if blk.IsDoWhile || strings.HasPrefix(blk.Name, "dowhile_body") {
+			exitName := blk.LoopExit
+			loopHead := cleanIdentifier(blk.Name)
+			loopExit := cleanIdentifier(exitName)
+
+			cl.loopHeads[blk.Name] = true
+			if exitName != "" {
+				cl.loopExits[exitName] = true
+			}
+
+			innerStops := copySetWith(stopTargets, blk.Name, exitName)
+			var loopBody []WasmInst
+			for _, inst := range blk.Insts {
+				loopBody = append(loopBody, cl.lowerInstruction(inst)...)
+			}
+			if blk.Terminator != nil {
+				if jmp, isJmp := blk.Terminator.(lonemir.MirJump); isJmp {
+					if !cl.loopExits[jmp.Target] && !cl.loopHeads[jmp.Target] && !innerStops[jmp.Target] {
+						rest := cl.lowerRegion(jmp.Target, innerStops)
+						loopBody = append(loopBody, rest...)
+					}
+				}
+			}
+
+			delete(cl.loopHeads, blk.Name)
+			if exitName != "" {
+				delete(cl.loopExits, exitName)
+			}
+
+			insts = append(insts, InstBlock{
+				Label: "$" + loopExit,
+				Body: []WasmInst{
+					InstLoop{
+						Label: "$" + loopHead,
+						Body:  loopBody,
+					},
+				},
+			})
+
+			curName = exitName
+			continue
+		}
+
 		// Loop header block: wrap in structured (block $exit (loop $head ...))
 		if blk.IsLoop || strings.HasPrefix(blk.Name, "while_head") {
 			exitName := blk.LoopExit
@@ -456,10 +500,19 @@ func (cl *cfgLowerer) lowerRegion(startName string, stopTargets map[string]bool)
 			insts = append(insts, cl.lowerLoadOperand(t.Cond, lonemir.MirI32)...)
 			joinName := t.JoinTarget
 			branchStops := copySetWith(stopTargets, joinName)
-			thenInsts := cl.lowerRegion(t.ThenTarget, branchStops)
+			var thenInsts []WasmInst
+			if cl.loopHeads[t.ThenTarget] {
+				thenInsts = []WasmInst{InstBr{Target: "$" + cleanIdentifier(t.ThenTarget)}}
+			} else {
+				thenInsts = cl.lowerRegion(t.ThenTarget, branchStops)
+			}
 			var elseInsts []WasmInst
-			if t.ElseTarget != "" && t.ElseTarget != joinName {
-				elseInsts = cl.lowerRegion(t.ElseTarget, branchStops)
+			if t.ElseTarget != "" && t.ElseTarget != joinName && !cl.loopExits[t.ElseTarget] {
+				if cl.loopHeads[t.ElseTarget] {
+					elseInsts = []WasmInst{InstBr{Target: "$" + cleanIdentifier(t.ElseTarget)}}
+				} else {
+					elseInsts = cl.lowerRegion(t.ElseTarget, branchStops)
+				}
 			}
 			insts = append(insts, InstIf{
 				Then: thenInsts,

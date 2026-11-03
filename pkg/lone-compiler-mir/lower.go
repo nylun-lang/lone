@@ -415,6 +415,38 @@ func (l *lowerer) lowerStmt(stmt loneanalyzer.TStmt) {
 		l.loopExitStack = l.loopExitStack[:len(l.loopExitStack)-1]
 		l.curBlk = exitBlk
 
+	case *loneanalyzer.TDoWhileStmt:
+		bodyBlk := l.freshBlock("dowhile_body")
+		bodyBlk.IsDoWhile = true
+		condBlk := l.freshBlock("dowhile_cond")
+		exitBlk := l.freshBlock("dowhile_exit")
+		bodyBlk.LoopExit = exitBlk.Name
+
+		// Jump directly into the body first (do-while guarantee)
+		l.curBlk.Terminator = MirJump{Target: bodyBlk.Name}
+
+		// Track loop exit for breaks
+		l.loopExitStack = append(l.loopExitStack, exitBlk.Name)
+
+		// Body
+		l.curBlk = bodyBlk
+		l.lowerBlock(&s.Body)
+		if l.curBlk != nil && l.curBlk.Terminator == nil {
+			l.curBlk.Terminator = MirJump{Target: condBlk.Name}
+		}
+
+		// Condition block: evaluate condition after each iteration
+		l.curBlk = condBlk
+		condOp := l.lowerExpr(s.Cond)
+		l.curBlk.Terminator = MirBranch{
+			Cond:       condOp,
+			ThenTarget: bodyBlk.Name,
+			ElseTarget: exitBlk.Name,
+		}
+
+		l.loopExitStack = l.loopExitStack[:len(l.loopExitStack)-1]
+		l.curBlk = exitBlk
+
 	case *loneanalyzer.TLabelDec:
 		exitBlk := l.freshBlock("label_exit")
 		l.loopExitStack = append(l.loopExitStack, exitBlk.Name)

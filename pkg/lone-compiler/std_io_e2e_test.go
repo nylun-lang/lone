@@ -488,3 +488,42 @@ pub fn main() void {
 		t.Fatalf("expected 'comparison operators cannot be chained' in compiler error, got: %v", err)
 	}
 }
+
+func TestLoopWhilePostConditionWasmtime(t *testing.T) {
+	code := `
+import .println, .println_int from :std:io
+
+pub fn main() void {
+	-- 1. Executes at least once even if condition is false
+	var x = 100
+	loop {
+		println_int(x)
+	} while [false]
+
+	-- 2. Multi-iteration post-condition with inner variable accessible in while [condition]
+	var count = 0
+	loop {
+		count = count + 1
+		var current = count
+		println_int(current)
+	} while [current < 3]
+
+	-- 3. Break inside loop while
+	loop {
+		println("broken")
+		break
+	} while [true]
+}
+`
+	comp := lonecompiler.NewCompiler(lonecompiler.DefaultConfig())
+	res, err := comp.CompileSource("loop_while_test.lone", []byte(code))
+	if err != nil {
+		t.Fatalf("failed to compile loop while test: %v (diags: %+v)", err, res.Diagnostics)
+	}
+
+	output := runWatWithWasmtime(t, res.WatOutput, "")
+	want := "100\n1\n2\n3\nbroken\n"
+	if output != want {
+		t.Errorf("unexpected output from loop while test:\ngot:  %q\nwant: %q", output, want)
+	}
+}
