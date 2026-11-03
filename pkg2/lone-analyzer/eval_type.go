@@ -15,6 +15,7 @@ type TypeEvaluator struct {
 	traits          map[string]*TraitType
 	enums           map[string]*EnumType
 	currentSelfType Type
+	currentFnReturn Type
 }
 
 func NewTypeEvaluator() *TypeEvaluator {
@@ -517,6 +518,68 @@ func (te *TypeEvaluator) analyzeTopLevel(decl any) TNode {
 }
 
 func (te *TypeEvaluator) analyzeVarDec(b *loneast.BIND_DEC) *TVarDec {
+	if b.Pattern != nil {
+		tVal := te.EvalExpr(b.Value)
+		var vInfo *EnumVariantInfo
+		var bindings []*TVarDec
+
+		if vp, ok := b.Pattern.(loneast.VariantPattern); ok {
+			et, isEnum := tVal.ExprType().(*EnumType)
+			if !isEnum {
+				te.addDiag(SeverityError, b.Pattern.NodeSpan(), "type/invalid-pattern",
+					fmt.Sprintf("cannot destructure non-enum type %q", tVal.ExprType().String()))
+			} else {
+				if vp.TypeName != "" && vp.TypeName != et.Name {
+					te.addDiag(SeverityError, b.Pattern.NodeSpan(), "type/enum-type-mismatch",
+						fmt.Sprintf("variant %q belongs to enum %q, but value is %q", vp.Variant, vp.TypeName, et.Name))
+				}
+				v, found := et.Variant(vp.Variant)
+				if !found {
+					te.addDiag(SeverityError, b.Pattern.NodeSpan(), "type/unknown-variant",
+						fmt.Sprintf("enum %q has no variant %q", et.Name, vp.Variant))
+				} else {
+					vInfo = v
+					if len(vp.Bindings) != len(v.Fields) {
+						te.addDiag(SeverityError, b.Pattern.NodeSpan(), "type/pattern-arity-mismatch",
+							fmt.Sprintf("variant %q has %d fields, but pattern binds %d variables",
+								vp.Variant, len(v.Fields), len(vp.Bindings)))
+					} else {
+						for i, bName := range vp.Bindings {
+							fInfo := v.Fields[i]
+							if bName != "_" {
+								sym := &Symbol{
+									Name:      bName,
+									Kind:      SymbolVar,
+									Type:      fInfo.Type,
+									IsMutable: b.IsMutable,
+								}
+								_ = te.stack.Define(sym)
+								bindings = append(bindings, &TVarDec{
+									Name:      bName,
+									IsMutable: b.IsMutable,
+									Type:      fInfo.Type,
+									Value:     nil,
+									Span_:     b.Pattern.NodeSpan(),
+								})
+							}
+						}
+					}
+				}
+			}
+		}
+
+		return &TVarDec{
+			Name:      b.Name,
+			Variant:   vInfo,
+			TargetVal: tVal,
+			Bindings:  bindings,
+			IsMutable: b.IsMutable,
+			Type:      tVal.ExprType(),
+			Value:     tVal,
+			Span_:     b.Span_,
+		}
+	}
+
 	declaredType := te.resolveType(b.Type)
 	tVal := te.EvalExpr(b.Value)
 
@@ -579,6 +642,10 @@ func (te *TypeEvaluator) analyzeFnDec(f *loneast.FN_DEC) *TFnDec {
 	if f.ReturnType != nil {
 		retType = te.resolveType(*f.ReturnType)
 	}
+
+	oldFnRet := te.currentFnReturn
+	te.currentFnReturn = retType
+	defer func() { te.currentFnReturn = oldFnRet }()
 
 	body := te.analyzeBlock(&f.Body, retType)
 
@@ -752,10 +819,15 @@ func (te *TypeEvaluator) analyzeIfStmt(i *loneast.IfStmt, expectedRet Type) *TIf
 		tHeaders = append(tHeaders, tVar)
 	}
 
-	tCond := te.EvalExpr(i.Cond)
-	if !tCond.ExprType().Equals(TypeBool) && tCond.ExprType() != TypeUnknown {
-		te.addDiag(SeverityError, i.Cond.NodeSpan(), "type/condition-not-bool",
-			fmt.Sprintf("if condition must be boolean, got %q", tCond.ExprType().String()))
+	var tCond TExpr
+	if i.Cond != nil {
+		tCond = te.EvalExpr(i.Cond)
+		if !tCond.ExprType().Equals(TypeBool) && tCond.ExprType() != TypeUnknown {
+			te.addDiag(SeverityError, i.Cond.NodeSpan(), "type/condition-not-bool",
+				fmt.Sprintf("if condition must be boolean, got %q", tCond.ExprType().String()))
+		}
+	} else {
+		tCond = &TLiteralExpr{Kind: loneast.LiteralBool, Value: true, Typ: TypeBool, Span_: i.Span_}
 	}
 
 	tThen := te.analyzeBlock(&i.Then, expectedRet)
@@ -969,6 +1041,16 @@ func (te *TypeEvaluator) EvalExpr(e loneast.Expr) TExpr {
 	case *loneast.MatchExpr:
 		return te.evalMatchExpr(*expr)
 
+	case loneast.MustExpr:
+		return te.evalMustExpr(expr)
+	case *loneast.MustExpr:
+		return te.evalMustExpr(*expr)
+
+	case loneast.TryExpr:
+		return te.evalTryExpr(expr)
+	case *loneast.TryExpr:
+		return te.evalTryExpr(*expr)
+
 	default:
 		return nil
 	}
@@ -1124,6 +1206,39 @@ func (te *TypeEvaluator) evalCastExpr(c loneast.CastExpr) TExpr {
 
 func (te *TypeEvaluator) evalIsExpr(i loneast.IsExpr) TExpr {
 	sub := te.EvalExpr(i.Expr)
+
+	if tb, ok := i.TargetType.Value.(*loneast.TypeBase); ok {
+		// 1. Explicit variant path: s is Shape::Circle
+		if tb.Variant != "" {
+			if et, ok := te.enums[tb.Name]; ok {
+				if vInfo, found := et.Variant(tb.Variant); found {
+					return &TIsExpr{
+						Expr:          sub,
+						TargetType:    et,
+						TargetVariant: vInfo,
+						Negated:       i.Negated,
+						Span_:         i.Span_,
+					}
+				}
+				te.addDiag(SeverityError, i.TargetType.NodeSpan(), "type/undefined-variant",
+					fmt.Sprintf("enum %q has no variant %q", tb.Name, tb.Variant))
+			}
+		} else {
+			// 2. Short variant name: s is Circle
+			if et, ok := sub.ExprType().(*EnumType); ok {
+				if vInfo, found := et.Variant(tb.Name); found {
+					return &TIsExpr{
+						Expr:          sub,
+						TargetType:    et,
+						TargetVariant: vInfo,
+						Negated:       i.Negated,
+						Span_:         i.Span_,
+					}
+				}
+			}
+		}
+	}
+
 	targetType := te.resolveType(i.TargetType)
 	return &TIsExpr{Expr: sub, TargetType: targetType, Negated: i.Negated, Span_: i.Span_}
 }
@@ -1374,6 +1489,67 @@ func (te *TypeEvaluator) evalMatchExpr(m loneast.MatchExpr) TExpr {
 		Arms:   tArms,
 		Typ:    resultType,
 		Span_:  m.Span_,
+	}
+}
+
+func (te *TypeEvaluator) evalMustExpr(m loneast.MustExpr) TExpr {
+	sub := te.EvalExpr(m.Expr)
+	et, ok := sub.ExprType().(*EnumType)
+	if !ok {
+		te.addDiag(SeverityError, m.Span_, "type/must-requires-result",
+			fmt.Sprintf("'must' requires a Result/enum type, got %q", sub.ExprType().String()))
+		return &TMustExpr{Expr: sub, OkType: TypeUnknown, Span_: m.Span_}
+	}
+	okV, hasOk := et.Variant("Ok")
+	if !hasOk {
+		te.addDiag(SeverityError, m.Span_, "type/must-requires-ok-variant",
+			fmt.Sprintf("'must' requires enum %q to have an 'Ok' variant", et.Name))
+		return &TMustExpr{Expr: sub, OkType: TypeUnknown, Span_: m.Span_}
+	}
+	var okType Type = TypeVoid
+	if len(okV.Fields) > 0 {
+		okType = okV.Fields[0].Type
+	}
+	return &TMustExpr{
+		Expr:       sub,
+		ResultType: et,
+		OkVariant:  okV,
+		OkType:     okType,
+		Span_:      m.Span_,
+	}
+}
+
+func (te *TypeEvaluator) evalTryExpr(t loneast.TryExpr) TExpr {
+	sub := te.EvalExpr(t.Expr)
+	et, ok := sub.ExprType().(*EnumType)
+	if !ok {
+		te.addDiag(SeverityError, t.Span_, "type/try-requires-result",
+			fmt.Sprintf("'try' requires a Result/enum type, got %q", sub.ExprType().String()))
+		return &TTryExpr{Expr: sub, OkType: TypeUnknown, Span_: t.Span_}
+	}
+	okV, hasOk := et.Variant("Ok")
+	_, hasErr := et.Variant("Err")
+	if !hasOk || !hasErr {
+		te.addDiag(SeverityError, t.Span_, "type/try-requires-ok-err",
+			fmt.Sprintf("'try' requires enum %q to have 'Ok' and 'Err' variants", et.Name))
+		return &TTryExpr{Expr: sub, OkType: TypeUnknown, Span_: t.Span_}
+	}
+	// Check current function return type
+	if te.currentFnReturn != nil && !te.currentFnReturn.Equals(et) && !te.currentFnReturn.Equals(TypeAny) {
+		te.addDiag(SeverityError, t.Span_, "type/try-incompatible-return",
+			fmt.Sprintf("cannot use 'try' in function returning %q; enclosing function must return %q",
+				te.currentFnReturn.String(), et.Name))
+	}
+	var okType Type = TypeVoid
+	if len(okV.Fields) > 0 {
+		okType = okV.Fields[0].Type
+	}
+	return &TTryExpr{
+		Expr:       sub,
+		ResultType: et,
+		OkVariant:  okV,
+		OkType:     okType,
+		Span_:      t.Span_,
 	}
 }
 

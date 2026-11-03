@@ -23,6 +23,8 @@ const (
 	ExprAssign
 	ExprLabelDec
 	ExprMatch
+	ExprMust
+	ExprTry
 )
 
 type Expr interface {
@@ -413,3 +415,19 @@ type MatchExpr struct {
 
 func (MatchExpr) IsExpr() ExprKind { return ExprMatch }
 func (m MatchExpr) NodeSpan() Span { return m.Span_ }
+
+type MustExpr struct {
+	Expr  Expr
+	Span_ Span
+}
+
+func (MustExpr) IsExpr() ExprKind { return ExprMust }
+func (m MustExpr) NodeSpan() Span { return m.Span_ }
+
+type TryExpr struct {
+	Expr  Expr
+	Span_ Span
+}
+
+func (TryExpr) IsExpr() ExprKind { return ExprTry }
+func (t TryExpr) NodeSpan() Span { return t.Span_ }

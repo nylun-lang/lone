@@ -207,6 +207,19 @@ func (l *lowerer) lowerFunction(fn *loneanalyzer.TFnDec) (*WasmFunc, error) {
 	// Ensure function ends with return if needed
 	if fn.ReturnType == loneanalyzer.TypeVoid || fn.ReturnType == nil {
 		bodyInsts = append(bodyInsts, InstReturn{})
+	} else {
+		// Non-void function: if it does not end with an explicit return or unreachable,
+		// append unreachable to satisfy Wasm stack validation.
+		endsInReturn := false
+		if len(bodyInsts) > 0 {
+			switch bodyInsts[len(bodyInsts)-1].(type) {
+			case InstReturn, InstUnreachable:
+				endsInReturn = true
+			}
+		}
+		if !endsInReturn {
+			bodyInsts = append(bodyInsts, InstUnreachable{})
+		}
 	}
 
 	wfn.Locals = alloc.Locals()
@@ -338,18 +351,54 @@ func (l *lowerer) lowerIfStmt(s *loneanalyzer.TIfStmt, alloc *LocalAllocator) []
 	defer alloc.ExitScope()
 
 	var insts []WasmInst
-	// 1. Lower scoped header bindings if any (e.g. if: [let x = 0] ...)
+	var patternChecks []WasmInst
+	var patternBinds []WasmInst
+
+	// 1. Lower scoped header bindings if any (e.g. if: [let x = 0] ... or if: [let Shape::Circle(r) = s])
 	for _, h := range s.Header {
-		hInsts := l.lowerStmt(h, alloc)
-		insts = append(insts, hInsts...)
+		if h.Variant != nil {
+			targetLocal := alloc.AllocTemp(TypeI32)
+			defer alloc.FreeTemp(targetLocal, TypeI32)
+
+			insts = append(insts, l.lowerExpr(h.TargetVal, alloc)...)
+			insts = append(insts, InstLocalSet{Name: targetLocal})
+
+			// Tag check: targetLocal.tag == h.Variant.Tag
+			patternChecks = append(patternChecks, InstLocalGet{Name: targetLocal})
+			patternChecks = append(patternChecks, InstLoad{Op: "i32.load", Offset: 0})
+			patternChecks = append(patternChecks, InstConstI32{Value: int32(h.Variant.Tag)})
+			patternChecks = append(patternChecks, InstBinaryOp{Op: "i32.eq"})
+
+			// In Then block: bind fields
+			for i, b := range h.Bindings {
+				if i < len(h.Variant.Fields) {
+					fInfo := h.Variant.Fields[i]
+					bLocal := alloc.AllocVar(b.Name, toWasmType(fInfo.Type))
+					patternBinds = append(patternBinds, InstLocalGet{Name: targetLocal})
+					patternBinds = append(patternBinds, InstLoad{Op: loadOpForType(fInfo.Type), Offset: fInfo.Offset})
+					patternBinds = append(patternBinds, InstLocalSet{Name: bLocal})
+				}
+			}
+		} else {
+			hInsts := l.lowerStmt(h, alloc)
+			insts = append(insts, hInsts...)
+		}
 	}
 
 	// 2. Evaluate condition
-	condInsts := l.lowerExpr(s.Cond, alloc)
-	insts = append(insts, condInsts...)
+	if len(patternChecks) > 0 {
+		insts = append(insts, patternChecks...)
+		if s.Cond != nil {
+			insts = append(insts, l.lowerExpr(s.Cond, alloc)...)
+			insts = append(insts, InstBinaryOp{Op: "i32.and"})
+		}
+	} else if s.Cond != nil {
+		condInsts := l.lowerExpr(s.Cond, alloc)
+		insts = append(insts, condInsts...)
+	}
 
 	// 3. Lower Then and Else blocks
-	thenInsts := l.lowerBlock(s.Then, alloc)
+	thenInsts := append(patternBinds, l.lowerBlock(s.Then, alloc)...)
 
 	var elseInsts []WasmInst
 	if s.Else != nil {
@@ -603,6 +652,28 @@ func (l *lowerer) lowerExpr(expr loneanalyzer.TExpr, alloc *LocalAllocator) []Wa
 
 	case *loneanalyzer.TMatchExpr:
 		return l.lowerMatchExpr(e, alloc)
+
+	case *loneanalyzer.TIsExpr:
+		var insts []WasmInst
+		if e.TargetVariant != nil {
+			insts = append(insts, l.lowerExpr(e.Expr, alloc)...)
+			insts = append(insts, InstLoad{Op: "i32.load", Offset: 0})
+			insts = append(insts, InstConstI32{Value: int32(e.TargetVariant.Tag)})
+			if e.Negated {
+				insts = append(insts, InstBinaryOp{Op: "i32.ne"})
+			} else {
+				insts = append(insts, InstBinaryOp{Op: "i32.eq"})
+			}
+			return insts
+		}
+		insts = append(insts, InstConstI32{Value: 1})
+		return insts
+
+	case *loneanalyzer.TMustExpr:
+		return l.lowerMustExpr(e, alloc)
+
+	case *loneanalyzer.TTryExpr:
+		return l.lowerTryExpr(e, alloc)
 
 	default:
 		return nil
@@ -1026,4 +1097,99 @@ func storeOpForType(t loneanalyzer.Type) string {
 	default:
 		return "i32.store"
 	}
+}
+
+func (l *lowerer) lowerMustExpr(m *loneanalyzer.TMustExpr, alloc *LocalAllocator) []WasmInst {
+	var insts []WasmInst
+	targetLocal := alloc.AllocTemp(TypeI32)
+	defer alloc.FreeTemp(targetLocal, TypeI32)
+
+	insts = append(insts, l.lowerExpr(m.Expr, alloc)...)
+	insts = append(insts, InstLocalSet{Name: targetLocal})
+
+	resLocal := ""
+	if m.OkType != loneanalyzer.TypeVoid && m.OkType != nil {
+		resWType := toWasmType(m.OkType)
+		resLocal = alloc.AllocTemp(resWType)
+		defer alloc.FreeTemp(resLocal, resWType)
+	}
+
+	// Condition: target.tag == OkVariant.Tag
+	var condInsts []WasmInst
+	condInsts = append(condInsts, InstLocalGet{Name: targetLocal})
+	condInsts = append(condInsts, InstLoad{Op: "i32.load", Offset: 0})
+	condInsts = append(condInsts, InstConstI32{Value: int32(m.OkVariant.Tag)})
+	condInsts = append(condInsts, InstBinaryOp{Op: "i32.eq"})
+
+	var thenInsts []WasmInst
+	if resLocal != "" && len(m.OkVariant.Fields) > 0 {
+		fInfo := m.OkVariant.Fields[0]
+		thenInsts = append(thenInsts, InstLocalGet{Name: targetLocal})
+		thenInsts = append(thenInsts, InstLoad{Op: loadOpForType(fInfo.Type), Offset: fInfo.Offset})
+		thenInsts = append(thenInsts, InstLocalSet{Name: resLocal})
+	}
+
+	// On Err: unreachable (panics in WebAssembly)
+	elseInsts := []WasmInst{
+		InstUnreachable{},
+	}
+
+	insts = append(insts, condInsts...)
+	insts = append(insts, InstIf{
+		Then: thenInsts,
+		Else: elseInsts,
+	})
+
+	if resLocal != "" {
+		insts = append(insts, InstLocalGet{Name: resLocal})
+	}
+	return insts
+}
+
+func (l *lowerer) lowerTryExpr(t *loneanalyzer.TTryExpr, alloc *LocalAllocator) []WasmInst {
+	var insts []WasmInst
+	targetLocal := alloc.AllocTemp(TypeI32)
+	defer alloc.FreeTemp(targetLocal, TypeI32)
+
+	insts = append(insts, l.lowerExpr(t.Expr, alloc)...)
+	insts = append(insts, InstLocalSet{Name: targetLocal})
+
+	resLocal := ""
+	if t.OkType != loneanalyzer.TypeVoid && t.OkType != nil {
+		resWType := toWasmType(t.OkType)
+		resLocal = alloc.AllocTemp(resWType)
+		defer alloc.FreeTemp(resLocal, resWType)
+	}
+
+	// Condition: target.tag == OkVariant.Tag
+	var condInsts []WasmInst
+	condInsts = append(condInsts, InstLocalGet{Name: targetLocal})
+	condInsts = append(condInsts, InstLoad{Op: "i32.load", Offset: 0})
+	condInsts = append(condInsts, InstConstI32{Value: int32(t.OkVariant.Tag)})
+	condInsts = append(condInsts, InstBinaryOp{Op: "i32.eq"})
+
+	var thenInsts []WasmInst
+	if resLocal != "" && len(t.OkVariant.Fields) > 0 {
+		fInfo := t.OkVariant.Fields[0]
+		thenInsts = append(thenInsts, InstLocalGet{Name: targetLocal})
+		thenInsts = append(thenInsts, InstLoad{Op: loadOpForType(fInfo.Type), Offset: fInfo.Offset})
+		thenInsts = append(thenInsts, InstLocalSet{Name: resLocal})
+	}
+
+	// On Err: early-return the target (which is Err)
+	elseInsts := []WasmInst{
+		InstLocalGet{Name: targetLocal},
+		InstReturn{},
+	}
+
+	insts = append(insts, condInsts...)
+	insts = append(insts, InstIf{
+		Then: thenInsts,
+		Else: elseInsts,
+	})
+
+	if resLocal != "" {
+		insts = append(insts, InstLocalGet{Name: resLocal})
+	}
+	return insts
 }

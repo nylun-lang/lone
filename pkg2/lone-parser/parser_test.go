@@ -410,3 +410,62 @@ fn area(s: Shape) f32 {
 		t.Fatalf("expected 4 match arms, got %d", len(matchExpr.Arms))
 	}
 }
+
+func TestParseDiscriminantIsHeaderDestructureAndMustTry(t *testing.T) {
+	code := `
+fn test_features(s: Shape, r: Result) void {
+    let check = s is Shape::Circle and s is not Shape::Point
+
+    if: [let Shape::Circle(radius) = s] {
+        #print("circle\n")
+    } else {
+        #print("other\n")
+    }
+
+    let val1 = must r
+    let val2 = try r
+}
+`
+	decls, err := Parse([]byte(code))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(decls) != 1 {
+		t.Fatalf("expected 1 fn decl, got %d", len(decls))
+	}
+
+	fnDec := decls[0].(loneast.FN_DEC)
+	stmts := fnDec.Body.Stmts
+	if len(stmts) != 4 {
+		t.Fatalf("expected 4 statements in test_features, got %d", len(stmts))
+	}
+
+	// Stmt 1: let check = ...
+	bind1 := stmts[0].(loneast.BIND_DEC)
+	if bind1.Name != "check" {
+		t.Errorf("expected bind check, got %q", bind1.Name)
+	}
+
+	// Stmt 2: if: [let Shape::Circle(radius) = s]
+	ifStmt := stmts[1].(loneast.IfStmt)
+	if len(ifStmt.Header) != 1 {
+		t.Fatalf("expected 1 header binding, got %d", len(ifStmt.Header))
+	}
+	vp, ok := ifStmt.Header[0].Pattern.(loneast.VariantPattern)
+	if !ok || vp.Variant != "Circle" || len(vp.Bindings) != 1 {
+		t.Fatalf("expected VariantPattern Circle with 1 binding, got %#v", ifStmt.Header[0].Pattern)
+	}
+
+	// Stmt 3: let val1 = must r
+	bind3 := stmts[2].(loneast.BIND_DEC)
+	if _, ok := bind3.Value.(loneast.MustExpr); !ok {
+		t.Fatalf("expected MustExpr, got %#v", bind3.Value)
+	}
+
+	// Stmt 4: let val2 = try r
+	bind4 := stmts[3].(loneast.BIND_DEC)
+	if _, ok := bind4.Value.(loneast.TryExpr); !ok {
+		t.Fatalf("expected TryExpr, got %#v", bind4.Value)
+	}
+}

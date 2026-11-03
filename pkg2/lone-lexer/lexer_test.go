@@ -172,3 +172,32 @@ let a = match s {
 		t.Errorf("expected to find TokenMatch in tokens")
 	}
 }
+
+func TestLexerMustAndTry(t *testing.T) {
+	code := `
+let x = must compute()
+let y = try compute()
+`
+	lex := NewLexer([]byte(code))
+	tokens, err := lex.Tokenize()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	foundMust := false
+	foundTry := false
+	for _, tok := range tokens {
+		if tok.Kind == TokenMust {
+			foundMust = true
+		}
+		if tok.Kind == TokenTry {
+			foundTry = true
+		}
+	}
+	if !foundMust {
+		t.Errorf("expected TokenMust")
+	}
+	if !foundTry {
+		t.Errorf("expected TokenTry")
+	}
+}

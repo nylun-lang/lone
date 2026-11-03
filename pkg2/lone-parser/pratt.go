@@ -211,6 +211,26 @@ func (p *Parser) parsePrefix() (loneast.Expr, error) {
 	case lonelexer.TokenMatch:
 		return p.parseMatchExpr(tok)
 
+	case lonelexer.TokenMust:
+		inner, err := p.ParseExpr(PrecUnary)
+		if err != nil {
+			return nil, err
+		}
+		return loneast.MustExpr{
+			Expr:  inner,
+			Span_: lonelexer.Span{Start: tok.Start, End: inner.NodeSpan().End},
+		}, nil
+
+	case lonelexer.TokenTry:
+		inner, err := p.ParseExpr(PrecUnary)
+		if err != nil {
+			return nil, err
+		}
+		return loneast.TryExpr{
+			Expr:  inner,
+			Span_: lonelexer.Span{Start: tok.Start, End: inner.NodeSpan().End},
+		}, nil
+
 	default:
 		return nil, fmt.Errorf("unexpected token %s (%q) at %s", tok.Kind, tok.Text, tok.Start)
 	}

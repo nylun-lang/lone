@@ -1,0 +1,35 @@
+pub type Shape = enum {
+    Circle(radius: i32),
+    Rect(width: i32, height: i32),
+    Point,
+}
+
+fn test_discriminant(s: Shape) i32 {
+    if s is Shape::Circle {
+        return 1
+    }
+    if s is Shape::Rect {
+        return 2
+    }
+    if s is Shape::Point {
+        return 3
+    }
+    return 0
+}
+
+fn main() void {
+    let s1 = Shape::Circle(10)
+    let s2 = Shape::Rect(5, 7)
+    let s3 = Shape::Point
+
+    let d1 = test_discriminant(s1)
+    let d2 = test_discriminant(s2)
+    let d3 = test_discriminant(s3)
+
+    let not_pt = s1 is not Shape::Point
+    let is_circ = s1 is Shape::Circle
+
+    if d1 == 1 and d2 == 2 and d3 == 3 and not_pt and is_circ {
+        #print("Discriminant variant testing with 'is' verified!\n")
+    }
+}

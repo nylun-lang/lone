@@ -27,7 +27,10 @@ type TProgram struct {
 
 type TVarDec struct {
 	Name      string
-	IsMutable bool // true for 'var', false for 'let'
+	Variant   *EnumVariantInfo // non-nil if destructuring variant pattern
+	TargetVal TExpr            // target being destructured
+	Bindings  []*TVarDec       // bound variables unpacked from variant
+	IsMutable bool             // true for 'var', false for 'let'
 	Type      Type
 	Value     TExpr
 	Span_     loneast.Span
@@ -242,10 +245,11 @@ func (c *TCastExpr) Span() loneast.Span { return c.Span_ }
 func (c *TCastExpr) ExprType() Type    { return c.TargetType }
 
 type TIsExpr struct {
-	Expr       TExpr
-	TargetType Type
-	Negated    bool
-	Span_      loneast.Span
+	Expr          TExpr
+	TargetType    Type
+	TargetVariant *EnumVariantInfo // non-nil if testing variant discriminant tag
+	Negated       bool
+	Span_         loneast.Span
 }
 
 func (i *TIsExpr) Span() loneast.Span { return i.Span_ }
@@ -313,3 +317,25 @@ type TMatchExpr struct {
 
 func (m *TMatchExpr) Span() loneast.Span { return m.Span_ }
 func (m *TMatchExpr) ExprType() Type    { return m.Typ }
+
+type TMustExpr struct {
+	Expr       TExpr
+	ResultType *EnumType
+	OkVariant  *EnumVariantInfo
+	OkType     Type
+	Span_      loneast.Span
+}
+
+func (m *TMustExpr) Span() loneast.Span { return m.Span_ }
+func (m *TMustExpr) ExprType() Type    { return m.OkType }
+
+type TTryExpr struct {
+	Expr       TExpr
+	ResultType *EnumType
+	OkVariant  *EnumVariantInfo
+	OkType     Type
+	Span_      loneast.Span
+}
+
+func (t *TTryExpr) Span() loneast.Span { return t.Span_ }
+func (t *TTryExpr) ExprType() Type    { return t.OkType }

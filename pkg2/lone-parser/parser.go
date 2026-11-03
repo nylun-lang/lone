@@ -249,6 +249,40 @@ func (p *Parser) parseBindDec(isPub bool) (loneast.BIND_DEC, error) {
 	kwTok := p.advance() // 'let' or 'var'
 	isMut := kwTok.Kind == lonelexer.TokenVar
 
+	// Check for pattern destructuring: let Shape::Circle(...) = expr or let Circle(...) = expr
+	if p.peek().Kind == lonelexer.TokenIdent && (p.peekN(1).Kind == lonelexer.TokenColon2 || p.peekN(1).Kind == lonelexer.TokenLParen) {
+		pat, err := p.parseMatchPattern()
+		if err != nil {
+			return loneast.BIND_DEC{}, err
+		}
+		var val loneast.Expr
+		if p.peek().Kind == lonelexer.TokenAssign {
+			p.advance()
+			initVal, err := p.ParseExpr(PrecNone)
+			if err != nil {
+				return loneast.BIND_DEC{}, err
+			}
+			val = initVal
+		}
+		endPos := pat.NodeSpan().End
+		if val != nil {
+			endPos = val.NodeSpan().End
+		}
+		varName := ""
+		if vp, ok := pat.(loneast.VariantPattern); ok {
+			varName = vp.Variant
+		}
+		return loneast.BIND_DEC{
+			Name:      varName,
+			Pattern:   pat,
+			IsPublic:  isPub,
+			IsMutable: isMut,
+			Value:     val,
+			Type:      loneast.TYPE_REF{Kind: loneast.TYPE_BASE, Value: &loneast.TypeBase{Name: "infer"}, Span_: pat.NodeSpan()},
+			Span_:     lonelexer.Span{Start: kwTok.Start, End: endPos},
+		}, nil
+	}
+
 	nameTok, err := p.expect(lonelexer.TokenIdent)
 	if err != nil {
 		return loneast.BIND_DEC{}, err
@@ -946,7 +980,7 @@ func (p *Parser) parseIfStmt() (loneast.Expr, error) {
 	}
 
 	// Check if this is a packed if statement: if { ... } or if: [...] { ... }
-	if p.peek().Kind == lonelexer.TokenLBrace {
+	if p.peek().Kind == lonelexer.TokenLBrace && p.isPackedIfBrace() {
 		p.advance() // consume '{'
 		var arms []loneast.PackedIfArm
 
@@ -1025,10 +1059,14 @@ func (p *Parser) parseIfStmt() (loneast.Expr, error) {
 		}, nil
 	}
 
-	// Standard if statement
-	cond, err := p.ParseExpr(PrecNone)
-	if err != nil {
-		return nil, err
+	// Standard if statement (with optional explicit condition)
+	var cond loneast.Expr
+	if p.peek().Kind != lonelexer.TokenLBrace {
+		c, err := p.ParseExpr(PrecNone)
+		if err != nil {
+			return nil, err
+		}
+		cond = c
 	}
 
 	thenBlock, err := p.parseBlock()
@@ -1068,6 +1106,27 @@ func (p *Parser) parseIfStmt() (loneast.Expr, error) {
 		Else:   elseBranch,
 		Span_:  lonelexer.Span{Start: ifTok.Start, End: endPos},
 	}, nil
+}
+
+func (p *Parser) isPackedIfBrace() bool {
+	depth := 0
+	for i := 1; i < 50; i++ {
+		tok := p.peekN(i)
+		if tok.Kind == lonelexer.TokenEOF {
+			break
+		}
+		if tok.Kind == lonelexer.TokenLBrace || tok.Kind == lonelexer.TokenLParen || tok.Kind == lonelexer.TokenLBracket {
+			depth++
+		} else if tok.Kind == lonelexer.TokenRBrace || tok.Kind == lonelexer.TokenRParen || tok.Kind == lonelexer.TokenRBracket {
+			if depth == 0 {
+				break
+			}
+			depth--
+		} else if tok.Kind == lonelexer.TokenFatArrow && depth == 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func (p *Parser) parseWhileStmt() (loneast.WhileStmt, error) {
@@ -1328,6 +1387,17 @@ func (p *Parser) parseTypeRef() (loneast.TYPE_REF, error) {
 	var typeArgs []loneast.TYPE_REF
 	endPos := nameTok.End
 
+	var variantName string
+	if p.peek().Kind == lonelexer.TokenColon2 {
+		p.advance() // consume '::'
+		vTok, err := p.expect(lonelexer.TokenIdent)
+		if err != nil {
+			return loneast.TYPE_REF{}, err
+		}
+		variantName = vTok.Text
+		endPos = vTok.End
+	}
+
 	if p.peek().Kind == lonelexer.TokenLt {
 		p.advance()
 		for {
@@ -1356,8 +1426,9 @@ func (p *Parser) parseTypeRef() (loneast.TYPE_REF, error) {
 		Kind:      loneast.TYPE_BASE,
 		Constrain: constrain,
 		Value: &loneast.TypeBase{
-			Name: nameTok.Text,
-			Args: typeArgs,
+			Name:    nameTok.Text,
+			Variant: variantName,
+			Args:    typeArgs,
 		},
 		Span_: lonelexer.Span{Start: startPos, End: endPos},
 	}, nil

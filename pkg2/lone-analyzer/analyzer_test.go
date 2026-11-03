@@ -259,3 +259,64 @@ fn area(s: Shape) f32 {
 		t.Errorf("expected message to mention missing variant 'Rect', got %q", diags[0].Message)
 	}
 }
+
+func TestDiscriminantIsAndHeaderDestructuring(t *testing.T) {
+	code := `
+type Shape = enum {
+    Circle(radius: i32),
+    Rect(width: i32, height: i32),
+    Point,
+}
+
+fn check_shape(s: Shape) bool {
+    let is_circ = s is Shape::Circle
+    let not_pt = s is not Shape::Point
+
+    if: [let Shape::Circle(r) = s] {
+        return r > 0
+    } else {
+        return false
+    }
+}
+`
+	analyzer := NewAnalyzer()
+	_, diags, err := analyzer.AnalyzeSource([]byte(code))
+	if err != nil {
+		t.Fatalf("unexpected parse error: %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("expected 0 diagnostics, got: %v", diags)
+	}
+}
+
+func TestMustAndTry(t *testing.T) {
+	code := `
+type Result = enum {
+    Ok(val: i32),
+    Err(code: i32),
+}
+
+fn step1(r: Result) Result {
+    let val = try r
+    let direct = must r
+    return Result::Ok(val + direct)
+}
+
+fn bad_try(r: Result) i32 {
+    let val = try r
+    return val
+}
+`
+	analyzer := NewAnalyzer()
+	_, diags, err := analyzer.AnalyzeSource([]byte(code))
+	if err != nil {
+		t.Fatalf("unexpected parse error: %v", err)
+	}
+	// bad_try should trigger type/try-incompatible-return
+	if len(diags) != 1 {
+		t.Fatalf("expected 1 diagnostic for bad_try return mismatch, got %d: %v", len(diags), diags)
+	}
+	if diags[0].Rule != "type/try-incompatible-return" {
+		t.Errorf("expected rule 'type/try-incompatible-return', got %q", diags[0].Rule)
+	}
+}

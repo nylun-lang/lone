@@ -1,0 +1,36 @@
+pub type Result = enum {
+    Ok(val: i32),
+    Err(code: i32),
+}
+
+fn add_positive(a: i32, b: i32) Result {
+    if a < 0 or b < 0 {
+        return Result::Err(400)
+    }
+    return Result::Ok(a + b)
+}
+
+fn chain_computation(x: i32, y: i32) Result {
+    let sum1 = try add_positive(x, y)
+    let sum2 = try add_positive(sum1, 10)
+    return Result::Ok(sum2)
+}
+
+fn main() void {
+    let ok_res = add_positive(20, 30)
+    let direct = must ok_res
+
+    let good_chain = chain_computation(5, 5)
+    let bad_chain = chain_computation(-1, 5)
+
+    let final_val = match good_chain {
+        Result::Ok(v) => v,
+        Result::Err(e) => 0,
+    }
+
+    let is_err = bad_chain is Result::Err
+
+    if direct == 50 and final_val == 20 and is_err {
+        #print("Result with 'must' panic assertion and 'try' early-return propagation verified!\n")
+    }
+}

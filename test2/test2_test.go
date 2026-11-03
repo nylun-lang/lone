@@ -100,6 +100,30 @@ func TestMatchExpr(t *testing.T) {
 	}
 }
 
+func TestIsDiscriminant(t *testing.T) {
+	got := compileAndRun(t, "behavior/is_discriminant.lone")
+	want := "Discriminant variant testing with 'is' verified!\n"
+	if got != want {
+		t.Errorf("unexpected output: got %q, want %q", got, want)
+	}
+}
+
+func TestDestructureHeader(t *testing.T) {
+	got := compileAndRun(t, "behavior/destructure_header.lone")
+	want := "Scoped condition header pattern destructuring verified!\n"
+	if got != want {
+		t.Errorf("unexpected output: got %q, want %q", got, want)
+	}
+}
+
+func TestMustTry(t *testing.T) {
+	got := compileAndRun(t, "behavior/must_try.lone")
+	want := "Result with 'must' panic assertion and 'try' early-return propagation verified!\n"
+	if got != want {
+		t.Errorf("unexpected output: got %q, want %q", got, want)
+	}
+}
+
 func TestCheckAllTest2Suite(t *testing.T) {
 	files, err := filepath.Glob("behavior/*.lone")
 	if err != nil {

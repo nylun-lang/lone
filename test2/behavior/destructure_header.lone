@@ -1,0 +1,36 @@
+pub type Shape = enum {
+    Circle(radius: i32),
+    Rect(width: i32, height: i32),
+    Point,
+}
+
+fn extract_radius(s: Shape) i32 {
+    if: [let Shape::Circle(r) = s] {
+        return r * 2
+    } else {
+        return -1
+    }
+}
+
+fn extract_dimensions(s: Shape) i32 {
+    if: [let Shape::Rect(w, h) = s] {
+        return w * h
+    } else {
+        return 0
+    }
+}
+
+fn main() void {
+    let c = Shape::Circle(15)
+    let p = Shape::Point
+    let r = Shape::Rect(4, 5)
+
+    let r1 = extract_radius(c)
+    let r2 = extract_radius(p)
+    let area = extract_dimensions(r)
+    let zero_area = extract_dimensions(c)
+
+    if r1 == 30 and r2 == -1 and area == 20 and zero_area == 0 {
+        #print("Scoped condition header pattern destructuring verified!\n")
+    }
+}

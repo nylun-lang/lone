@@ -24,6 +24,7 @@ func (w WasmDirective) NodeSpan() Span { return w.Span_ }
 // BIND_DEC represents variable and constant bindings (let and var).
 type BIND_DEC struct {
 	Name      string
+	Pattern   MatchPattern // non-nil for destructuring: let Shape::Circle(r) = s
 	IsPublic  bool
 	IsMutable bool // true for 'var' (mutable), false for 'let' (immutable)
 	Value     Expr
@@ -155,8 +156,9 @@ type TYPE_REF struct {
 func (t TYPE_REF) NodeSpan() Span { return t.Span_ }
 
 type TypeBase struct {
-	Name string
-	Args []TYPE_REF
+	Name    string
+	Variant string // non-empty if associated variant e.g. Shape::Circle
+	Args    []TYPE_REF
 }
 
 type TypeList struct {

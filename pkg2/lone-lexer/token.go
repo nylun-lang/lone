@@ -61,6 +61,8 @@ const (
 	TokenIn
 	TokenDrop
 	TokenMatch
+	TokenMust
+	TokenTry
 	TokenAnd
 	TokenOr
 	TokenXor
@@ -147,6 +149,8 @@ var tokenNames = map[TokenKind]string{
 	TokenIn:         "in",
 	TokenDrop:       "drop",
 	TokenMatch:      "match",
+	TokenMust:       "must",
+	TokenTry:        "try",
 	TokenAnd:        "and",
 	TokenOr:         "or",
 	TokenXor:        "xor",
@@ -241,6 +245,8 @@ var Keywords = map[string]TokenKind{
 	"in":       TokenIn,
 	"drop":     TokenDrop,
 	"match":    TokenMatch,
+	"must":     TokenMust,
+	"try":      TokenTry,
 	"and":      TokenAnd,
 	"or":       TokenOr,
 	"xor":      TokenXor,
