@@ -97,6 +97,13 @@ func PrintNodeTree(node loneanalyzer.TNode, indent int) string {
 	case *loneanalyzer.TBinaryExpr:
 		return fmt.Sprintf("%s└── TBinaryExpr [op=%s, type=%s]\n%s%s", pad, n.Op, n.Typ.String(), PrintNodeTree(n.Left, indent+1), PrintNodeTree(n.Right, indent+1))
 
+	case *loneanalyzer.TIsExpr:
+		opStr := "is"
+		if n.Negated {
+			opStr = "is not"
+		}
+		return fmt.Sprintf("%s└── TIsExpr [%s %s, type=%s]\n%s", pad, opStr, n.TargetType.String(), n.Typ.String(), PrintNodeTree(n.Expr, indent+1))
+
 	case *loneanalyzer.TUnaryExpr:
 		return fmt.Sprintf("%s└── TUnaryExpr [op=%s, type=%s]\n%s", pad, n.Op, n.Typ.String(), PrintNodeTree(n.Expr, indent+1))
 
@@ -302,6 +309,13 @@ func PrintExpr(expr loneanalyzer.TExpr) string {
 
 	case *loneanalyzer.TBinaryExpr:
 		return fmt.Sprintf("(%s %s %s)", PrintExpr(e.Left), e.Op, PrintExpr(e.Right))
+
+	case *loneanalyzer.TIsExpr:
+		opStr := "is"
+		if e.Negated {
+			opStr = "is not"
+		}
+		return fmt.Sprintf("(%s %s %s)", PrintExpr(e.Expr), opStr, e.TargetType.String())
 
 	case *loneanalyzer.TUnaryExpr:
 		return fmt.Sprintf("%s%s", e.Op, PrintExpr(e.Expr))

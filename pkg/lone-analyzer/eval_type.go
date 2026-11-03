@@ -897,9 +897,36 @@ func (te *TypeEvaluator) analyzeVarDec(b *ir.BIND_DEC) *TVarDec {
 	return tv
 }
 
-func (te *TypeEvaluator) analyzeBlock(b *ir.Block, expectedReturn Type, hasReturn *bool) TBlock {
+type narrowingInfo struct {
+	varName      string
+	narrowedType Type
+}
+
+func (te *TypeEvaluator) applyNarrowing(n *narrowingInfo) {
+	if n == nil {
+		return
+	}
+	if origSym := te.stack.Resolve(n.varName); origSym != nil {
+		narrowedSym := &Symbol{
+			Name:         origSym.Name,
+			MangledName:  origSym.MangledName,
+			Kind:         origSym.Kind,
+			Type:         n.narrowedType,
+			Node:         origSym.Node,
+			DeclNode:     origSym.DeclNode,
+			AddressTaken: origSym.AddressTaken,
+		}
+		_ = te.stack.Define(narrowedSym)
+	}
+}
+
+func (te *TypeEvaluator) analyzeBlockWithNarrowing(b *ir.Block, expectedReturn Type, hasReturn *bool, narrowings ...*narrowingInfo) TBlock {
 	te.stack.Push(ScopeBlock, "")
 	defer te.stack.Pop()
+
+	for _, n := range narrowings {
+		te.applyNarrowing(n)
+	}
 
 	tBlock := TBlock{
 		Stmts: make([]TStmt, 0),
@@ -918,6 +945,10 @@ func (te *TypeEvaluator) analyzeBlock(b *ir.Block, expectedReturn Type, hasRetur
 	}
 
 	return tBlock
+}
+
+func (te *TypeEvaluator) analyzeBlock(b *ir.Block, expectedReturn Type, hasReturn *bool) TBlock {
+	return te.analyzeBlockWithNarrowing(b, expectedReturn, hasReturn)
 }
 
 func (te *TypeEvaluator) analyzeStmt(raw any, expectedReturn Type, hasReturn *bool) TStmt {
@@ -962,43 +993,9 @@ func (te *TypeEvaluator) analyzeStmt(raw any, expectedReturn Type, hasReturn *bo
 		return &TBreakStmt{Label: s.Label, Value: tVal, Pos_: s.Pos}
 
 	case ir.IfStmt:
-		tCond := te.EvalExpr(s.Cond)
-		tThen := te.analyzeBlock(&s.Then, expectedReturn, hasReturn)
-		var tElse *TBlock
-		if s.Else != nil {
-			if elseBlock, ok := s.Else.(ir.Block); ok {
-				eb := te.analyzeBlock(&elseBlock, expectedReturn, hasReturn)
-				tElse = &eb
-			} else if ebPtr, ok := s.Else.(*ir.Block); ok && ebPtr != nil {
-				eb := te.analyzeBlock(ebPtr, expectedReturn, hasReturn)
-				tElse = &eb
-			} else if elseIf, ok := s.Else.(ir.IfStmt); ok {
-				stmt := te.analyzeStmt(elseIf, expectedReturn, hasReturn)
-				if ts, ok := stmt.(TStmt); ok {
-					var typ Type = TypeVoid
-					if tIf, ok := ts.(*TIfStmt); ok {
-						typ = tIf.Typ
-					}
-					eb := TBlock{Stmts: []TStmt{ts}, Pos_: elseIf.Pos, Typ: typ}
-					tElse = &eb
-				}
-			} else if elseIfPtr, ok := s.Else.(*ir.IfStmt); ok && elseIfPtr != nil {
-				stmt := te.analyzeStmt(*elseIfPtr, expectedReturn, hasReturn)
-				if ts, ok := stmt.(TStmt); ok {
-					var typ Type = TypeVoid
-					if tIf, ok := ts.(*TIfStmt); ok {
-						typ = tIf.Typ
-					}
-					eb := TBlock{Stmts: []TStmt{ts}, Pos_: elseIfPtr.Pos, Typ: typ}
-					tElse = &eb
-				}
-			}
-		}
-		resTyp := tThen.Typ
-		if tElse != nil && tElse.Typ != TypeVoid && resTyp == TypeVoid {
-			resTyp = tElse.Typ
-		}
-		return &TIfStmt{Cond: tCond, Then: tThen, Else: tElse, Pos_: s.Pos, Typ: resTyp}
+		return te.analyzeIfStmt(&s, expectedReturn, hasReturn)
+	case *ir.IfStmt:
+		return te.analyzeIfStmt(s, expectedReturn, hasReturn)
 
 	case ir.WhileStmt:
 		tCond := te.EvalExpr(s.Cond)
@@ -1143,6 +1140,176 @@ func (te *TypeEvaluator) analyzeForStmt(f *ir.ForStmt, expectedReturn Type, hasR
 
 	tBlock := te.analyzeBlock(&forBlock, expectedReturn, hasReturn)
 	return &tBlock
+}
+
+func (te *TypeEvaluator) analyzeIfStmt(s *ir.IfStmt, expectedReturn Type, hasReturn *bool) *TIfStmt {
+	tCond := te.EvalExpr(s.Cond)
+	thenNarrowing := te.extractNarrowing(s.Cond, true)
+	elseNarrowing := te.extractNarrowing(s.Cond, false)
+
+	tThen := te.analyzeBlockWithNarrowing(&s.Then, expectedReturn, hasReturn, thenNarrowing)
+	var tElse *TBlock
+	if s.Else != nil {
+		if elseBlock, ok := s.Else.(ir.Block); ok {
+			eb := te.analyzeBlockWithNarrowing(&elseBlock, expectedReturn, hasReturn, elseNarrowing)
+			tElse = &eb
+		} else if ebPtr, ok := s.Else.(*ir.Block); ok && ebPtr != nil {
+			eb := te.analyzeBlockWithNarrowing(ebPtr, expectedReturn, hasReturn, elseNarrowing)
+			tElse = &eb
+		} else if elseIf, ok := s.Else.(ir.IfStmt); ok {
+			te.stack.Push(ScopeBlock, "")
+			if elseNarrowing != nil {
+				te.applyNarrowing(elseNarrowing)
+			}
+			stmt := te.analyzeStmt(elseIf, expectedReturn, hasReturn)
+			te.stack.Pop()
+			if ts, ok := stmt.(TStmt); ok {
+				var typ Type = TypeVoid
+				if tIf, ok := ts.(*TIfStmt); ok {
+					typ = tIf.Typ
+				}
+				eb := TBlock{Stmts: []TStmt{ts}, Pos_: elseIf.Pos, Typ: typ}
+				tElse = &eb
+			}
+		} else if elseIfPtr, ok := s.Else.(*ir.IfStmt); ok && elseIfPtr != nil {
+			te.stack.Push(ScopeBlock, "")
+			if elseNarrowing != nil {
+				te.applyNarrowing(elseNarrowing)
+			}
+			stmt := te.analyzeStmt(*elseIfPtr, expectedReturn, hasReturn)
+			te.stack.Pop()
+			if ts, ok := stmt.(TStmt); ok {
+				var typ Type = TypeVoid
+				if tIf, ok := ts.(*TIfStmt); ok {
+					typ = tIf.Typ
+				}
+				eb := TBlock{Stmts: []TStmt{ts}, Pos_: elseIfPtr.Pos, Typ: typ}
+				tElse = &eb
+			}
+		}
+	}
+	resTyp := tThen.Typ
+	if tElse != nil && tElse.Typ != TypeVoid && resTyp == TypeVoid {
+		resTyp = tElse.Typ
+	}
+	return &TIfStmt{Cond: tCond, Then: tThen, Else: tElse, Pos_: s.Pos, Typ: resTyp}
+}
+
+func unwrapVarName(expr ir.Expr) string {
+	if expr == nil {
+		return ""
+	}
+	switch e := expr.(type) {
+	case ir.NameRef:
+		return e.Name
+	case *ir.NameRef:
+		return e.Name
+	case ir.PostFixExpr:
+		if len(e.Suffix) == 0 {
+			return unwrapVarName(e.Base)
+		}
+	case *ir.PostFixExpr:
+		if len(e.Suffix) == 0 {
+			return unwrapVarName(e.Base)
+		}
+	}
+	return ""
+}
+
+func (te *TypeEvaluator) extractNarrowing(cond ir.Expr, positive bool) *narrowingInfo {
+	if cond == nil {
+		return nil
+	}
+
+	switch c := cond.(type) {
+	case ir.IsExpr:
+		return te.resolveIsNarrowing(&c, positive)
+	case *ir.IsExpr:
+		return te.resolveIsNarrowing(c, positive)
+
+	case ir.UnaryExpr:
+		if c.Op == ir.UNARY_OP_NOT || c.Op == "!" {
+			return te.extractNarrowing(c.Expr, !positive)
+		}
+	case *ir.UnaryExpr:
+		if c.Op == ir.UNARY_OP_NOT || c.Op == "!" {
+			return te.extractNarrowing(c.Expr, !positive)
+		}
+
+	case ir.PostFixExpr:
+		if len(c.Suffix) == 0 {
+			return te.extractNarrowing(c.Base, positive)
+		}
+	case *ir.PostFixExpr:
+		if len(c.Suffix) == 0 {
+			return te.extractNarrowing(c.Base, positive)
+		}
+	}
+
+	return nil
+}
+
+func (te *TypeEvaluator) resolveIsNarrowing(is *ir.IsExpr, positive bool) *narrowingInfo {
+	varName := unwrapVarName(is.Expr)
+	if varName == "" {
+		return nil
+	}
+
+	sym := te.stack.Resolve(varName)
+	if sym == nil {
+		return nil
+	}
+
+	effectivePositive := positive
+	if is.Negated {
+		effectivePositive = !effectivePositive
+	}
+
+	targetType := te.parseType(&is.TargetType)
+
+	if effectivePositive {
+		if targetType == TypeNone {
+			return &narrowingInfo{
+				varName:      varName,
+				narrowedType: TypeNone,
+			}
+		}
+		return &narrowingInfo{
+			varName:      varName,
+			narrowedType: targetType,
+		}
+	} else {
+		if targetType == TypeNone {
+			if opt, ok := sym.Type.(*OptionalType); ok {
+				return &narrowingInfo{
+					varName:      varName,
+					narrowedType: opt.Inner,
+				}
+			}
+		}
+		if opt, ok := sym.Type.(*OptionalType); ok {
+			if opt.Inner.Equals(targetType) || targetType.AssignableTo(opt.Inner) {
+				return &narrowingInfo{
+					varName:      varName,
+					narrowedType: TypeNone,
+				}
+			}
+		}
+	}
+
+	return nil
+}
+
+func (te *TypeEvaluator) evalIsExpr(is *ir.IsExpr) *TIsExpr {
+	tExpr := te.EvalExpr(is.Expr)
+	targetType := te.parseType(&is.TargetType)
+	return &TIsExpr{
+		Expr:       tExpr,
+		TargetType: targetType,
+		Negated:    is.Negated,
+		Typ:        TypeBool,
+		Pos_:       is.Pos,
+	}
 }
 
 func (te *TypeEvaluator) isLValue(e TExpr) bool {
@@ -1349,6 +1516,11 @@ func (te *TypeEvaluator) EvalExpr(raw ir.Expr) TExpr {
 			return tb
 		}
 		return &TLiteralExpr{Kind: ir.LITERAL_UNINITIALIZED, Typ: TypeVoid, Pos_: e.Pos}
+
+	case ir.IsExpr:
+		return te.evalIsExpr(&e)
+	case *ir.IsExpr:
+		return te.evalIsExpr(e)
 
 	default:
 		return &TLiteralExpr{Kind: ir.LITERAL_UNINITIALIZED, Typ: TypeUnknown}

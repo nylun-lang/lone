@@ -304,6 +304,8 @@ KW_DROP <- "drop" ![a-zA-Z0-9_]
 KW_AND <- "and" ![a-zA-Z0-9_]
 KW_OR <- "or" ![a-zA-Z0-9_]
 KW_XOR <- "xor" ![a-zA-Z0-9_]
+KW_IS <- "is" ![a-zA-Z0-9_]
+KW_NOT <- "not" ![a-zA-Z0-9_]
 
 KEYWORD <- 
     KW_IMPORT /
@@ -332,7 +334,9 @@ KEYWORD <-
     KW_DROP /
     KW_AND /
     KW_OR /
-    KW_XOR
+    KW_XOR /
+    KW_IS /
+    KW_NOT
 
 FN_NAME <- "#"? IDENTIFIER {
     return string(c.text), nil
@@ -687,12 +691,28 @@ COMPARISION_BINARY_EXPR
     return expr, nil
 }
 
+IS_EXPR 
+<- expr:COMPARISION_BINARY_EXPR isTail:(_ KW_IS not:(_ KW_NOT)? _ target:TYPE_REF)? {
+    if isTail == nil {
+        return expr, nil
+    }
+    tailList := AnyValToType[[]any]("IS_EXPR.tail", isTail)
+    negated := tailList[2] != nil
+    targetRef := AnyValToType[ir.TYPE_REF]("IS_EXPR.target", tailList[4])
+    return ir.IsExpr{
+        Expr:       AnyValToType[ir.Expr]("IS_EXPR.expr", expr),
+        TargetType: targetRef,
+        Negated:    negated,
+        Pos:        currentPosition(c),
+    }, nil
+}
+
 Equality_Op
 <- "=="
 /  "!="
 
 EQUALITY_BINARY_EXPR 
-<- left:COMPARISION_BINARY_EXPR right:(_ Equality_Op _ COMPARISION_BINARY_EXPR)* {
+<- left:IS_EXPR right:(_ Equality_Op _ IS_EXPR)* {
     expr := FoldBinaryExpr("EQUALITY_BINARY_EXPR", c, left, right)
     return expr, nil
 }
@@ -763,8 +783,12 @@ TYPE_REF_ARGS <-
         return result, nil
     }
 
+TYPE_NAME_IDENT <- (IDENTIFIER / "none" ![a-zA-Z0-9_]) {
+    return c.text, nil
+}
+
 TYPE_BASE <- 
-    name:IDENTIFIER
+    name:TYPE_NAME_IDENT
     args:TYPE_REF_ARGS? {
         var type_args []ir.TYPE_REF = []ir.TYPE_REF{}
         if args != nil {

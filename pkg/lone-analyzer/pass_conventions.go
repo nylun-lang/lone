@@ -128,6 +128,11 @@ func (p *PassNamingConventions) walkNode(node any) {
 	case *ir.UnaryExpr:
 		p.walkNode(n.Expr)
 
+	case ir.IsExpr:
+		p.walkNode(n.Expr)
+	case *ir.IsExpr:
+		p.walkNode(n.Expr)
+
 	case ir.PostFixExpr:
 		p.walkNode(n.Base)
 		for _, s := range n.Suffix {

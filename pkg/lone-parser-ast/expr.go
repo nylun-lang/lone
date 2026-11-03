@@ -16,10 +16,26 @@ const (
 	EXPR_WHILE
 	EXPR_FOR
 	EXPR_DROP
+	EXPR_IS
 )
 
 type Expr interface {
 	IsExpr() ExprKind
+}
+
+// =====================
+// IS EXPR
+// =====================
+
+type IsExpr struct {
+	Expr       Expr
+	TargetType TYPE_REF
+	Negated    bool
+	Pos        Position
+}
+
+func (IsExpr) IsExpr() ExprKind {
+	return EXPR_IS
 }
 
 // =====================

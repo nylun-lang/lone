@@ -1024,6 +1024,76 @@ func (l *lowerer) lowerExpr(expr loneanalyzer.TExpr) MirOperand {
 		l.lowerBlock(e)
 		return MirConst{Type: MirVoid, Value: 0}
 
+	case *loneanalyzer.TIsExpr:
+		destReg := l.freshReg("t_is", MirI32)
+		optType, isOpt := e.Expr.ExprType().(*loneanalyzer.OptionalType)
+
+		if isOpt {
+			valOp := l.lowerExpr(e.Expr)
+			if e.TargetType == loneanalyzer.TypeNone {
+				op := "eq"
+				if e.Negated {
+					op = "ne"
+				}
+				l.curBlk.Insts = append(l.curBlk.Insts, MirCmpOp{
+					Op:    op,
+					Type:  toMirType(optType),
+					Dest:  destReg,
+					Left:  valOp,
+					Right: MirConst{Type: toMirType(optType), Value: 0},
+				})
+				return MirReg{Name: destReg}
+			}
+
+			if optType.Inner.AssignableTo(e.TargetType) || e.TargetType.AssignableTo(optType.Inner) {
+				op := "ne"
+				if e.Negated {
+					op = "eq"
+				}
+				l.curBlk.Insts = append(l.curBlk.Insts, MirCmpOp{
+					Op:    op,
+					Type:  toMirType(optType),
+					Dest:  destReg,
+					Left:  valOp,
+					Right: MirConst{Type: toMirType(optType), Value: 0},
+				})
+				return MirReg{Name: destReg}
+			}
+
+			val := 0
+			if e.Negated {
+				val = 1
+			}
+			return MirConst{Type: MirI32, Value: val}
+		}
+
+		if _, isVar := e.Expr.(*loneanalyzer.TVarRefExpr); !isVar {
+			_ = l.lowerExpr(e.Expr)
+		}
+		srcType := e.Expr.ExprType()
+
+		if e.TargetType == loneanalyzer.TypeNone {
+			val := 0
+			if e.Negated {
+				val = 1
+			}
+			return MirConst{Type: MirI32, Value: val}
+		}
+
+		if srcType.AssignableTo(e.TargetType) {
+			val := 1
+			if e.Negated {
+				val = 0
+			}
+			return MirConst{Type: MirI32, Value: val}
+		}
+
+		val := 0
+		if e.Negated {
+			val = 1
+		}
+		return MirConst{Type: MirI32, Value: val}
+
 	default:
 		return MirConst{Type: MirI32, Value: 0}
 	}

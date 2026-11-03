@@ -1357,3 +1357,70 @@ fn test_caret(x: i32, y: i32) i32 {
 		t.Fatalf("expected binary '^', got %+v", ret2.Value)
 	}
 }
+
+func TestIsOperatorParser(t *testing.T) {
+	code := `
+fn check(x: ?i32) bool {
+	if x is i32 {
+		return true
+	}
+	if x is not none {
+		return true
+	}
+	if !(x is none) {
+		return true
+	}
+	return x is none
+}
+`
+	ast, err := loneparser.Parse("is.lone", []byte(code))
+	if err != nil {
+		t.Fatalf("failed to parse is operator: %v", err)
+	}
+
+	rawList, ok := ast.([]any)
+	if !ok || len(rawList) != 1 {
+		t.Fatalf("expected 1 declaration, got %T (%d)", ast, len(rawList))
+	}
+
+	fn := rawList[0].([]any)[1].(ir.FN_DEC)
+	if len(fn.Body.Stmts) != 4 {
+		t.Fatalf("expected 4 stmts, got %d", len(fn.Body.Stmts))
+	}
+
+	// 1. if x is i32
+	if1 := fn.Body.Stmts[0].(ir.IfStmt)
+	is1, ok := if1.Cond.(ir.IsExpr)
+	if !ok || is1.Negated || is1.TargetType.AsBase().Name != "i32" {
+		t.Errorf("expected is i32, got %+v", if1.Cond)
+	}
+
+	// 2. if x is not none
+	if2 := fn.Body.Stmts[1].(ir.IfStmt)
+	is2, ok := if2.Cond.(ir.IsExpr)
+	if !ok || !is2.Negated || is2.TargetType.AsBase().Name != "none" {
+		t.Errorf("expected is not none, got %+v", if2.Cond)
+	}
+
+	// 3. if !(x is none)
+	if3 := fn.Body.Stmts[2].(ir.IfStmt)
+	un3, ok := if3.Cond.(ir.UnaryExpr)
+	if !ok || un3.Op != "!" {
+		t.Fatalf("expected UnaryExpr !, got %+v", if3.Cond)
+	}
+	var innerExpr any = un3.Expr
+	if pf, ok := innerExpr.(ir.PostFixExpr); ok && len(pf.Suffix) == 0 {
+		innerExpr = pf.Base
+	}
+	is3, ok := innerExpr.(ir.IsExpr)
+	if !ok || is3.Negated || is3.TargetType.AsBase().Name != "none" {
+		t.Errorf("expected inner is none, got %+v", innerExpr)
+	}
+
+	// 4. return x is none
+	ret4 := fn.Body.Stmts[3].(ir.ReturnStmt)
+	is4, ok := ret4.Value.(ir.IsExpr)
+	if !ok || is4.Negated || is4.TargetType.AsBase().Name != "none" {
+		t.Errorf("expected return x is none, got %+v", ret4.Value)
+	}
+}

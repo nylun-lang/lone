@@ -40,8 +40,8 @@ The following keywords are reserved and guarded by word boundaries (`![a-zA-Z0-9
 import    from      as        pub       var       let
 type      struct    trait     impl      fn        return
 break     if        else      while     loop      for
-in        drop      and       or        xor       true
-false     none      ro        comptime
+in        drop      and       or        xor       is
+not       true      false     none      ro        comptime
 ```
 
 ### 2.3 Comments
@@ -462,13 +462,33 @@ From highest precedence (evaluated first) to lowest:
 | 1 | Multiplicative | `*`, `/`, `%` | Left-to-right |
 | 2 | Additive | `+`, `-` | Left-to-right |
 | 3 | Relational Comparison | `>=`, `<=`, `>`, `<` | Left-to-right |
-| 4 | Equality Comparison | `==`, `!=` | Left-to-right |
-| 5 | Bitwise AND | `&` | Left-to-right |
-| 6 | Bitwise XOR | `^` | Left-to-right |
-| 7 | Bitwise OR | `\|` | Left-to-right |
-| 8 | Logical AND | `&&`, `and` | Left-to-right |
-| 9 | Logical XOR | `xor` | Left-to-right |
-| 10 | Logical OR | `\|\|`, `or` | Left-to-right |
+| 4 | Type Test | `is`, `is not` | Non-associative |
+| 5 | Equality Comparison | `==`, `!=` | Left-to-right |
+| 6 | Bitwise AND | `&` | Left-to-right |
+| 7 | Bitwise XOR | `^` | Left-to-right |
+| 8 | Bitwise OR | `\|` | Left-to-right |
+| 9 | Logical AND | `&&`, `and` | Left-to-right |
+| 10 | Logical XOR | `xor` | Left-to-right |
+| 11 | Logical OR | `\|\|`, `or` | Left-to-right |
+
+### 7.5 Type Checking & Narrowing (`IS_EXPR`)
+Tests if a value matches a given type reference (`is`) or does not match (`is not`):
+```lone
+if val is i32 {
+    println_int(val) -- automatically narrowed to i32
+}
+
+if opt is not none {
+    println(opt)     -- automatically narrowed from ?str to str
+}
+
+if !(opt is none) {
+    println(opt)     -- automatically narrowed to inner type
+}
+```
+- **Automatic Type Narrowing**: Inside the positive branch of `if x is T` (or negative branch of `if x is none`), `x` is statically narrowed to `T`. In `else` blocks, the opposite narrowing applies.
+- For optional types (`?T`), runtime lowering checks the discriminant tag / null-pointer.
+- For statically fixed concrete types, `is` tests are resolved at compile time with zero runtime overhead.
 
 ---
 

@@ -253,6 +253,18 @@ type TBinaryExpr struct {
 func (b *TBinaryExpr) Pos() ir.Position { return b.Pos_ }
 func (b *TBinaryExpr) ExprType() Type   { return b.Typ }
 
+// TIsExpr represents a typed type-test expression `expr is TargetType` or `expr is not TargetType`.
+type TIsExpr struct {
+	Expr       TExpr
+	TargetType Type
+	Negated    bool
+	Typ        Type
+	Pos_       ir.Position
+}
+
+func (i *TIsExpr) Pos() ir.Position { return i.Pos_ }
+func (i *TIsExpr) ExprType() Type   { return i.Typ }
+
 type TUnaryExpr struct {
 	Op   ir.UnaryOp
 	Expr TExpr

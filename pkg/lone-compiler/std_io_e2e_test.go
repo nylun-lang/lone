@@ -405,3 +405,63 @@ fn main() void {
 		t.Errorf("unexpected output from xor test:\ngot:  %q\nwant: %q", output, want)
 	}
 }
+
+func TestIsOperatorAndNarrowingWasmtime(t *testing.T) {
+	code := `
+import .println, .println_int from :std:io
+
+fn main() void {
+	-- 1. Optional variable with value: x is i32 narrows to i32
+	var a: ?i32 = 42
+	if a is i32 {
+		println_int(a)
+	}
+
+	-- 2. Optional variable with none: x is none
+	var b: ?i32 = none
+	if b is none {
+		println("b_none:ok")
+	}
+
+	-- 3. Optional variable: x is not none narrows to i32
+	var c: ?i32 = 100
+	if c is not none {
+		println_int(c)
+	}
+
+	-- 4. Negated parenthesized: !(x is none) narrows to i32
+	var d: ?i32 = 200
+	if !(d is none) {
+		println_int(d)
+	}
+
+	-- 5. Else-branch narrowing: if x is none { } else { ... } narrows in else
+	var e: ?i32 = 300
+	if e is none {
+		println("e_none:bad")
+	} else {
+		println_int(e)
+	}
+
+	-- 6. Static concrete type checks
+	var n: i32 = 10
+	if n is i32 {
+		println("n_int:ok")
+	}
+	if n is not str {
+		println("n_not_str:ok")
+	}
+}
+`
+	comp := lonecompiler.NewCompiler(lonecompiler.DefaultConfig())
+	res, err := comp.CompileSource("is_test.lone", []byte(code))
+	if err != nil {
+		t.Fatalf("failed to compile is operator test: %v (diags: %+v)", err, res.Diagnostics)
+	}
+
+	output := runWatWithWasmtime(t, res.WatOutput, "")
+	want := "42\nb_none:ok\n100\n200\n300\nn_int:ok\nn_not_str:ok\n"
+	if output != want {
+		t.Errorf("unexpected output from is operator test:\ngot:  %q\nwant: %q", output, want)
+	}
+}
