@@ -37,4 +37,5 @@ func init() {
 	rootCmd.AddCommand(projectCmd)
 	rootCmd.AddCommand(runCmd)
 	rootCmd.AddCommand(lspCmd)
+	rootCmd.AddCommand(debugCmd)
 }

@@ -152,6 +152,11 @@ func (ss *ScopeStack) Root() *Scope {
 	return ss.root
 }
 
+// All returns all lexical scopes created during AST traversal.
+func (ss *ScopeStack) All() []*Scope {
+	return ss.all
+}
+
 // Current returns the current scope at the top of the stack.
 func (ss *ScopeStack) Current() *Scope {
 	return ss.current

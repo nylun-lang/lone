@@ -35,6 +35,26 @@ func (te *TypeEvaluator) Diagnostics() []Diagnostic {
 	return te.diagnostics
 }
 
+// Stack returns the ScopeStack used during type evaluation.
+func (te *TypeEvaluator) Stack() *ScopeStack {
+	return te.stack
+}
+
+// TraitImpls returns the map of trait implementations: traitName -> targetTypeName -> methodName -> Symbol.
+func (te *TypeEvaluator) TraitImpls() map[string]map[string]map[string]*Symbol {
+	return te.traitImpls
+}
+
+// MethodImpls returns the map of method implementations: typeName -> methodName -> Symbol.
+func (te *TypeEvaluator) MethodImpls() map[string]map[string]*Symbol {
+	return te.methodImpls
+}
+
+// Modules returns the map of loaded module symbols: moduleID -> symbolName -> Symbol.
+func (te *TypeEvaluator) Modules() map[string]map[string]*Symbol {
+	return te.modules
+}
+
 func (te *TypeEvaluator) addDiag(sev Severity, pos ir.Position, rule, msg string) {
 	te.diagnostics = append(te.diagnostics, Diagnostic{
 		Message:  msg,

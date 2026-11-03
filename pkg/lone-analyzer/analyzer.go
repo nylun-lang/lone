@@ -73,6 +73,14 @@ func (a *Analyzer) AnalyzeTyped(ast any) (*TProgram, []Diagnostic) {
 	return prog, diags
 }
 
+// Evaluator returns the TypeEvaluator instance from the type pass if enabled and executed.
+func (a *Analyzer) Evaluator() *TypeEvaluator {
+	if a.typePass != nil {
+		return a.typePass.Evaluator()
+	}
+	return nil
+}
+
 func toDeclSlice(ast any) []any {
 	if ast == nil {
 		return nil
