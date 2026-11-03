@@ -325,6 +325,24 @@ if x > 0 {
 }
 ```
 
+#### 6.3.1 Packed If (`PACKED_IF_STMT`)
+Multi-branch conditional block grouping conditions and actions using `=>` fat arrows, eliminating verbose `else if` ladders:
+```lone
+if {
+    x > 100 => print("Large")
+    x > 50  => print("Medium")
+    x > 0   => print("Small")
+    else    => {
+        print("Invalid")
+    }
+}
+```
+- **Arms**: One or more condition arms (`<cond> => <stmt|block>`) followed by an optional fallback `else => <stmt|block>`.
+- **Delimiters**: Arms can be separated by newlines, optional commas (`,`), or optional semicolons (`;`).
+- **Desugaring**: Desugars 1:1 in the AST into nested `ir.IfStmt` nodes, incurring zero additional runtime or MIR/WIR overhead.
+- **Statement context**: `else =>` is optional (falls through if no condition matches).
+- **Expression context**: `else =>` is required for exhaustiveness; blocks yield values via `break <expr>`.
+
 ### 6.4 While Loop (`WHILE_STMT`)
 Repeats a block of statements while a condition is truthy:
 ```lone

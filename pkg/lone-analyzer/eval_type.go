@@ -911,6 +911,9 @@ func (te *TypeEvaluator) analyzeBlock(b *ir.Block, expectedReturn Type, hasRetur
 		stmt := te.analyzeStmt(rawStmt, expectedReturn, hasReturn)
 		if stmt != nil {
 			tBlock.Stmts = append(tBlock.Stmts, stmt)
+			if brk, ok := stmt.(*TBreakStmt); ok && brk.Value != nil {
+				tBlock.Typ = brk.Value.ExprType()
+			}
 		}
 	}
 
@@ -966,15 +969,36 @@ func (te *TypeEvaluator) analyzeStmt(raw any, expectedReturn Type, hasReturn *bo
 			if elseBlock, ok := s.Else.(ir.Block); ok {
 				eb := te.analyzeBlock(&elseBlock, expectedReturn, hasReturn)
 				tElse = &eb
+			} else if ebPtr, ok := s.Else.(*ir.Block); ok && ebPtr != nil {
+				eb := te.analyzeBlock(ebPtr, expectedReturn, hasReturn)
+				tElse = &eb
 			} else if elseIf, ok := s.Else.(ir.IfStmt); ok {
 				stmt := te.analyzeStmt(elseIf, expectedReturn, hasReturn)
 				if ts, ok := stmt.(TStmt); ok {
-					eb := TBlock{Stmts: []TStmt{ts}, Pos_: elseIf.Pos, Typ: TypeVoid}
+					var typ Type = TypeVoid
+					if tIf, ok := ts.(*TIfStmt); ok {
+						typ = tIf.Typ
+					}
+					eb := TBlock{Stmts: []TStmt{ts}, Pos_: elseIf.Pos, Typ: typ}
+					tElse = &eb
+				}
+			} else if elseIfPtr, ok := s.Else.(*ir.IfStmt); ok && elseIfPtr != nil {
+				stmt := te.analyzeStmt(*elseIfPtr, expectedReturn, hasReturn)
+				if ts, ok := stmt.(TStmt); ok {
+					var typ Type = TypeVoid
+					if tIf, ok := ts.(*TIfStmt); ok {
+						typ = tIf.Typ
+					}
+					eb := TBlock{Stmts: []TStmt{ts}, Pos_: elseIfPtr.Pos, Typ: typ}
 					tElse = &eb
 				}
 			}
 		}
-		return &TIfStmt{Cond: tCond, Then: tThen, Else: tElse, Pos_: s.Pos, Typ: tThen.Typ}
+		resTyp := tThen.Typ
+		if tElse != nil && tElse.Typ != TypeVoid && resTyp == TypeVoid {
+			resTyp = tElse.Typ
+		}
+		return &TIfStmt{Cond: tCond, Then: tThen, Else: tElse, Pos_: s.Pos, Typ: resTyp}
 
 	case ir.WhileStmt:
 		tCond := te.EvalExpr(s.Cond)
@@ -983,7 +1007,7 @@ func (te *TypeEvaluator) analyzeStmt(raw any, expectedReturn Type, hasReturn *bo
 
 	case ir.LabelDec:
 		tBody := te.analyzeBlock(&s.Body, expectedReturn, hasReturn)
-		return &TLabelDec{Name: s.Name, Body: tBody, Pos_: s.Pos, Typ: tBody.Typ}
+		return &TLabelDec{Name: s.Name, Body: tBody, Pos_: s.Pos, Typ: TypeVoid}
 
 	default:
 		if expr, ok := raw.(ir.Expr); ok {
@@ -1194,6 +1218,19 @@ func (te *TypeEvaluator) EvalExpr(raw ir.Expr) TExpr {
 			tVal = te.EvalExpr(e.Value)
 		}
 		return &TBreakStmt{Label: e.Label, Value: tVal, Pos_: e.Pos}
+
+	case ir.IfStmt:
+		stmt := te.analyzeStmt(e, nil, nil)
+		if ifStmt, ok := stmt.(*TIfStmt); ok {
+			return ifStmt
+		}
+		return &TLiteralExpr{Kind: ir.LITERAL_UNINITIALIZED, Typ: TypeUnknown, Pos_: e.Pos}
+	case *ir.IfStmt:
+		stmt := te.analyzeStmt(*e, nil, nil)
+		if ifStmt, ok := stmt.(*TIfStmt); ok {
+			return ifStmt
+		}
+		return &TLiteralExpr{Kind: ir.LITERAL_UNINITIALIZED, Typ: TypeUnknown, Pos_: e.Pos}
 
 	default:
 		return &TLiteralExpr{Kind: ir.LITERAL_UNINITIALIZED, Typ: TypeUnknown}

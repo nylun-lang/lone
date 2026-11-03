@@ -753,6 +753,113 @@ var res = loop: while true {
 	}
 }
 
+func TestPackedIfStmt(t *testing.T) {
+	code := `
+fn classify(x: i32) void {
+	if {
+		x > 100 => #print("Large")
+		x > 50 => #print("Medium")
+		x > 0 => #print("Small")
+		else => {
+			#print("Invalid")
+		}
+	}
+}
+
+fn check_optional_else(x: i32) void {
+	if {
+		x == 1 => #print("One")
+		x == 2 => #print("Two")
+	}
+}
+
+fn check_with_delimiters(x: i32) void {
+	if {
+		x > 10 => #print("High"),
+		x > 5 => #print("Mid");
+		else => #print("Low")
+	}
+}
+`
+	ast, err := loneparser.Parse("packed_if.lone", []byte(code))
+	if err != nil {
+		t.Fatalf("failed to parse packed if: %v", err)
+	}
+
+	rawList, ok := ast.([]any)
+	if !ok || len(rawList) != 3 {
+		t.Fatalf("expected 3 function declarations, got: %T (%d)", ast, len(rawList))
+	}
+
+	// 1. classify(x: i32)
+	fnClassify := rawList[0].([]any)[1].(ir.FN_DEC)
+	if len(fnClassify.Body.Stmts) != 1 {
+		t.Fatalf("expected 1 stmt in classify, got %d", len(fnClassify.Body.Stmts))
+	}
+
+	// Root IfStmt: x > 100
+	if1, ok := fnClassify.Body.Stmts[0].(ir.IfStmt)
+	if !ok {
+		t.Fatalf("expected IfStmt, got %T", fnClassify.Body.Stmts[0])
+	}
+	if len(if1.Then.Stmts) != 1 {
+		t.Fatalf("expected 1 stmt in if1 then, got %d", len(if1.Then.Stmts))
+	}
+
+	// Second IfStmt in Else: x > 50
+	if2, ok := if1.Else.(ir.IfStmt)
+	if !ok {
+		t.Fatalf("expected chained IfStmt in if1.Else, got %T", if1.Else)
+	}
+	if len(if2.Then.Stmts) != 1 {
+		t.Fatalf("expected 1 stmt in if2 then, got %d", len(if2.Then.Stmts))
+	}
+
+	// Third IfStmt in Else: x > 0
+	if3, ok := if2.Else.(ir.IfStmt)
+	if !ok {
+		t.Fatalf("expected chained IfStmt in if2.Else, got %T", if2.Else)
+	}
+	if len(if3.Then.Stmts) != 1 {
+		t.Fatalf("expected 1 stmt in if3 then, got %d", len(if3.Then.Stmts))
+	}
+
+	// Final Else: Block { #print("Invalid") }
+	elseBlock, ok := if3.Else.(ir.Block)
+	if !ok {
+		t.Fatalf("expected ir.Block in if3.Else, got %T", if3.Else)
+	}
+	if len(elseBlock.Stmts) != 1 {
+		t.Fatalf("expected 1 stmt in elseBlock, got %d", len(elseBlock.Stmts))
+	}
+
+	// 2. check_optional_else(x: i32) - no else branch
+	fnOpt := rawList[1].([]any)[1].(ir.FN_DEC)
+	optIf1 := fnOpt.Body.Stmts[0].(ir.IfStmt)
+	optIf2, ok := optIf1.Else.(ir.IfStmt)
+	if !ok {
+		t.Fatalf("expected chained IfStmt in optIf1.Else, got %T", optIf1.Else)
+	}
+	if optIf2.Else != nil {
+		t.Errorf("expected nil else for optIf2, got %+v", optIf2.Else)
+	}
+
+	// 3. check_with_delimiters(x: i32)
+	fnDelim := rawList[2].([]any)[1].(ir.FN_DEC)
+	dIf1 := fnDelim.Body.Stmts[0].(ir.IfStmt)
+	dIf2, ok := dIf1.Else.(ir.IfStmt)
+	if !ok {
+		t.Fatalf("expected chained IfStmt in dIf1.Else, got %T", dIf1.Else)
+	}
+	dElseBlock, ok := dIf2.Else.(ir.Block)
+	if !ok {
+		t.Fatalf("expected ir.Block in dIf2.Else, got %T", dIf2.Else)
+	}
+	if len(dElseBlock.Stmts) != 1 {
+		t.Fatalf("expected 1 stmt in dElseBlock, got %d", len(dElseBlock.Stmts))
+	}
+}
+
 func TestDropStmt(t *testing.T) {
 	code := `
 fn compute() i32 {

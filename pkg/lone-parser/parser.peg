@@ -111,6 +111,33 @@
 
         return curr
     }
+
+    type packedIfArm struct {
+        cond ir.Expr
+        body ir.Block
+        pos  ir.Position
+    }
+
+    func toBlock(val any, defaultPos ir.Position) ir.Block {
+        switch b := val.(type) {
+        case ir.Block:
+            return b
+        case *ir.Block:
+            if b != nil {
+                return *b
+            }
+            return ir.Block{Pos: defaultPos}
+        default:
+            pos := defaultPos
+            if p, ok := val.(interface{ Pos() ir.Position }); ok {
+                pos = p.Pos()
+            }
+            return ir.Block{
+                Stmts: []any{val},
+                Pos:   pos,
+            }
+        }
+    }
 }
 
 PROGRAM <- decls:(_ TOP_LEVEL)* _ EOF {
@@ -940,15 +967,74 @@ ELSE_BRANCH <- KW_ELSE _ branch:(IF_STMT / BLOCK) {
     return branch, nil
 }
 
-IF_STMT <- KW_IF _ cond:EXPR _ then:BLOCK el:(_ ELSE_BRANCH)? {
+IF_STMT <- PACKED_IF_STMT / STANDARD_IF_STMT
+
+PACKED_IF_ARM <- !KW_ELSE cond:EXPR _ "=>" _ body:(BLOCK / STMT) _ ("," / ";")? {
+    return packedIfArm{
+        cond: AnyValToType[ir.Expr]("PACKED_IF_ARM.cond", cond),
+        body: toBlock(body, currentPosition(c)),
+        pos:  currentPosition(c),
+    }, nil
+}
+
+PACKED_ELSE_ARM <- KW_ELSE _ "=>" _ body:(BLOCK / STMT) _ ("," / ";")? {
+    return toBlock(body, currentPosition(c)), nil
+}
+
+PACKED_IF_STMT <- KW_IF _ "{" _ arms:(_ PACKED_IF_ARM)* el:(_ PACKED_ELSE_ARM)? _ "}" {
+    var armList []packedIfArm
+    if arms != nil {
+        rawSlice := AnyValToType[[]any]("PACKED_IF_STMT.arms", arms)
+        for _, item := range rawSlice {
+            if tuple, ok := item.([]any); ok && len(tuple) >= 2 {
+                if a, ok := tuple[1].(packedIfArm); ok {
+                    armList = append(armList, a)
+                }
+            }
+        }
+    }
+
+    var elseBranch any
+    if el != nil {
+        tuple := AnyValToType[[]any]("PACKED_IF_STMT.el", el)
+        elseBranch = tuple[1]
+    }
+
+    if len(armList) == 0 {
+        if elseBranch != nil {
+            if eb, ok := elseBranch.(ir.Block); ok {
+                return ir.IfStmt{
+                    Cond: ir.Literal{Kind: ir.LITERAL_BOOL, Pos: currentPosition(c)},
+                    Then: eb,
+                    Pos:  currentPosition(c),
+                }, nil
+            }
+        }
+        return nil, fmt.Errorf("packed if requires at least one arm")
+    }
+
+    var currentElse any = elseBranch
+    for i := len(armList) - 1; i >= 0; i-- {
+        currentElse = ir.IfStmt{
+            Cond: armList[i].cond,
+            Then: armList[i].body,
+            Else: currentElse,
+            Pos:  armList[i].pos,
+        }
+    }
+
+    return currentElse.(ir.IfStmt), nil
+}
+
+STANDARD_IF_STMT <- KW_IF _ cond:EXPR _ then:BLOCK el:(_ ELSE_BRANCH)? {
     var else_branch any
     if el != nil {
-        else_branch = AnyValToType[[]any]("IF_STMT.else", el)[1]
+        else_branch = AnyValToType[[]any]("STANDARD_IF_STMT.else", el)[1]
     }
 
     return ir.IfStmt{
-        Cond: AnyValToType[ir.Expr]("IF_STMT.cond", cond),
-        Then: AnyValToType[ir.Block]("IF_STMT.then", then),
+        Cond: AnyValToType[ir.Expr]("STANDARD_IF_STMT.cond", cond),
+        Then: AnyValToType[ir.Block]("STANDARD_IF_STMT.then", then),
         Else: else_branch,
         Pos: currentPosition(c),
     }, nil
@@ -977,7 +1063,7 @@ ASSIGN_STMT <- target:UNARY_EXPR _ "=" !"=" _ val:EXPR {
     }, nil
 }
 
-STMT <- BIND_DEC / RETURN_STMT / BREAK_STMT / DROP_STMT / IF_STMT / WHILE_STMT / ASSIGN_STMT / EXPR
+STMT <- BIND_DEC / RETURN_STMT / BREAK_STMT / DROP_STMT / IF_STMT / WHILE_STMT / LABEL_DEC / ASSIGN_STMT / EXPR
 
 BLOCK <- "{" _ stmts:(_ STMT)* _ "}" {
     var stmt_list []any = []any{}

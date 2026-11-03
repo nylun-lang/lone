@@ -192,3 +192,38 @@ fn main() void {
 		t.Errorf("unexpected output from parse_int/int_to_str test:\ngot:  %q\nwant: %q", output, want)
 	}
 }
+
+func TestPackedIfWasmtime(t *testing.T) {
+	code := `
+import .println from :std:io
+
+fn classify(x: i32) void {
+	if {
+		x > 100 => println("Large")
+		x > 50  => println("Medium")
+		x > 0   => println("Small")
+		else    => {
+			println("Invalid")
+		}
+	}
+}
+
+fn main() void {
+	classify(150)
+	classify(75)
+	classify(10)
+	classify(-5)
+}
+`
+	comp := lonecompiler.NewCompiler(lonecompiler.DefaultConfig())
+	res, err := comp.CompileSource("classify.lone", []byte(code))
+	if err != nil {
+		t.Fatalf("failed to compile: %v", err)
+	}
+
+	output := runWatWithWasmtime(t, res.WatOutput, "")
+	want := "Large\nMedium\nSmall\nInvalid\n"
+	if output != want {
+		t.Errorf("unexpected output from packed if test:\ngot:  %q\nwant: %q", output, want)
+	}
+}
