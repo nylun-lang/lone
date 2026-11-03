@@ -23,6 +23,7 @@ const (
 	TypeKindTrait
 	TypeKindTraitMat
 	TypeKindModule
+	TypeKindOptional
 )
 
 func (k TypeKind) String() string {
@@ -51,6 +52,8 @@ func (k TypeKind) String() string {
 		return "TraitMat"
 	case TypeKindModule:
 		return "Module"
+	case TypeKindOptional:
+		return "Optional"
 	default:
 		return "Unknown"
 	}
@@ -124,6 +127,12 @@ func (p *PrimitiveType) AssignableTo(target Type) bool {
 		if isAnyInt(p.Name) && (op.Name == "f32" || op.Name == "f64") {
 			return true
 		}
+	}
+	if opt, ok := target.(*OptionalType); ok {
+		if p == TypeNone {
+			return true
+		}
+		return p.AssignableTo(opt.Inner)
 	}
 	return false
 }
@@ -229,6 +238,9 @@ func (r *RefType) AssignableTo(target Type) bool {
 	if target == TypeAny || target.Kind() == TypeKindUnknown {
 		return true
 	}
+	if opt, ok := target.(*OptionalType); ok {
+		return r.AssignableTo(opt.Inner)
+	}
 	or, ok := target.(*RefType)
 	if !ok {
 		return false
@@ -268,6 +280,9 @@ func (p *PtrType) AssignableTo(target Type) bool {
 	}
 	if target == TypeAny || target.Kind() == TypeKindUnknown {
 		return true
+	}
+	if opt, ok := target.(*OptionalType); ok {
+		return p.AssignableTo(opt.Inner)
 	}
 	op, ok := target.(*PtrType)
 	if !ok {
@@ -318,6 +333,9 @@ func (s *StructType) AssignableTo(target Type) bool {
 	}
 	if target == TypeAny || target.Kind() == TypeKindUnknown {
 		return true
+	}
+	if opt, ok := target.(*OptionalType); ok {
+		return s.AssignableTo(opt.Inner)
 	}
 	return s.Equals(target)
 }
@@ -423,12 +441,44 @@ func (m *ModuleAliasType) Equals(other Type) bool {
 }
 func (m *ModuleAliasType) AssignableTo(target Type) bool { return m.Equals(target) }
 
+// OptionalType represents a nullable/optional value ?T.
+type OptionalType struct {
+	Inner Type
+}
+
+func (o *OptionalType) Kind() TypeKind { return TypeKindOptional }
+func (o *OptionalType) String() string { return "?" + o.Inner.String() }
+func (o *OptionalType) Equals(other Type) bool {
+	if oo, ok := other.(*OptionalType); ok {
+		return o.Inner.Equals(oo.Inner)
+	}
+	return false
+}
+func (o *OptionalType) AssignableTo(target Type) bool {
+	if target == nil {
+		return false
+	}
+	if target == TypeAny || target.Kind() == TypeKindUnknown {
+		return true
+	}
+	if oo, ok := target.(*OptionalType); ok {
+		return o.Inner.AssignableTo(oo.Inner)
+	}
+	return false
+}
+
 // TypeSize returns the linear memory byte size of t.
 func TypeSize(t Type) int {
 	if t == nil {
 		return 4
 	}
 	switch v := t.(type) {
+	case *OptionalType:
+		innerAlign := TypeAlign(v.Inner)
+		if innerAlign < 1 {
+			innerAlign = 1
+		}
+		return alignUp(1, innerAlign) + TypeSize(v.Inner)
 	case *PrimitiveType:
 		switch v.Name {
 		case "void", "none":
@@ -471,6 +521,12 @@ func TypeAlign(t Type) int {
 		return 4
 	}
 	switch v := t.(type) {
+	case *OptionalType:
+		innerAlign := TypeAlign(v.Inner)
+		if innerAlign < 1 {
+			return 1
+		}
+		return innerAlign
 	case *PrimitiveType:
 		switch v.Name {
 		case "i8", "u8", "bool", "char":
@@ -536,6 +592,9 @@ func (c *CustomType) AssignableTo(target Type) bool {
 	if target == TypeAny {
 		return true
 	}
+	if opt, ok := target.(*OptionalType); ok {
+		return c.AssignableTo(opt.Inner)
+	}
 	return c.Equals(target)
 }
 
@@ -567,6 +626,9 @@ func (l *ListType) AssignableTo(target Type) bool {
 	}
 	if target == TypeAny {
 		return true
+	}
+	if opt, ok := target.(*OptionalType); ok {
+		return l.AssignableTo(opt.Inner)
 	}
 	if ol, ok := target.(*ListType); ok {
 		if l.Size >= 0 && ol.Size >= 0 && l.Size != ol.Size {
@@ -707,93 +769,102 @@ func ParseTypeRefWithResolver(tr *ir.TYPE_REF, resolve func(string) Type, selfTy
 		return TypeInfer
 	}
 
+	var result Type = TypeUnknown
+
 	switch tr.Kind {
 	case ir.TYPE_BASE:
 		base := tr.AsBase()
 		if base == nil || base.Name == "" {
-			return TypeInfer
-		}
-		if base.Name == "Self" && selfType != nil {
-			return selfType
-		}
-		if base.Name == "ptr" {
+			result = TypeInfer
+		} else if base.Name == "Self" && selfType != nil {
+			result = selfType
+		} else if base.Name == "ptr" {
 			var elem Type = TypeAny
 			readOnly := false
 			if len(base.Args) > 0 {
 				readOnly = base.Args[0].Constrain.ReadOnly
 				elem = ParseTypeRefWithResolver(&base.Args[0], resolve, selfType)
 			}
-			return &PtrType{Elem: elem, ReadOnly: readOnly}
-		}
-		if base.Name == "ref" {
+			result = &PtrType{Elem: elem, ReadOnly: readOnly}
+		} else if base.Name == "ref" {
 			var elem Type = TypeAny
 			readOnly := false
 			if len(base.Args) > 0 {
 				readOnly = base.Args[0].Constrain.ReadOnly
 				elem = ParseTypeRefWithResolver(&base.Args[0], resolve, selfType)
 			}
-			return &RefType{Elem: elem, ReadOnly: readOnly}
-		}
-		if prim := PrimitiveByName(base.Name); prim != nil {
-			return prim
-		}
-		if resolve != nil {
+			result = &RefType{Elem: elem, ReadOnly: readOnly}
+		} else if prim := PrimitiveByName(base.Name); prim != nil {
+			result = prim
+		} else if resolve != nil {
 			if resolved := resolve(base.Name); resolved != nil {
-				return resolved
+				result = resolved
+			} else {
+				result = &CustomType{Name: base.Name}
 			}
+		} else {
+			result = &CustomType{Name: base.Name}
 		}
-		return &CustomType{Name: base.Name}
 
 	case ir.TYPE_LIST:
 		list := tr.AsList()
 		if list == nil {
-			return &ListType{ItemType: TypeUnknown, Size: -1}
-		}
-		itemType := ParseTypeRefWithResolver(&list.ItemType, resolve, selfType)
-		size := -1
-		if list.IsFixed() {
-			sizeExpr := list.Size
-			if pf, ok := sizeExpr.(ir.PostFixExpr); ok && len(pf.Suffix) == 0 {
-				sizeExpr = pf.Base
-			}
-			if lit, ok := sizeExpr.(ir.Literal); ok {
-				if s, ok := lit.Value.(int); ok {
-					size = s
-				} else if s64, ok := lit.Value.(int64); ok {
-					size = int(s64)
+			result = &ListType{ItemType: TypeUnknown, Size: -1}
+		} else {
+			itemType := ParseTypeRefWithResolver(&list.ItemType, resolve, selfType)
+			size := -1
+			if list.IsFixed() {
+				sizeExpr := list.Size
+				if pf, ok := sizeExpr.(ir.PostFixExpr); ok && len(pf.Suffix) == 0 {
+					sizeExpr = pf.Base
+				}
+				if lit, ok := sizeExpr.(ir.Literal); ok {
+					if s, ok := lit.Value.(int); ok {
+						size = s
+					} else if s64, ok := lit.Value.(int64); ok {
+						size = int(s64)
+					}
 				}
 			}
+			result = &ListType{ItemType: itemType, Size: size}
 		}
-		return &ListType{ItemType: itemType, Size: size}
 
 	case ir.TYPE_FN:
 		fn := tr.AsFn()
 		if fn == nil {
-			return &FnType{ReturnType: TypeVoid}
-		}
-		var params []FnParamType
-		for _, p := range fn.Params {
-			params = append(params, FnParamType{
-				Name: p.Name,
-				Type: ParseTypeRefWithResolver(&p.Type, resolve, selfType),
-			})
-		}
-		var retType Type = TypeVoid
-		if fn.ReturnType != nil {
-			retType = ParseTypeRefWithResolver(fn.ReturnType, resolve, selfType)
-		}
-		return &FnType{
-			Params:     params,
-			ReturnType: retType,
+			result = &FnType{ReturnType: TypeVoid}
+		} else {
+			var params []FnParamType
+			for _, p := range fn.Params {
+				params = append(params, FnParamType{
+					Name: p.Name,
+					Type: ParseTypeRefWithResolver(&p.Type, resolve, selfType),
+				})
+			}
+			var retType Type = TypeVoid
+			if fn.ReturnType != nil {
+				retType = ParseTypeRefWithResolver(fn.ReturnType, resolve, selfType)
+			}
+			result = &FnType{
+				Params:     params,
+				ReturnType: retType,
+			}
 		}
 	}
 
-	return TypeUnknown
+	if tr.Constrain.Optional && result != nil && result != TypeUnknown {
+		result = &OptionalType{Inner: result}
+	}
+
+	return result
 }
 
 // ParseTypeString parses simple host capability type strings (e.g. "i32", "void", "ptr<u8>", "ptr<any>").
 func ParseTypeString(s string) Type {
 	s = strings.TrimSpace(s)
+	if strings.HasPrefix(s, "?") {
+		return &OptionalType{Inner: ParseTypeString(strings.TrimPrefix(s, "?"))}
+	}
 	if strings.HasPrefix(s, "ptr<") && strings.HasSuffix(s, ">") {
 		inner := strings.TrimSpace(s[4 : len(s)-1])
 		ro := false

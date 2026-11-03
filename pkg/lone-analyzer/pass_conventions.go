@@ -111,6 +111,11 @@ func (p *PassNamingConventions) walkNode(node any) {
 	case *ir.WhileStmt:
 		p.checkWhileStmt(n)
 
+	case ir.ForStmt:
+		p.checkForStmt(&n)
+	case *ir.ForStmt:
+		p.checkForStmt(n)
+
 	case ir.BinaryExpr:
 		p.walkNode(n.Left)
 		p.walkNode(n.Right)
@@ -457,6 +462,24 @@ func (p *PassNamingConventions) checkIfStmt(stmt *ir.IfStmt) {
 
 func (p *PassNamingConventions) checkWhileStmt(stmt *ir.WhileStmt) {
 	p.walkNode(stmt.Cond)
+	p.stack.Push(ScopeLoop, "")
+	defer p.stack.Pop()
+
+	for _, s := range stmt.Body.Stmts {
+		p.walkNode(s)
+	}
+}
+
+func (p *PassNamingConventions) checkForStmt(stmt *ir.ForStmt) {
+	if !IsSnakeCase(stmt.VarName) {
+		p.addDiagnostic(
+			SeverityWarning,
+			stmt.Pos,
+			"naming/variable",
+			fmt.Sprintf("variable %q should follow snake_case convention", stmt.VarName),
+		)
+	}
+	p.walkNode(stmt.Iter)
 	p.stack.Push(ScopeLoop, "")
 	defer p.stack.Pop()
 

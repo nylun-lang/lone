@@ -924,6 +924,80 @@ fn run_labeled() void {
 	}
 }
 
+func TestForStmtAndImplFor(t *testing.T) {
+	code := `
+type IterableTrait<T> = trait {
+	fn iterator(self) Self
+}
+
+impl IterableTrait<i32> for Range {
+	fn iterator(self) Self {
+		return self
+	}
+}
+
+fn iterate() void {
+	for i in range(1, 10) {
+		#print("item\n")
+	}
+
+	outer: for x in items {
+		break outer
+	}
+}
+`
+	ast, err := loneparser.Parse("for.lone", []byte(code))
+	if err != nil {
+		t.Fatalf("failed to parse for statement and impl for: %v", err)
+	}
+
+	rawList, ok := ast.([]any)
+	if !ok || len(rawList) != 3 {
+		t.Fatalf("expected 3 declarations, got %T (%d)", ast, len(rawList))
+	}
+
+	// 1. impl IterableTrait<i32> for Range
+	implDec := rawList[1].([]any)[1].(ir.IMPL_DEC)
+	if implDec.TraitName != "IterableTrait" {
+		t.Errorf("expected TraitName 'IterableTrait', got %q", implDec.TraitName)
+	}
+	if implDec.TargetType.AsBase().Name != "Range" {
+		t.Errorf("expected TargetType 'Range', got %q", implDec.TargetType.AsBase().Name)
+	}
+
+	// 2. iterate() fn
+	fnDec := rawList[2].([]any)[1].(ir.FN_DEC)
+	if len(fnDec.Body.Stmts) != 2 {
+		t.Fatalf("expected 2 stmts in fnDec, got %d", len(fnDec.Body.Stmts))
+	}
+
+	forStmt1, ok := fnDec.Body.Stmts[0].(ir.ForStmt)
+	if !ok {
+		t.Fatalf("expected ForStmt for stmt 0, got %T", fnDec.Body.Stmts[0])
+	}
+	if forStmt1.VarName != "i" {
+		t.Errorf("expected VarName 'i', got %q", forStmt1.VarName)
+	}
+	if len(forStmt1.Body.Stmts) != 1 {
+		t.Errorf("expected 1 stmt in forStmt1 body, got %d", len(forStmt1.Body.Stmts))
+	}
+
+	labelDec, ok := fnDec.Body.Stmts[1].(ir.LabelDec)
+	if !ok {
+		t.Fatalf("expected LabelDec for outer: for, got %T", fnDec.Body.Stmts[1])
+	}
+	if labelDec.Name != "outer" {
+		t.Errorf("expected label 'outer', got %q", labelDec.Name)
+	}
+	forStmt2, ok := labelDec.Body.Stmts[0].(ir.ForStmt)
+	if !ok {
+		t.Fatalf("expected ForStmt inside label, got %T", labelDec.Body.Stmts[0])
+	}
+	if forStmt2.VarName != "x" {
+		t.Errorf("expected VarName 'x', got %q", forStmt2.VarName)
+	}
+}
+
 func TestDropStmt(t *testing.T) {
 	code := `
 fn compute() i32 {

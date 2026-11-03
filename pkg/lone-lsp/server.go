@@ -447,7 +447,7 @@ func (s *Server) handleCompletion(uri string, pos Position) CompletionList {
 	}
 
 	// 3. Standard Library Namespaces
-	namespaces := []string{":std", ":std:io", ":std:sys"}
+	namespaces := []string{":std", ":std:io", ":std:sys", ":std:builtin"}
 	for _, ns := range namespaces {
 		items = append(items, CompletionItem{
 			Label:  ns,

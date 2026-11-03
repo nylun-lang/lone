@@ -255,3 +255,103 @@ fn main() void {
 		t.Errorf("unexpected output from loop test:\ngot:  %q\nwant: %q", output, want)
 	}
 }
+
+func TestForRangeWasmtime(t *testing.T) {
+	code := `
+import .println_int from :std:io
+import .range, .range_step from :std:builtin
+
+fn main() void {
+	var sum = 0
+	for i in range(1, 5) {
+		sum = sum + i
+	}
+	println_int(sum)
+
+	-- Test range with step
+	var step_sum = 0
+	for x in range_step(0, 10, 2) {
+		step_sum = step_sum + x
+	}
+	println_int(step_sum)
+
+	-- Test break inside for
+	var early_sum = 0
+	for y in range(1, 10) {
+		if y > 3 {
+			break
+		}
+		early_sum = early_sum + y
+	}
+	println_int(early_sum)
+}
+`
+	comp := lonecompiler.NewCompiler(lonecompiler.DefaultConfig())
+	res, err := comp.CompileSource("for_test.lone", []byte(code))
+	if err != nil {
+		t.Fatalf("failed to compile for: %v", err)
+	}
+
+	output := runWatWithWasmtime(t, res.WatOutput, "")
+	want := "10\n20\n6\n"
+	if output != want {
+		t.Errorf("unexpected output from for test:\ngot:  %q\nwant: %q", output, want)
+	}
+}
+
+func TestCustomIteratorAndOptionalTypes(t *testing.T) {
+	code := `
+import .println_int from :std:io
+import .IteratorTrait, .IterableTrait from :std:builtin
+
+type Countdown = struct {
+	remaining: i32,
+
+	pub fn new(n: i32) Countdown {
+		return Countdown::{ .remaining: n }
+	}
+
+	pub fn has_next(self: ptr<Countdown>) bool {
+		return self.remaining > 0
+	}
+
+	pub fn next(self: ptr<Countdown>) i32 {
+		var cur = self.remaining
+		self.remaining = self.remaining - 1
+		return cur
+	}
+}
+
+fn test_opt() i32 {
+	var a: ?i32 = none
+	if a == none {
+		var b: ?i32 = 42
+		if b != none {
+			return 42
+		}
+	}
+	return 0
+}
+
+fn main() void {
+	var cd = Countdown.new(3)
+	for val in cd {
+		println_int(val)
+	}
+
+	var res = test_opt()
+	println_int(res)
+}
+`
+	comp := lonecompiler.NewCompiler(lonecompiler.DefaultConfig())
+	res, err := comp.CompileSource("custom_iter.lone", []byte(code))
+	if err != nil {
+		t.Fatalf("failed to compile: %v (diags: %+v)", err, res.Diagnostics)
+	}
+
+	output := runWatWithWasmtime(t, res.WatOutput, "")
+	want := "3\n2\n1\n42\n"
+	if output != want {
+		t.Errorf("unexpected output from custom iterator and optional test:\ngot:  %q\nwant: %q", output, want)
+	}
+}

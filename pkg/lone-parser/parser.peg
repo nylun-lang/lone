@@ -146,7 +146,7 @@ PROGRAM <- decls:(_ TOP_LEVEL)* _ EOF {
 
 EOF <- !.
 
-TOP_LEVEL <- COMPILER_DIRECTIVE / IMPORT_STMT / TYPE_DEC / IMPL_DEC / BIND_DEC / FN_DEC / IF_STMT / WHILE_STMT / LOOP_STMT / LABEL_DEC / DROP_STMT
+TOP_LEVEL <- COMPILER_DIRECTIVE / IMPORT_STMT / TYPE_DEC / IMPL_DEC / BIND_DEC / FN_DEC / IF_STMT / WHILE_STMT / LOOP_STMT / FOR_STMT / LABEL_DEC / DROP_STMT
 
 COMPILER_DIRECTIVE <- FA_DIRECTIVE / LEGACY_WASM_DIRECTIVE
 
@@ -298,6 +298,8 @@ KW_IF <- "if" ![a-zA-Z0-9_]
 KW_ELSE <- "else" ![a-zA-Z0-9_]
 KW_WHILE <- "while" ![a-zA-Z0-9_]
 KW_LOOP <- "loop" ![a-zA-Z0-9_]
+KW_FOR <- "for" ![a-zA-Z0-9_]
+KW_IN <- "in" ![a-zA-Z0-9_]
 KW_DROP <- "drop" ![a-zA-Z0-9_]
 
 KEYWORD <- 
@@ -322,6 +324,8 @@ KEYWORD <-
     KW_ELSE /
     KW_WHILE /
     KW_LOOP /
+    KW_FOR /
+    KW_IN /
     KW_DROP
 
 FN_NAME <- "#"? IDENTIFIER {
@@ -1066,6 +1070,15 @@ LOOP_STMT <- KW_LOOP _ body:BLOCK {
     }, nil
 }
 
+FOR_STMT <- KW_FOR _ varName:IDENTIFIER _ KW_IN _ iter:EXPR _ body:BLOCK {
+    return ir.ForStmt{
+        VarName: string(AnyValToType[[]uint8]("FOR_STMT.var", varName)),
+        Iter:    AnyValToType[ir.Expr]("FOR_STMT.iter", iter),
+        Body:    AnyValToType[ir.Block]("FOR_STMT.body", body),
+        Pos:     currentPosition(c),
+    }, nil
+}
+
 DROP_STMT <- KW_DROP _ expr:EXPR {
     return ir.DropStmt{
         Expr: AnyValToType[ir.Expr]("DROP_STMT.expr", expr),
@@ -1081,7 +1094,7 @@ ASSIGN_STMT <- target:UNARY_EXPR _ "=" !"=" _ val:EXPR {
     }, nil
 }
 
-STMT <- BIND_DEC / RETURN_STMT / BREAK_STMT / DROP_STMT / IF_STMT / WHILE_STMT / LOOP_STMT / LABEL_DEC / ASSIGN_STMT / EXPR
+STMT <- BIND_DEC / RETURN_STMT / BREAK_STMT / DROP_STMT / IF_STMT / WHILE_STMT / LOOP_STMT / FOR_STMT / LABEL_DEC / ASSIGN_STMT / EXPR
 
 BLOCK <- "{" _ stmts:(_ STMT)* _ "}" {
     var stmt_list []any = []any{}
@@ -1098,7 +1111,7 @@ BLOCK <- "{" _ stmts:(_ STMT)* _ "}" {
     }, nil
 }
 
-LABELABLE <- BLOCK / IF_STMT / WHILE_STMT / LOOP_STMT
+LABELABLE <- BLOCK / IF_STMT / WHILE_STMT / LOOP_STMT / FOR_STMT
 
 LABEL_DEC <- name:LABEL_IDENT _ ":" !":" _ body:LABELABLE {
     var blk ir.Block
@@ -1296,7 +1309,7 @@ IMPL_TRAIT_DEC <-
     traitName:IDENTIFIER
     traitArgs:TYPE_REF_ARGS?
     _
-    KW_ON
+    (KW_ON / KW_FOR)
     _
     target:TYPE_REF
     _

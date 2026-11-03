@@ -1004,6 +1004,15 @@ func (te *TypeEvaluator) analyzeStmt(raw any, expectedReturn Type, hasReturn *bo
 		tCond := te.EvalExpr(s.Cond)
 		tBody := te.analyzeBlock(&s.Body, expectedReturn, hasReturn)
 		return &TWhileStmt{Cond: tCond, Body: tBody, Pos_: s.Pos}
+	case *ir.WhileStmt:
+		tCond := te.EvalExpr(s.Cond)
+		tBody := te.analyzeBlock(&s.Body, expectedReturn, hasReturn)
+		return &TWhileStmt{Cond: tCond, Body: tBody, Pos_: s.Pos}
+
+	case ir.ForStmt:
+		return te.analyzeForStmt(&s, expectedReturn, hasReturn)
+	case *ir.ForStmt:
+		return te.analyzeForStmt(s, expectedReturn, hasReturn)
 
 	case ir.LabelDec:
 		tBody := te.analyzeBlock(&s.Body, expectedReturn, hasReturn)
@@ -1051,6 +1060,89 @@ func (te *TypeEvaluator) analyzeAssignStmt(a *ir.AssignStmt) *TAssignStmt {
 		Value:  tVal,
 		Pos_:   a.Pos,
 	}
+}
+
+func (te *TypeEvaluator) analyzeForStmt(f *ir.ForStmt, expectedReturn Type, hasReturn *bool) TStmt {
+	tIter := te.EvalExpr(f.Iter)
+	iterType := tIter.ExprType()
+
+	st := unwrapStructType(iterType)
+	var iterExpr ir.Expr = f.Iter
+
+	if st != nil {
+		hasIterMethod := te.lookupMethod(st.Name, "iterator") != nil
+		hasDirectNext := te.lookupMethod(st.Name, "has_next") != nil && te.lookupMethod(st.Name, "next") != nil
+
+		if hasIterMethod {
+			iterExpr = ir.PostFixExpr{
+				Base: f.Iter,
+				Suffix: []ir.Suffix{
+					ir.SuffixMemberAccess{Name: "iterator", Pos: f.Pos},
+					ir.SuffixCall{Args: nil, Pos: f.Pos},
+				},
+			}
+		} else if !hasDirectNext && iterType != TypeUnknown && iterType != TypeAny {
+			te.addDiag(SeverityError, tIter.Pos(), "type/not-iterable",
+				fmt.Sprintf("type %q is not iterable (missing 'iterator()' or 'has_next()'/'next()' methods)", st.Name))
+		}
+	} else if iterType != TypeUnknown && iterType != TypeAny {
+		te.addDiag(SeverityError, tIter.Pos(), "type/not-iterable",
+			fmt.Sprintf("type %q is not iterable (must implement IteratorTrait or IterableTrait)", iterType.String()))
+	}
+
+	itVarName := fmt.Sprintf("__it_%d_%d", f.Pos.Line, f.Pos.Col)
+
+	bindIt := ir.BIND_DEC{
+		Name:  itVarName,
+		Value: iterExpr,
+		Pos:   f.Pos,
+	}
+
+	condExpr := ir.PostFixExpr{
+		Base: ir.NameRef{Name: itVarName, Pos: f.Pos},
+		Suffix: []ir.Suffix{
+			ir.SuffixMemberAccess{Name: "has_next", Pos: f.Pos},
+			ir.SuffixCall{Args: nil, Pos: f.Pos},
+		},
+	}
+
+	nextExpr := ir.PostFixExpr{
+		Base: ir.NameRef{Name: itVarName, Pos: f.Pos},
+		Suffix: []ir.Suffix{
+			ir.SuffixMemberAccess{Name: "next", Pos: f.Pos},
+			ir.SuffixCall{Args: nil, Pos: f.Pos},
+		},
+	}
+
+	bindLoopVar := ir.BIND_DEC{
+		Name:  f.VarName,
+		Value: nextExpr,
+		Pos:   f.Pos,
+	}
+
+	whileBodyStmts := make([]any, 0, len(f.Body.Stmts)+1)
+	whileBodyStmts = append(whileBodyStmts, bindLoopVar)
+	whileBodyStmts = append(whileBodyStmts, f.Body.Stmts...)
+
+	whileStmt := ir.WhileStmt{
+		Cond: condExpr,
+		Body: ir.Block{
+			Stmts: whileBodyStmts,
+			Pos:   f.Body.Pos,
+		},
+		Pos: f.Pos,
+	}
+
+	forBlock := ir.Block{
+		Stmts: []any{
+			bindIt,
+			whileStmt,
+		},
+		Pos: f.Pos,
+	}
+
+	tBlock := te.analyzeBlock(&forBlock, expectedReturn, hasReturn)
+	return &tBlock
 }
 
 func (te *TypeEvaluator) isLValue(e TExpr) bool {
@@ -1231,6 +1323,32 @@ func (te *TypeEvaluator) EvalExpr(raw ir.Expr) TExpr {
 			return ifStmt
 		}
 		return &TLiteralExpr{Kind: ir.LITERAL_UNINITIALIZED, Typ: TypeUnknown, Pos_: e.Pos}
+
+	case ir.WhileStmt:
+		stmt := te.analyzeStmt(e, nil, nil)
+		if ws, ok := stmt.(*TWhileStmt); ok {
+			return ws
+		}
+		return &TLiteralExpr{Kind: ir.LITERAL_UNINITIALIZED, Typ: TypeVoid, Pos_: e.Pos}
+	case *ir.WhileStmt:
+		stmt := te.analyzeStmt(*e, nil, nil)
+		if ws, ok := stmt.(*TWhileStmt); ok {
+			return ws
+		}
+		return &TLiteralExpr{Kind: ir.LITERAL_UNINITIALIZED, Typ: TypeVoid, Pos_: e.Pos}
+
+	case ir.ForStmt:
+		stmt := te.analyzeStmt(e, nil, nil)
+		if tb, ok := stmt.(*TBlock); ok {
+			return tb
+		}
+		return &TLiteralExpr{Kind: ir.LITERAL_UNINITIALIZED, Typ: TypeVoid, Pos_: e.Pos}
+	case *ir.ForStmt:
+		stmt := te.analyzeStmt(*e, nil, nil)
+		if tb, ok := stmt.(*TBlock); ok {
+			return tb
+		}
+		return &TLiteralExpr{Kind: ir.LITERAL_UNINITIALIZED, Typ: TypeVoid, Pos_: e.Pos}
 
 	default:
 		return &TLiteralExpr{Kind: ir.LITERAL_UNINITIALIZED, Typ: TypeUnknown}

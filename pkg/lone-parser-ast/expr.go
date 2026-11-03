@@ -14,6 +14,7 @@ const (
 	EXPR_BREAK
 	EXPR_IF
 	EXPR_WHILE
+	EXPR_FOR
 	EXPR_DROP
 )
 
@@ -315,6 +316,21 @@ type WhileStmt struct {
 
 func (WhileStmt) IsExpr() ExprKind {
 	return EXPR_WHILE
+}
+
+// =====================
+// FOR STMT / EXPR
+// =====================
+
+type ForStmt struct {
+	VarName string
+	Iter    Expr
+	Body    Block
+	Pos     Position
+}
+
+func (ForStmt) IsExpr() ExprKind {
+	return EXPR_FOR
 }
 
 // =====================

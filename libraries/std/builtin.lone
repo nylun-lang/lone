@@ -1,0 +1,71 @@
+-- Lone Standard Library: Built-in Core Abstractions (:std:builtin)
+-- Provides IteratorTrait, IterableTrait, Range, and range() for loop iteration.
+
+pub type IteratorTrait<T> = trait {
+    fn has_next(self: ptr<Self>) bool
+    fn next(self: ptr<Self>) T
+}
+
+pub type IterableTrait<T> = trait {
+    fn iterator(self: Self) Range
+}
+
+pub type Range = struct {
+    current: i32,
+    end: i32,
+    step: i32,
+
+    pub fn new(start: i32, end: i32) Range {
+        return Range::{ .current: start, .end: end, .step: 1 }
+    }
+
+    pub fn new_with_step(start: i32, end: i32, step: i32) Range {
+        return Range::{ .current: start, .end: end, .step: step }
+    }
+
+    pub fn has_next(self: ptr<Range>) bool {
+        if self.step > 0 {
+            return self.current < self.end
+        }
+        return self.current > self.end
+    }
+
+    pub fn next(self: ptr<Range>) i32 {
+        var v = self.current
+        self.current = self.current + self.step
+        return v
+    }
+
+    pub fn iterator(self: Range) Range {
+        return self
+    }
+}
+
+impl IteratorTrait<i32> for Range {
+    fn has_next(self: ptr<Range>) bool {
+        if self.step > 0 {
+            return self.current < self.end
+        }
+        return self.current > self.end
+    }
+
+    fn next(self: ptr<Range>) i32 {
+        var v = self.current
+        self.current = self.current + self.step
+        return v
+    }
+}
+
+impl IterableTrait<i32> for Range {
+    fn iterator(self: Range) Range {
+        return self
+    }
+}
+
+pub fn range(start: i32, end: i32) Range {
+    return Range.new(start, end)
+}
+
+pub fn range_step(start: i32, end: i32, step: i32) Range {
+    return Range.new_with_step(start, end, step)
+}

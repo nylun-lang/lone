@@ -76,7 +76,7 @@
       "patterns": [
         {
           "name": "keyword.control.lone",
-          "match": "\\b(if|else|while|loop|return|break|and|or)\\b"
+          "match": "\\b(if|else|while|loop|for|in|return|break|and|or)\\b"
         },
         {
           "name": "keyword.declaration.lone",

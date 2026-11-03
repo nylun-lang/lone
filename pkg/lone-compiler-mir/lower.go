@@ -341,6 +341,9 @@ func (l *lowerer) lowerStmt(stmt loneanalyzer.TStmt) {
 	case *loneanalyzer.TExprStmt:
 		l.lowerExpr(s.Expr)
 
+	case *loneanalyzer.TBlock:
+		l.lowerBlock(s)
+
 	case *loneanalyzer.TIfStmt:
 		condOp := l.lowerExpr(s.Cond)
 		thenBlk := l.freshBlock("if_then")
@@ -1016,6 +1019,10 @@ func (l *lowerer) lowerExpr(expr loneanalyzer.TExpr) MirOperand {
 
 	case *loneanalyzer.TDropStmt:
 		return l.lowerExpr(e.Expr)
+
+	case *loneanalyzer.TBlock:
+		l.lowerBlock(e)
+		return MirConst{Type: MirVoid, Value: 0}
 
 	default:
 		return MirConst{Type: MirI32, Value: 0}

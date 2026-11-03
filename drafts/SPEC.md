@@ -39,9 +39,9 @@ The following keywords are reserved and guarded by word boundaries (`![a-zA-Z0-9
 ```
 import    from      as        pub       var       let
 type      struct    trait     impl      fn        return
-break     if        else      while     loop      drop
-and       or        true      false     none      ro
-comptime
+break     if        else      while     loop      for
+in        drop      and       or        true      false
+none      ro        comptime
 ```
 
 ### 2.3 Comments
@@ -369,6 +369,38 @@ loop {
 ```
 - Can also be labeled for targeted breaks: `outer: loop { inner: loop { break outer } }`.
 - Desugars cleanly into an `ir.WhileStmt` with constant `true` condition.
+
+#### 6.4.2 For-In Loop (`FOR_STMT`)
+Iterates over an iterable value using Lone's standard iterator protocol (`IteratorTrait<T>` and `IterableTrait<T>` in `:std:builtin`):
+```lone
+import .range, .range_step from :std:builtin
+
+for i in range(1, 5) {
+    println_int(i)
+}
+
+outer: for x in items {
+    if x > 10 {
+        break outer
+    }
+}
+```
+- **Iterator Protocol**:
+  - If the iterable implements `iterator()`, `var __it = iterable.iterator()` is called to obtain the iterator.
+  - If the iterable directly implements `has_next() bool` and `next() T`, it is used as the iterator directly.
+  - Desugars cleanly at analysis into:
+    ```lone
+    {
+        var __it = iterable.iterator()
+        while __it.has_next() {
+            var i = __it.next()
+            -- body
+        }
+    }
+    ```
+- Built-in `Range` struct and `range(start, end)`, `range_step(start, end, step)` are available in `:std:builtin` and re-exported via `:std`.
+- `impl Trait for Target` and `impl Trait on Target` are both supported.
+- Optional types `?T` (e.g. `?i32`, `?str`, `[]?str`, `none`) are supported for nullable and partial values.
 
 ### 6.5 Drop Statement (`DROP_STMT`)
 Evaluates an expression and explicitly discards its result:
