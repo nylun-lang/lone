@@ -461,7 +461,7 @@ From highest precedence (evaluated first) to lowest:
 | :---: | :--- | :--- | :---: |
 | 1 | Multiplicative | `*`, `/`, `%` | Left-to-right |
 | 2 | Additive | `+`, `-` | Left-to-right |
-| 3 | Relational Comparison | `>=`, `<=`, `>`, `<` | Left-to-right |
+| 3 | Relational Comparison | `>=`, `<=`, `>`, `<` | Non-associative |
 | 4 | Type Test | `is`, `is not` | Non-associative |
 | 5 | Equality Comparison | `==`, `!=` | Left-to-right |
 | 6 | Bitwise AND | `&` | Left-to-right |
@@ -470,6 +470,9 @@ From highest precedence (evaluated first) to lowest:
 | 9 | Logical AND | `&&`, `and` | Left-to-right |
 | 10 | Logical XOR | `xor` | Left-to-right |
 | 11 | Logical OR | `\|\|`, `or` | Left-to-right |
+
+> [!NOTE]
+> Comparison chaining is disallowed at compile time. Writing chained comparisons such as `a < b < c` or `a <= b <= c` results in a compilation error. Use explicit logical conjunction instead: `a < b and b < c`. Comparing a boolean with a relational operator (e.g. `(a < b) < c`) is also rejected during semantic analysis.
 
 ### 7.5 Type Checking & Narrowing (`IS_EXPR`)
 Tests if a value matches a given type reference (`is`) or does not match (`is not`):

@@ -687,6 +687,10 @@ Comparision_Op
 
 COMPARISION_BINARY_EXPR 
 <- left:ADD_BINARY_EXPR right:(_ Comparision_Op _ ADD_BINARY_EXPR)* {
+    tail := AnyValToType[[]any]("COMPARISION_BINARY_EXPR.tail", right)
+    if len(tail) > 1 {
+        return nil, fmt.Errorf("comparison operators cannot be chained")
+    }
     expr := FoldBinaryExpr("COMPARISION_BINARY_EXPR", c, left, right)
     return expr, nil
 }

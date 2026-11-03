@@ -465,3 +465,26 @@ fn main() void {
 		t.Errorf("unexpected output from is operator test:\ngot:  %q\nwant: %q", output, want)
 	}
 }
+
+func TestComparisonChainingCompileError(t *testing.T) {
+	code := `
+import .println from :std:io
+
+pub fn main() void {
+	var a = 1
+	var b = 2
+	var c = 3
+	if a < b < c {
+		println("chained")
+	}
+}
+`
+	comp := lonecompiler.NewCompiler(lonecompiler.DefaultConfig())
+	_, err := comp.CompileSource("chained_compile.lone", []byte(code))
+	if err == nil {
+		t.Fatalf("expected compile-time error for 'a < b < c', but compilation succeeded")
+	}
+	if !strings.Contains(err.Error(), "comparison operators cannot be chained") {
+		t.Fatalf("expected 'comparison operators cannot be chained' in compiler error, got: %v", err)
+	}
+}

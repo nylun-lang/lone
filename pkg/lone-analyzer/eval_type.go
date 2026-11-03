@@ -1586,7 +1586,13 @@ func (te *TypeEvaluator) evalBinaryExpr(b *ir.BinaryExpr) *TBinaryExpr {
 		}
 	case ir.BINARY_OP_TIME, ir.BINARY_OP_DIV, ir.BINARY_OP_MOD:
 		resType = tLeft.ExprType()
-	case ir.BINARY_OP_EQ, ir.BINARY_OP_NOT_EQ, ir.BINARY_OP_LESS, ir.BINARY_OP_LESS_EQ, ir.BINARY_OP_GREATER, ir.BINARY_OP_GREATER_EQ:
+	case "<", "<=", ">", ">=":
+		if tLeft.ExprType() == TypeBool || tRight.ExprType() == TypeBool {
+			te.addDiag(SeverityError, b.Pos, "type/invalid-comparison",
+				fmt.Sprintf("cannot compare bool with comparison operator %q; comparison operators cannot be chained", b.Op))
+		}
+		resType = TypeBool
+	case ir.BINARY_OP_EQ, ir.BINARY_OP_NOT_EQ:
 		resType = TypeBool
 	case ir.BINARY_OP_AND, ir.BINARY_OP_OR, ir.BINARY_OP_XOR, ir.BINARY_OP_CARET, "&&", "||", "&", "|":
 		if tLeft.ExprType() == TypeBool {

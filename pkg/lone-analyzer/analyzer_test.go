@@ -1,6 +1,7 @@
 package loneanalyzer
 
 import (
+	"strings"
 	"testing"
 
 	ir "lone/pkg/lone-parser-ast"
@@ -481,5 +482,28 @@ fn run_trait(param_trait: i32) void {
 		if !found {
 			t.Errorf("expected diagnostic for rule %q in badOtherDecls, got: %v", rule, diagsBadOther)
 		}
+	}
+}
+
+func TestComparisonChainingAnalyzerRejection(t *testing.T) {
+	code := `
+fn check(a: i32, b: i32, c: i32) void {
+	var x = (a < b) < c
+}
+`
+	ast, err := loneparser.Parse("chained_analyzer.lone", []byte(code))
+	if err != nil {
+		t.Fatalf("parse failed unexpectedly: %v", err)
+	}
+	diags := NewAnalyzer("chained_analyzer.lone", DefaultConfig()).Analyze(ast)
+	found := false
+	for _, d := range diags {
+		if d.Rule == "type/invalid-comparison" && strings.Contains(d.Message, "cannot compare bool with comparison operator") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected diagnostic 'type/invalid-comparison' for parenthesized comparison chaining, got: %v", diags)
 	}
 }

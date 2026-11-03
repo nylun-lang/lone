@@ -3,6 +3,7 @@ package loneparser_test
 import (
 	ir "lone/pkg/lone-parser-ast"
 	"lone/pkg/lone-parser"
+	"strings"
 	"testing"
 )
 
@@ -1422,5 +1423,43 @@ fn check(x: ?i32) bool {
 	is4, ok := ret4.Value.(ir.IsExpr)
 	if !ok || is4.Negated || is4.TargetType.AsBase().Name != "none" {
 		t.Errorf("expected return x is none, got %+v", ret4.Value)
+	}
+}
+
+func TestComparisonChainingRejected(t *testing.T) {
+	chainedCases := []string{
+		"fn test() void { var x = a < b < c }",
+		"fn test() void { if a < b < c {} }",
+		"fn test() void { if a <= b <= c {} }",
+		"fn test() void { if a > b > c {} }",
+		"fn test() void { if a >= b >= c {} }",
+		"fn test() void { if a < b > c {} }",
+		"fn test() void { if a > b <= c >= d {} }",
+	}
+
+	for _, code := range chainedCases {
+		_, err := loneparser.Parse("chained.lone", []byte(code))
+		if err == nil {
+			t.Fatalf("expected compile-time parse error for chained comparison %q, but got nil", code)
+		}
+		if !strings.Contains(err.Error(), "comparison operators cannot be chained") {
+			t.Fatalf("expected error message to contain 'comparison operators cannot be chained' for %q, got: %v", code, err)
+		}
+	}
+
+	// Valid single comparisons and compound logical expressions must pass
+	validCases := []string{
+		"fn test() void { if a < b and b < c {} }",
+		"fn test() void { if (a < b) < c {} }",
+		"fn test() void { if a < b {} }",
+		"fn test() void { if a <= b {} }",
+		"fn test() void { if a > b {} }",
+		"fn test() void { if a >= b {} }",
+	}
+	for _, code := range validCases {
+		_, err := loneparser.Parse("valid.lone", []byte(code))
+		if err != nil {
+			t.Fatalf("expected valid parse for %q, got error: %v", code, err)
+		}
 	}
 }
