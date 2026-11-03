@@ -36,6 +36,8 @@ const (
 	BINARY_OP_MOD        BinaryOp = "%"
 	BINARY_OP_AND        BinaryOp = "and"
 	BINARY_OP_OR         BinaryOp = "or"
+	BINARY_OP_XOR        BinaryOp = "xor"
+	BINARY_OP_CARET      BinaryOp = "^"
 	BINARY_OP_LESS       BinaryOp = ">"
 	BINARY_OP_LESS_EQ    BinaryOp = ">="
 	BINARY_OP_EQ         BinaryOp = "=="

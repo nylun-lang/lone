@@ -301,6 +301,9 @@ KW_LOOP <- "loop" ![a-zA-Z0-9_]
 KW_FOR <- "for" ![a-zA-Z0-9_]
 KW_IN <- "in" ![a-zA-Z0-9_]
 KW_DROP <- "drop" ![a-zA-Z0-9_]
+KW_AND <- "and" ![a-zA-Z0-9_]
+KW_OR <- "or" ![a-zA-Z0-9_]
+KW_XOR <- "xor" ![a-zA-Z0-9_]
 
 KEYWORD <- 
     KW_IMPORT /
@@ -326,7 +329,10 @@ KEYWORD <-
     KW_LOOP /
     KW_FOR /
     KW_IN /
-    KW_DROP
+    KW_DROP /
+    KW_AND /
+    KW_OR /
+    KW_XOR
 
 FN_NAME <- "#"? IDENTIFIER {
     return string(c.text), nil
@@ -691,32 +697,50 @@ EQUALITY_BINARY_EXPR
     return expr, nil
 }
 
-BITWISE_OR_BINARY_EXPR 
-<- left:EQUALITY_BINARY_EXPR right:(_ "|" !"|" _ EQUALITY_BINARY_EXPR)* {
-    expr := FoldBinaryExpr("BITWISE_OR_BINARY_EXPR", c, left, right)
-    return expr, nil
-}
-
-BITWISE_XOR_BINARY_EXPR 
-<- left:BITWISE_OR_BINARY_EXPR right:(_ "^" _ BITWISE_OR_BINARY_EXPR)* {
-    expr := FoldBinaryExpr("BITWISE_XOR_BINARY_EXPR", c, left, right)
-    return expr, nil
-}
-
 BITWISE_AND_BINARY_EXPR 
-<- left:BITWISE_OR_BINARY_EXPR right:(_ "&" !"&" _ BITWISE_OR_BINARY_EXPR)* {
+<- left:EQUALITY_BINARY_EXPR right:(_ "&" !"&" _ EQUALITY_BINARY_EXPR)* {
     expr := FoldBinaryExpr("BITWISE_AND_BINARY_EXPR", c, left, right)
     return expr, nil
 }
 
+BITWISE_XOR_BINARY_EXPR 
+<- left:BITWISE_AND_BINARY_EXPR right:(_ "^" _ BITWISE_AND_BINARY_EXPR)* {
+    expr := FoldBinaryExpr("BITWISE_XOR_BINARY_EXPR", c, left, right)
+    return expr, nil
+}
+
+BITWISE_OR_BINARY_EXPR 
+<- left:BITWISE_XOR_BINARY_EXPR right:(_ "|" !"|" _ BITWISE_XOR_BINARY_EXPR)* {
+    expr := FoldBinaryExpr("BITWISE_OR_BINARY_EXPR", c, left, right)
+    return expr, nil
+}
+
+Logical_And_Op <- ("and" ![a-zA-Z0-9_] / "&&") {
+    return c.text, nil
+}
+
 LOGICAL_AND_BINARY_EXPR 
-<- left:BITWISE_AND_BINARY_EXPR right:(_ ("and" / "&&") _ BITWISE_AND_BINARY_EXPR)* {
+<- left:BITWISE_OR_BINARY_EXPR right:(_ Logical_And_Op _ BITWISE_OR_BINARY_EXPR)* {
     expr := FoldBinaryExpr("LOGICAL_AND_BINARY_EXPR", c, left, right)
     return expr, nil
 }
 
+Logical_Xor_Op <- "xor" ![a-zA-Z0-9_] {
+    return c.text, nil
+}
+
+LOGICAL_XOR_BINARY_EXPR 
+<- left:LOGICAL_AND_BINARY_EXPR right:(_ Logical_Xor_Op _ LOGICAL_AND_BINARY_EXPR)* {
+    expr := FoldBinaryExpr("LOGICAL_XOR_BINARY_EXPR", c, left, right)
+    return expr, nil
+}
+
+Logical_Or_Op <- ("or" ![a-zA-Z0-9_] / "||") {
+    return c.text, nil
+}
+
 LOGICAL_OR_BINARY_EXPR 
-<- left:LOGICAL_AND_BINARY_EXPR right:(_ ("or" / "||") _ LOGICAL_AND_BINARY_EXPR)* {
+<- left:LOGICAL_XOR_BINARY_EXPR right:(_ Logical_Or_Op _ LOGICAL_XOR_BINARY_EXPR)* {
     expr := FoldBinaryExpr("LOGICAL_OR_BINARY_EXPR", c, left, right)
     return expr, nil
 }

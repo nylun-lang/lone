@@ -355,3 +355,53 @@ fn main() void {
 		t.Errorf("unexpected output from custom iterator and optional test:\ngot:  %q\nwant: %q", output, want)
 	}
 }
+
+func TestXorOperatorWasmtime(t *testing.T) {
+	code := `
+import .println, .println_int from :std:io
+
+fn main() void {
+	-- 1. Boolean XOR truth table
+	if true xor false {
+		println("t_f:ok")
+	}
+	if false xor true {
+		println("f_t:ok")
+	}
+	if !(true xor true) {
+		println("t_t:ok")
+	}
+	if !(false xor false) {
+		println("f_f:ok")
+	}
+
+	-- 2. Integer bitwise XOR with 'xor' keyword
+	var a = 5 xor 3
+	println_int(a)
+
+	var b = 12 xor 10
+	println_int(b)
+
+	-- 3. Integer bitwise XOR with '^' symbol
+	var c = 5 ^ 3
+	println_int(c)
+
+	-- 4. Precedence: 'and' > 'xor' > 'or'
+	-- (true and false) xor true or false => (false xor true) or false => true or false => true
+	if true and false xor true or false {
+		println("prec:ok")
+	}
+}
+`
+	comp := lonecompiler.NewCompiler(lonecompiler.DefaultConfig())
+	res, err := comp.CompileSource("xor_test.lone", []byte(code))
+	if err != nil {
+		t.Fatalf("failed to compile xor test: %v (diags: %+v)", err, res.Diagnostics)
+	}
+
+	output := runWatWithWasmtime(t, res.WatOutput, "")
+	want := "t_f:ok\nf_t:ok\nt_t:ok\nf_f:ok\n6\n6\n6\nprec:ok\n"
+	if output != want {
+		t.Errorf("unexpected output from xor test:\ngot:  %q\nwant: %q", output, want)
+	}
+}

@@ -1311,3 +1311,49 @@ func TestFaCompilerDirectives(t *testing.T) {
 		t.Fatalf("expected bare @fa:wasm inline directive, got %+v", rawList[2].([]any)[1])
 	}
 }
+
+func TestXorOperatorParser(t *testing.T) {
+	code := `
+fn test_xor(a: bool, b: bool, c: bool, d: bool) bool {
+	return a and b xor c or d
+}
+
+fn test_caret(x: i32, y: i32) i32 {
+	return x ^ y
+}
+`
+	ast, err := loneparser.Parse("xor.lone", []byte(code))
+	if err != nil {
+		t.Fatalf("failed to parse xor operator: %v", err)
+	}
+
+	rawList, ok := ast.([]any)
+	if !ok || len(rawList) != 2 {
+		t.Fatalf("expected 2 declarations, got %T (%d)", ast, len(rawList))
+	}
+
+	fn1 := rawList[0].([]any)[1].(ir.FN_DEC)
+	ret1 := fn1.Body.Stmts[0].(ir.ReturnStmt)
+	// Outer is "or": (a and b xor c) or d
+	binOr, ok := ret1.Value.(ir.BinaryExpr)
+	if !ok || binOr.Op != "or" {
+		t.Fatalf("expected outer binary 'or', got %+v", ret1.Value)
+	}
+	// Left of "or" is "xor": (a and b) xor c
+	binXor, ok := binOr.Left.(ir.BinaryExpr)
+	if !ok || binXor.Op != "xor" {
+		t.Fatalf("expected left of 'or' to be 'xor', got %+v", binOr.Left)
+	}
+	// Left of "xor" is "and": a and b
+	binAnd, ok := binXor.Left.(ir.BinaryExpr)
+	if !ok || binAnd.Op != "and" {
+		t.Fatalf("expected left of 'xor' to be 'and', got %+v", binXor.Left)
+	}
+
+	fn2 := rawList[1].([]any)[1].(ir.FN_DEC)
+	ret2 := fn2.Body.Stmts[0].(ir.ReturnStmt)
+	binCaret, ok := ret2.Value.(ir.BinaryExpr)
+	if !ok || binCaret.Op != "^" {
+		t.Fatalf("expected binary '^', got %+v", ret2.Value)
+	}
+}

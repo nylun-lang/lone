@@ -40,8 +40,8 @@ The following keywords are reserved and guarded by word boundaries (`![a-zA-Z0-9
 import    from      as        pub       var       let
 type      struct    trait     impl      fn        return
 break     if        else      while     loop      for
-in        drop      and       or        true      false
-none      ro        comptime
+in        drop      and       or        xor       true
+false     none      ro        comptime
 ```
 
 ### 2.3 Comments
@@ -463,9 +463,12 @@ From highest precedence (evaluated first) to lowest:
 | 2 | Additive | `+`, `-` | Left-to-right |
 | 3 | Relational Comparison | `>=`, `<=`, `>`, `<` | Left-to-right |
 | 4 | Equality Comparison | `==`, `!=` | Left-to-right |
-| 5 | Bitwise Operators | `&`, `\|`, `^`, `<<`, `>>` | Left-to-right |
-| 6 | Logical AND | `&&`, `and` | Left-to-right (short-circuiting) |
-| 7 | Logical OR | `\|\|`, `or` | Left-to-right (short-circuiting) |
+| 5 | Bitwise AND | `&` | Left-to-right |
+| 6 | Bitwise XOR | `^` | Left-to-right |
+| 7 | Bitwise OR | `\|` | Left-to-right |
+| 8 | Logical AND | `&&`, `and` | Left-to-right |
+| 9 | Logical XOR | `xor` | Left-to-right |
+| 10 | Logical OR | `\|\|`, `or` | Left-to-right |
 
 ---
 
