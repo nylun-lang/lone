@@ -66,11 +66,71 @@ type PublishDiagnosticsParams struct {
 type SymbolKind int
 
 const (
-	SymbolKindFunction SymbolKind = 12
-	SymbolKindVariable SymbolKind = 13
-	SymbolKindConstant SymbolKind = 14
-	SymbolKindStruct   SymbolKind = 23
+	SymbolKindFile        SymbolKind = 1
+	SymbolKindModule      SymbolKind = 2
+	SymbolKindNamespace   SymbolKind = 3
+	SymbolKindPackage     SymbolKind = 4
+	SymbolKindClass       SymbolKind = 5
+	SymbolKindMethod      SymbolKind = 6
+	SymbolKindProperty    SymbolKind = 7
+	SymbolKindField       SymbolKind = 8
+	SymbolKindConstructor SymbolKind = 9
+	SymbolKindInterface   SymbolKind = 11
+	SymbolKindFunction    SymbolKind = 12
+	SymbolKindVariable    SymbolKind = 13
+	SymbolKindConstant    SymbolKind = 14
+	SymbolKindStruct      SymbolKind = 23
 )
+
+type CompletionItemKind int
+
+const (
+	CompletionItemKindText        CompletionItemKind = 1
+	CompletionItemKindMethod      CompletionItemKind = 2
+	CompletionItemKindFunction    CompletionItemKind = 3
+	CompletionItemKindConstructor CompletionItemKind = 4
+	CompletionItemKindField       CompletionItemKind = 5
+	CompletionItemKindVariable    CompletionItemKind = 6
+	CompletionItemKindClass       CompletionItemKind = 7
+	CompletionItemKindInterface   CompletionItemKind = 8
+	CompletionItemKindModule      CompletionItemKind = 9
+	CompletionItemKindProperty    CompletionItemKind = 10
+	CompletionItemKindKeyword     CompletionItemKind = 14
+	CompletionItemKindSnippet     CompletionItemKind = 15
+	CompletionItemKindStruct      CompletionItemKind = 22
+)
+
+type CompletionItem struct {
+	Label         string             `json:"label"`
+	Kind          CompletionItemKind `json:"kind,omitempty"`
+	Detail        string             `json:"detail,omitempty"`
+	Documentation string             `json:"documentation,omitempty"`
+	InsertText    string             `json:"insertText,omitempty"`
+}
+
+type CompletionList struct {
+	IsIncomplete bool             `json:"isIncomplete"`
+	Items        []CompletionItem `json:"items"`
+}
+
+type CompletionParams struct {
+	TextDocument struct {
+		URI string `json:"uri"`
+	} `json:"textDocument"`
+	Position Position `json:"position"`
+}
+
+type DefinitionParams struct {
+	TextDocument struct {
+		URI string `json:"uri"`
+	} `json:"textDocument"`
+	Position Position `json:"position"`
+}
+
+type Location struct {
+	URI   string `json:"uri"`
+	Range Range  `json:"range"`
+}
 
 type DocumentSymbol struct {
 	Name           string           `json:"name"`
@@ -136,4 +196,6 @@ type ServerCapabilities struct {
 	TextDocumentSync       int  `json:"textDocumentSync"` // 1 = Full
 	HoverProvider          bool `json:"hoverProvider"`
 	DocumentSymbolProvider bool `json:"documentSymbolProvider"`
+	CompletionProvider     bool `json:"completionProvider"`
+	DefinitionProvider     bool `json:"definitionProvider"`
 }

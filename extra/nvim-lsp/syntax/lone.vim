@@ -3,10 +3,10 @@ if exists("b:current_syntax")
   finish
 endif
 
-syntax keyword loneKeyword fn var type return break if else while drop ro comptime
+syntax keyword loneKeyword fn var let type struct trait impl return break if else while drop ro comptime pub import from as and or
 syntax keyword loneBoolean true false
 syntax keyword loneConstant none
-syntax keyword loneType i8 i16 i32 i64 i128 u8 u16 u32 u64 u128 f32 f64 int bool str string char void any infer
+syntax keyword loneType i8 i16 i32 i64 i128 u8 u16 u32 u64 u128 f32 f64 int bool str string char void any infer ptr ref
 
 " Compiler intrinsics start with #
 syntax match loneIntrinsic "#[a-zA-Z_][a-zA-Z0-9_]*"

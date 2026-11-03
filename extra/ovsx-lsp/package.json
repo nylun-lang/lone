@@ -2,7 +2,7 @@
   "name": "lone-lsp",
   "displayName": "Lone Language Support",
   "description": "Language Server Protocol client and syntax highlighting for the Lone programming language",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "publisher": "lone-lang",
   "license": "Apache-2.0",
   "repository": {
@@ -81,7 +81,7 @@
     "watch": "tsc -b -w",
     "build": "tsc -b",
     "package": "npx @vscode/vsce package --no-dependencies",
-    "publish:ovsx": "npx ovsx publish lone-lsp-0.1.0.vsix"
+    "publish:ovsx": "npx ovsx publish lone-lsp-0.3.0.vsix"
   },
   "dependencies": {
     "vscode-languageclient": "^9.0.1"
