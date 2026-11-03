@@ -227,3 +227,31 @@ fn main() void {
 		t.Errorf("unexpected output from packed if test:\ngot:  %q\nwant: %q", output, want)
 	}
 }
+
+func TestLoopWasmtime(t *testing.T) {
+	code := `
+import .println_int from :std:io
+
+fn main() void {
+	var count = 0
+	loop {
+		count = count + 1
+		println_int(count)
+		if count >= 3 {
+			break
+		}
+	}
+}
+`
+	comp := lonecompiler.NewCompiler(lonecompiler.DefaultConfig())
+	res, err := comp.CompileSource("loop_test.lone", []byte(code))
+	if err != nil {
+		t.Fatalf("failed to compile loop: %v", err)
+	}
+
+	output := runWatWithWasmtime(t, res.WatOutput, "")
+	want := "1\n2\n3\n"
+	if output != want {
+		t.Errorf("unexpected output from loop test:\ngot:  %q\nwant: %q", output, want)
+	}
+}

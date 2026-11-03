@@ -412,6 +412,16 @@ func (l *lowerer) lowerStmt(stmt loneanalyzer.TStmt) {
 		l.loopExitStack = l.loopExitStack[:len(l.loopExitStack)-1]
 		l.curBlk = exitBlk
 
+	case *loneanalyzer.TLabelDec:
+		exitBlk := l.freshBlock("label_exit")
+		l.loopExitStack = append(l.loopExitStack, exitBlk.Name)
+		l.lowerBlock(&s.Body)
+		if l.curBlk != nil && l.curBlk.Terminator == nil {
+			l.curBlk.Terminator = MirJump{Target: exitBlk.Name}
+		}
+		l.loopExitStack = l.loopExitStack[:len(l.loopExitStack)-1]
+		l.curBlk = exitBlk
+
 	case *loneanalyzer.TBreakStmt:
 		if len(l.loopExitStack) > 0 {
 			target := l.loopExitStack[len(l.loopExitStack)-1]

@@ -39,8 +39,9 @@ The following keywords are reserved and guarded by word boundaries (`![a-zA-Z0-9
 ```
 import    from      as        pub       var       let
 type      struct    trait     impl      fn        return
-break     if        else      while     drop      and
-or        true      false     none      ro        comptime
+break     if        else      while     loop      drop
+and       or        true      false     none      ro
+comptime
 ```
 
 ### 2.3 Comments
@@ -354,6 +355,20 @@ while low <= high {
     low = low + 1
 }
 ```
+
+#### 6.4.1 Infinite Loop (`LOOP_STMT`)
+Runs an infinite loop until terminated by `break` or `return`:
+```lone
+loop {
+    var line = read_line()
+    if line == "quit" {
+        break
+    }
+    println(line)
+}
+```
+- Can also be labeled for targeted breaks: `outer: loop { inner: loop { break outer } }`.
+- Desugars cleanly into an `ir.WhileStmt` with constant `true` condition.
 
 ### 6.5 Drop Statement (`DROP_STMT`)
 Evaluates an expression and explicitly discards its result:

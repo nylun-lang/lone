@@ -146,7 +146,7 @@ PROGRAM <- decls:(_ TOP_LEVEL)* _ EOF {
 
 EOF <- !.
 
-TOP_LEVEL <- COMPILER_DIRECTIVE / IMPORT_STMT / TYPE_DEC / IMPL_DEC / BIND_DEC / FN_DEC / IF_STMT / WHILE_STMT / LABEL_DEC / DROP_STMT
+TOP_LEVEL <- COMPILER_DIRECTIVE / IMPORT_STMT / TYPE_DEC / IMPL_DEC / BIND_DEC / FN_DEC / IF_STMT / WHILE_STMT / LOOP_STMT / LABEL_DEC / DROP_STMT
 
 COMPILER_DIRECTIVE <- FA_DIRECTIVE / LEGACY_WASM_DIRECTIVE
 
@@ -297,6 +297,7 @@ KW_BREAK <- "break" ![a-zA-Z0-9_]
 KW_IF <- "if" ![a-zA-Z0-9_]
 KW_ELSE <- "else" ![a-zA-Z0-9_]
 KW_WHILE <- "while" ![a-zA-Z0-9_]
+KW_LOOP <- "loop" ![a-zA-Z0-9_]
 KW_DROP <- "drop" ![a-zA-Z0-9_]
 
 KEYWORD <- 
@@ -320,6 +321,7 @@ KEYWORD <-
     KW_IF /
     KW_ELSE /
     KW_WHILE /
+    KW_LOOP /
     KW_DROP
 
 FN_NAME <- "#"? IDENTIFIER {
@@ -941,7 +943,11 @@ RETURN_STMT <- KW_RETURN expr:(_INLINE_WS EXPR)? {
     }, nil
 }
 
-BREAK_LABEL <- id:IDENTIFIER _INLINE_WS ":" !":" {
+LABEL_IDENT <- IDENTIFIER / "loop" {
+    return c.text, nil
+}
+
+BREAK_LABEL <- id:LABEL_IDENT _INLINE_WS ":" !":" {
     return string(AnyValToType[[]uint8]("BREAK_LABEL.id", id)), nil
 }
 
@@ -1048,6 +1054,18 @@ WHILE_STMT <- KW_WHILE _ cond:EXPR _ body:BLOCK {
     }, nil
 }
 
+LOOP_STMT <- KW_LOOP _ body:BLOCK {
+    return ir.WhileStmt{
+        Cond: ir.Literal{
+            Kind:  ir.LITERAL_BOOL,
+            Value: true,
+            Pos:   currentPosition(c),
+        },
+        Body: AnyValToType[ir.Block]("LOOP_STMT.body", body),
+        Pos:  currentPosition(c),
+    }, nil
+}
+
 DROP_STMT <- KW_DROP _ expr:EXPR {
     return ir.DropStmt{
         Expr: AnyValToType[ir.Expr]("DROP_STMT.expr", expr),
@@ -1063,7 +1081,7 @@ ASSIGN_STMT <- target:UNARY_EXPR _ "=" !"=" _ val:EXPR {
     }, nil
 }
 
-STMT <- BIND_DEC / RETURN_STMT / BREAK_STMT / DROP_STMT / IF_STMT / WHILE_STMT / LABEL_DEC / ASSIGN_STMT / EXPR
+STMT <- BIND_DEC / RETURN_STMT / BREAK_STMT / DROP_STMT / IF_STMT / WHILE_STMT / LOOP_STMT / LABEL_DEC / ASSIGN_STMT / EXPR
 
 BLOCK <- "{" _ stmts:(_ STMT)* _ "}" {
     var stmt_list []any = []any{}
@@ -1080,9 +1098,9 @@ BLOCK <- "{" _ stmts:(_ STMT)* _ "}" {
     }, nil
 }
 
-LABELABLE <- BLOCK / IF_STMT / WHILE_STMT
+LABELABLE <- BLOCK / IF_STMT / WHILE_STMT / LOOP_STMT
 
-LABEL_DEC <- name:IDENTIFIER _ ":" !":" _ body:LABELABLE {
+LABEL_DEC <- name:LABEL_IDENT _ ":" !":" _ body:LABELABLE {
     var blk ir.Block
     if b, ok := body.(ir.Block); ok {
         blk = b

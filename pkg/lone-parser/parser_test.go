@@ -860,6 +860,70 @@ fn check_with_delimiters(x: i32) void {
 	}
 }
 
+func TestLoopStmt(t *testing.T) {
+	code := `
+fn run_forever() void {
+	loop {
+		#print("tick\n")
+		break
+	}
+}
+
+fn run_labeled() void {
+	outer: loop {
+		break outer:
+	}
+}
+`
+	ast, err := loneparser.Parse("loop.lone", []byte(code))
+	if err != nil {
+		t.Fatalf("failed to parse loop statement: %v", err)
+	}
+
+	rawList, ok := ast.([]any)
+	if !ok || len(rawList) != 2 {
+		t.Fatalf("expected 2 declarations, got %T (%d)", ast, len(rawList))
+	}
+
+	// 1. run_forever()
+	fn1 := rawList[0].([]any)[1].(ir.FN_DEC)
+	if len(fn1.Body.Stmts) != 1 {
+		t.Fatalf("expected 1 stmt in fn1, got %d", len(fn1.Body.Stmts))
+	}
+	whileStmt, ok := fn1.Body.Stmts[0].(ir.WhileStmt)
+	if !ok {
+		t.Fatalf("expected WhileStmt for loop, got %T", fn1.Body.Stmts[0])
+	}
+	condLit, ok := whileStmt.Cond.(ir.Literal)
+	if !ok || condLit.Kind != ir.LITERAL_BOOL || condLit.Value != true {
+		t.Errorf("expected boolean true literal condition, got: %+v", whileStmt.Cond)
+	}
+	if len(whileStmt.Body.Stmts) != 2 {
+		t.Errorf("expected 2 stmts in loop body, got %d", len(whileStmt.Body.Stmts))
+	}
+
+	// 2. run_labeled()
+	fn2 := rawList[1].([]any)[1].(ir.FN_DEC)
+	labelDec, ok := fn2.Body.Stmts[0].(ir.LabelDec)
+	if !ok {
+		t.Fatalf("expected LabelDec for outer: loop, got %T", fn2.Body.Stmts[0])
+	}
+	if labelDec.Name != "outer" {
+		t.Errorf("expected label name 'outer', got %q", labelDec.Name)
+	}
+	labeledLoop, ok := labelDec.Body.Stmts[0].(ir.WhileStmt)
+	if !ok {
+		t.Fatalf("expected WhileStmt in labeled body, got %T", labelDec.Body.Stmts[0])
+	}
+	if len(labeledLoop.Body.Stmts) != 1 {
+		t.Fatalf("expected 1 stmt in labeledLoop body, got %d", len(labeledLoop.Body.Stmts))
+	}
+	brk, ok := labeledLoop.Body.Stmts[0].(ir.BreakStmt)
+	if !ok || brk.Label != "outer" {
+		t.Errorf("expected break outer, got: %+v", brk)
+	}
+}
+
 func TestDropStmt(t *testing.T) {
 	code := `
 fn compute() i32 {
