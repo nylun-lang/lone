@@ -391,10 +391,14 @@ The notions of generics in lone is bound to that of materialization.
 
 A trait is a set of behavior a given `T` struct must provide.
 
+###### Trait Naming Convention
+- **Trait Types**: A trait type name **must** end with the suffix `Trait` (e.g. `ComparableTrait`, `WriterTrait`, `ReaderTrait`).
+- **Non-Trait Identifiers**: Any type or symbol that is **not** a trait must not end with `trait` (case-insensitive, e.g. `_trait`, `_TRAIT`, `Trait`) or be named `Trait`/`trait`. Legitimate English words (e.g. `portrait`, `strait`) are preserved.
+
 ```lone
 type Ordering = enum{Less Equal Greater}
 
-type Comparable<U where { U is unknown }> = trait {
+type ComparableTrait<U where { U is unknown }> = trait {
   compare fn(ref<ro U>, ref<ro U>) Ordering
 }
 
@@ -402,7 +406,7 @@ type Rect = struct {
   (w,h) int = 0
 }
 
-impl Comparable<Rect> on Rect {
+impl ComparableTrait<Rect> on Rect {
   fn compare(left, right) Ordering {
     let (l, r) = #refGrab(left, right)
     if l.w + l.h > r.w + r.h {
@@ -414,19 +418,19 @@ impl Comparable<Rect> on Rect {
   }
 }
 
-let cmp = Comparable::|Rect|
+let cmp = ComparableTrait::|Rect|
 let res = cmp.compare(&Rect::(1,2), &Rect::(1,2))
 ```
 
 ```lone
-import { .Ordering, .Comparable, } from :std:math
+import .Ordering, .ComparableTrait from :std:math
 
 fn binary_search<U where {
-  U satisfies Comparable
+  U satisfies ComparableTrait
   let D is list<U>
 }>(A: D, x: U) ?U {
   
-  let cmp = Comparable|U|
+  let cmp = ComparableTrait|U|
   let (start, end) = 0, #len(A, -1)
 
   while start <= end {
