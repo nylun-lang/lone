@@ -3,15 +3,17 @@ package loneanalyzer
 import (
 	"fmt"
 	loneast "lone/pkg2/lone-parser-ast"
+	"strings"
 	"unicode"
 )
 
 // TypeEvaluator performs type checking, symbol resolution, and immutability validation.
 type TypeEvaluator struct {
-	stack   *ScopeStack
-	diags   []Diagnostic
-	structs map[string]*StructType
-	traits  map[string]*TraitType
+	stack           *ScopeStack
+	diags           []Diagnostic
+	structs         map[string]*StructType
+	traits          map[string]*TraitType
+	currentSelfType Type
 }
 
 func NewTypeEvaluator() *TypeEvaluator {
@@ -46,7 +48,7 @@ func (te *TypeEvaluator) EvaluateProgram(decls []any) *TProgram {
 		}
 	}
 
-	// Pass 2: Hoist function signatures, impl blocks, and global variables
+	// Pass 2: Hoist function signatures, impl blocks, global variables, and host capability directives
 	for _, decl := range decls {
 		switch d := decl.(type) {
 		case loneast.FN_DEC:
@@ -57,6 +59,18 @@ func (te *TypeEvaluator) EvaluateProgram(decls []any) *TProgram {
 			te.hoistVar(&d)
 		case *loneast.BIND_DEC:
 			te.hoistVar(d)
+		case loneast.WasmDirective:
+			te.hoistWasmDirective(&d)
+		case *loneast.WasmDirective:
+			te.hoistWasmDirective(d)
+		case loneast.ImportDecl:
+			te.hoistImport(&d)
+		case *loneast.ImportDecl:
+			te.hoistImport(d)
+		case loneast.IMPL_DEC:
+			te.hoistImpl(&d)
+		case *loneast.IMPL_DEC:
+			te.hoistImpl(d)
 		}
 	}
 
@@ -123,6 +137,18 @@ func (te *TypeEvaluator) hoistTypeDec(t *loneast.TYPE_DEC) {
 		st.TotalSize = offset
 		st.TotalAlign = maxAlign
 
+		for _, m := range t.Methods {
+			var mParams []FnParamInfo
+			for _, p := range m.Params {
+				mParams = append(mParams, FnParamInfo{Name: p.Name, Type: te.resolveType(p.Type)})
+			}
+			mRet := Type(TypeVoid)
+			if m.ReturnType != nil {
+				mRet = te.resolveType(*m.ReturnType)
+			}
+			st.Methods[m.Name] = &FnType{Params: mParams, Return: mRet}
+		}
+
 		te.structs[t.Name] = st
 		_ = te.stack.Define(&Symbol{Name: t.Name, Kind: SymbolType, Type: st, Node: t})
 	}
@@ -172,6 +198,178 @@ func (te *TypeEvaluator) hoistVar(b *loneast.BIND_DEC) {
 		IsMutable: b.IsMutable,
 		Node:      b,
 	})
+}
+
+func (te *TypeEvaluator) hoistWasmDirective(wd *loneast.WasmDirective) {
+	if wd == nil {
+		return
+	}
+	for _, imp := range wd.Imports {
+		if imp.Source == ":wasi:snapshot_preview1" {
+			for _, sym := range imp.Symbols {
+				symName := strings.TrimPrefix(sym, ".")
+				switch symName {
+				case "fd_write":
+					_ = te.stack.Define(&Symbol{
+						Name: symName,
+						Kind: SymbolFn,
+						Type: &FnType{
+							Params: []FnParamInfo{
+								{Name: "fd", Type: TypeI32},
+								{Name: "iovs", Type: &PtrType{Elem: TypeAny}},
+								{Name: "iovs_len", Type: TypeI32},
+								{Name: "nwritten", Type: &PtrType{Elem: TypeI32}},
+							},
+							Return: TypeI32,
+						},
+					})
+				case "fd_read":
+					_ = te.stack.Define(&Symbol{
+						Name: symName,
+						Kind: SymbolFn,
+						Type: &FnType{
+							Params: []FnParamInfo{
+								{Name: "fd", Type: TypeI32},
+								{Name: "iovs", Type: &PtrType{Elem: TypeAny}},
+								{Name: "iovs_len", Type: TypeI32},
+								{Name: "nread", Type: &PtrType{Elem: TypeI32}},
+							},
+							Return: TypeI32,
+						},
+					})
+				case "fd_close":
+					_ = te.stack.Define(&Symbol{
+						Name: symName,
+						Kind: SymbolFn,
+						Type: &FnType{
+							Params: []FnParamInfo{
+								{Name: "fd", Type: TypeI32},
+							},
+							Return: TypeI32,
+						},
+					})
+				case "proc_exit":
+					_ = te.stack.Define(&Symbol{
+						Name: symName,
+						Kind: SymbolFn,
+						Type: &FnType{
+							Params: []FnParamInfo{
+								{Name: "code", Type: TypeI32},
+							},
+							Return: TypeVoid,
+						},
+					})
+				case "random_get":
+					_ = te.stack.Define(&Symbol{
+						Name: symName,
+						Kind: SymbolFn,
+						Type: &FnType{
+							Params: []FnParamInfo{
+								{Name: "buf", Type: &PtrType{Elem: TypeAny}},
+								{Name: "buf_len", Type: TypeI32},
+							},
+							Return: TypeI32,
+						},
+					})
+				}
+			}
+		}
+	}
+}
+
+func (te *TypeEvaluator) hoistImport(imp *loneast.ImportDecl) {
+	if imp == nil {
+		return
+	}
+	if imp.Source == ":std:sys" {
+		for _, sym := range imp.Symbols {
+			symName := strings.TrimPrefix(sym, ".")
+			switch symName {
+			case "STDIN_FD", "STDOUT_FD", "STDERR_FD":
+				_ = te.stack.Define(&Symbol{Name: symName, Kind: SymbolVar, Type: TypeI32, IsMutable: false})
+			case "sys_write":
+				_ = te.stack.Define(&Symbol{
+					Name: symName,
+					Kind: SymbolFn,
+					Type: &FnType{
+						Params: []FnParamInfo{
+							{Name: "fd", Type: TypeI32},
+							{Name: "buf", Type: &PtrType{Elem: TypeU8}},
+							{Name: "len", Type: TypeI32},
+						},
+						Return: TypeI32,
+					},
+				})
+			case "sys_read":
+				_ = te.stack.Define(&Symbol{
+					Name: symName,
+					Kind: SymbolFn,
+					Type: &FnType{
+						Params: []FnParamInfo{
+							{Name: "fd", Type: TypeI32},
+							{Name: "buf", Type: &PtrType{Elem: TypeU8}},
+							{Name: "max_len", Type: TypeI32},
+						},
+						Return: TypeI32,
+					},
+				})
+			case "sys_random":
+				_ = te.stack.Define(&Symbol{
+					Name: symName,
+					Kind: SymbolFn,
+					Type: &FnType{
+						Params: []FnParamInfo{
+							{Name: "buf", Type: &PtrType{Elem: TypeAny}},
+							{Name: "len", Type: TypeI32},
+						},
+						Return: TypeI32,
+					},
+				})
+			case "sys_close":
+				_ = te.stack.Define(&Symbol{
+					Name: symName,
+					Kind: SymbolFn,
+					Type: &FnType{
+						Params: []FnParamInfo{{Name: "fd", Type: TypeI32}},
+						Return: TypeI32,
+					},
+				})
+			case "sys_exit":
+				_ = te.stack.Define(&Symbol{
+					Name: symName,
+					Kind: SymbolFn,
+					Type: &FnType{
+						Params: []FnParamInfo{{Name: "code", Type: TypeI32}},
+						Return: TypeVoid,
+					},
+				})
+			}
+		}
+	}
+}
+
+func (te *TypeEvaluator) hoistImpl(imp *loneast.IMPL_DEC) {
+	if imp == nil {
+		return
+	}
+	targetType := te.resolveType(imp.TargetType)
+	if st, ok := targetType.(*StructType); ok {
+		for _, m := range imp.Methods {
+			var mParams []FnParamInfo
+			for _, p := range m.Params {
+				pType := te.resolveType(p.Type)
+				if p.Name == "self" && (pType == TypeInfer || pType == TypeUnknown) {
+					pType = targetType
+				}
+				mParams = append(mParams, FnParamInfo{Name: p.Name, Type: pType})
+			}
+			mRet := Type(TypeVoid)
+			if m.ReturnType != nil {
+				mRet = te.resolveType(*m.ReturnType)
+			}
+			st.Methods[m.Name] = &FnType{Params: mParams, Return: mRet}
+		}
+	}
 }
 
 // =====================
@@ -296,6 +494,11 @@ func (te *TypeEvaluator) analyzeFnDec(f *loneast.FN_DEC) *TFnDec {
 	var tParams []TFnParam
 	for _, p := range f.Params {
 		pType := te.resolveType(p.Type)
+		if p.Name == "self" && (pType == TypeUnknown || pType == TypeInfer || p.Type.Value == nil) {
+			if te.currentSelfType != nil {
+				pType = te.currentSelfType
+			}
+		}
 		_ = te.stack.Define(&Symbol{Name: p.Name, Kind: SymbolVar, Type: pType, IsMutable: false})
 		tParams = append(tParams, TFnParam{Name: p.Name, Type: pType, Span_: p.Span_})
 	}
@@ -318,6 +521,10 @@ func (te *TypeEvaluator) analyzeFnDec(f *loneast.FN_DEC) *TFnDec {
 
 func (te *TypeEvaluator) analyzeImplDec(i *loneast.IMPL_DEC) *TImplDec {
 	targetType := te.resolveType(i.TargetType)
+	oldSelf := te.currentSelfType
+	te.currentSelfType = targetType
+	defer func() { te.currentSelfType = oldSelf }()
+
 	var tMethods []*TFnDec
 
 	for _, m := range i.Methods {
@@ -824,14 +1031,24 @@ func (te *TypeEvaluator) evalPostfixExpr(p loneast.PostFixExpr) TExpr {
 	for _, s := range p.Suffix {
 		switch suff := s.(type) {
 		case loneast.SuffixMemberAccess:
+			var targetStruct *StructType
 			if st, ok := curr.ExprType().(*StructType); ok {
-				fInfo, exists := st.Field(suff.Name)
-				if !exists {
-					te.addDiag(SeverityError, suff.Span_, "type/undefined-field",
-						fmt.Sprintf("struct %q has no field %q", st.Name, suff.Name))
-					curr = &TMemberAccessExpr{Base: curr, Field: suff.Name, Typ: TypeUnknown, Span_: suff.Span_}
-				} else {
+				targetStruct = st
+			} else if vref, ok := curr.(*TVarRefExpr); ok {
+				if st, ok := te.structs[vref.Name]; ok {
+					targetStruct = st
+				}
+			}
+
+			if targetStruct != nil {
+				if fInfo, exists := targetStruct.Field(suff.Name); exists {
 					curr = &TMemberAccessExpr{Base: curr, Field: suff.Name, Offset: fInfo.Offset, Typ: fInfo.Type, Span_: suff.Span_}
+				} else if mInfo, exists := targetStruct.Method(suff.Name); exists {
+					curr = &TMemberAccessExpr{Base: curr, Field: suff.Name, Typ: mInfo, Span_: suff.Span_}
+				} else {
+					te.addDiag(SeverityError, suff.Span_, "type/undefined-field",
+						fmt.Sprintf("struct %q has no field or method %q", targetStruct.Name, suff.Name))
+					curr = &TMemberAccessExpr{Base: curr, Field: suff.Name, Typ: TypeUnknown, Span_: suff.Span_}
 				}
 			} else {
 				curr = &TMemberAccessExpr{Base: curr, Field: suff.Name, Typ: TypeUnknown, Span_: suff.Span_}

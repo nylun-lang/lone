@@ -297,6 +297,13 @@ func (s *StructType) Field(name string) (StructFieldInfo, bool) {
 	f, ok := s.FieldMap[name]
 	return f, ok
 }
+func (s *StructType) Method(name string) (*FnType, bool) {
+	if s.Methods == nil {
+		return nil, false
+	}
+	m, ok := s.Methods[name]
+	return m, ok
+}
 
 // =====================
 // TRAIT

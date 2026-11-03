@@ -1,0 +1,46 @@
+-- Lone Standard Library (v2): String Operations (:std:string)
+
+-- Computes length of null-terminated string.
+pub fn len(s: str) i32 {
+    var i: i32 = 0
+    while s[i] != 0 {
+        i = i + 1
+    }
+    return i
+}
+
+-- Checks if two strings are byte-for-byte equal.
+pub fn equals(a: str, b: str) bool {
+    let lenA = len(a)
+    let lenB = len(b)
+    if lenA != lenB {
+        return false
+    }
+
+    var i: i32 = 0
+    while i < lenA {
+        if a[i] != b[i] {
+            return false
+        }
+        i = i + 1
+    }
+    return true
+}
+
+-- Checks whether haystack string contains needle as a prefix.
+pub fn starts_with(haystack: str, prefix: str) bool {
+    let pLen = len(prefix)
+    let hLen = len(haystack)
+    if pLen > hLen {
+        return false
+    }
+
+    var i: i32 = 0
+    while i < pLen {
+        if haystack[i] != prefix[i] {
+            return false
+        }
+        i = i + 1
+    }
+    return true
+}

@@ -151,6 +151,12 @@ func (p *Parser) parsePrefix() (loneast.Expr, error) {
 			Span_: tok.Span(),
 		}, nil
 
+	case lonelexer.TokenSelf:
+		return loneast.NameRef{
+			Name:  tok.Text,
+			Span_: tok.Span(),
+		}, nil
+
 	case lonelexer.TokenIntrinsic:
 		return loneast.NameRef{
 			Name:  tok.Text,
