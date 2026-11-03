@@ -208,6 +208,9 @@ func (p *Parser) parsePrefix() (loneast.Expr, error) {
 	case lonelexer.TokenAmpRaw:
 		return p.parseUnary(loneast.UNARY_OP_RAW_REF, tok, PrecUnary)
 
+	case lonelexer.TokenMatch:
+		return p.parseMatchExpr(tok)
+
 	default:
 		return nil, fmt.Errorf("unexpected token %s (%q) at %s", tok.Kind, tok.Text, tok.Start)
 	}
@@ -479,4 +482,156 @@ func stringsReplace(s, old, new string) string {
 		}
 	}
 	return res
+}
+
+func (p *Parser) parseMatchExpr(matchTok lonelexer.Token) (loneast.Expr, error) {
+	target, err := p.ParseExpr(PrecNone)
+	if err != nil {
+		return nil, err
+	}
+
+	lbrace, err := p.expect(lonelexer.TokenLBrace)
+	if err != nil {
+		return nil, err
+	}
+	_ = lbrace
+
+	var arms []loneast.MatchArm
+	for p.peek().Kind != lonelexer.TokenRBrace && !p.isAtEnd() {
+		pat, err := p.parseMatchPattern()
+		if err != nil {
+			return nil, err
+		}
+
+		arrow, err := p.expect(lonelexer.TokenFatArrow)
+		if err != nil {
+			return nil, err
+		}
+		_ = arrow
+
+		var body any
+		if p.peek().Kind == lonelexer.TokenLBrace {
+			// Check if object literal: { .field: value }
+			if p.peekN(1).Kind == lonelexer.TokenDot {
+				braceTok := p.advance()
+				bExpr, err := p.parseObjectLiteral(braceTok)
+				if err != nil {
+					return nil, err
+				}
+				body = bExpr
+			} else {
+				blk, err := p.parseBlock()
+				if err != nil {
+					return nil, err
+				}
+				body = blk
+			}
+		} else {
+			bExpr, err := p.ParseExpr(PrecNone)
+			if err != nil {
+				return nil, err
+			}
+			body = bExpr
+		}
+
+		endPos := p.previous().End
+		if p.peek().Kind == lonelexer.TokenComma {
+			commaTok := p.advance()
+			endPos = commaTok.End
+		}
+
+		arms = append(arms, loneast.MatchArm{
+			Pattern: pat,
+			Body:    body,
+			Span_:   lonelexer.Span{Start: pat.NodeSpan().Start, End: endPos},
+		})
+	}
+
+	rbrace, err := p.expect(lonelexer.TokenRBrace)
+	if err != nil {
+		return nil, err
+	}
+
+	return loneast.MatchExpr{
+		Target: target,
+		Arms:   arms,
+		Span_:  lonelexer.Span{Start: matchTok.Start, End: rbrace.End},
+	}, nil
+}
+
+func (p *Parser) parseMatchPattern() (loneast.MatchPattern, error) {
+	tok := p.peek()
+
+	// Wildcard: _
+	if tok.Kind == lonelexer.TokenIdent && tok.Text == "_" {
+		p.advance()
+		return loneast.WildcardPattern{Span_: tok.Span()}, nil
+	}
+
+	// Literals: int, float, string, char, bool, none
+	if tok.Kind == lonelexer.TokenInt || tok.Kind == lonelexer.TokenFloat ||
+		tok.Kind == lonelexer.TokenString || tok.Kind == lonelexer.TokenChar ||
+		tok.Kind == lonelexer.TokenTrue || tok.Kind == lonelexer.TokenFalse ||
+		tok.Kind == lonelexer.TokenNone {
+		litExpr, err := p.parsePrefix()
+		if err != nil {
+			return nil, err
+		}
+		if lit, ok := litExpr.(loneast.Literal); ok {
+			return loneast.LiteralPattern{Literal: lit, Span_: lit.Span_}, nil
+		}
+		return nil, fmt.Errorf("expected literal pattern at %s", tok.Start)
+	}
+
+	// Variant: Type::Variant(bindings...) or Type::Variant or Variant(bindings...) or Variant
+	if tok.Kind == lonelexer.TokenIdent {
+		id1 := p.advance()
+		typeName := ""
+		variantName := id1.Text
+
+		if p.peek().Kind == lonelexer.TokenColon2 {
+			p.advance() // consume '::'
+			id2, err := p.expect(lonelexer.TokenIdent)
+			if err != nil {
+				return nil, err
+			}
+			typeName = id1.Text
+			variantName = id2.Text
+		}
+
+		var bindings []string
+		if p.peek().Kind == lonelexer.TokenLParen {
+			p.advance()
+			if p.peek().Kind != lonelexer.TokenRParen {
+				for {
+					bTok, err := p.expect(lonelexer.TokenIdent)
+					if err != nil {
+						return nil, err
+					}
+					bindings = append(bindings, bTok.Text)
+					if p.peek().Kind == lonelexer.TokenComma {
+						p.advance()
+						if p.peek().Kind == lonelexer.TokenRParen {
+							break
+						}
+					} else {
+						break
+					}
+				}
+			}
+			_, err := p.expect(lonelexer.TokenRParen)
+			if err != nil {
+				return nil, err
+			}
+		}
+
+		return loneast.VariantPattern{
+			TypeName: typeName,
+			Variant:  variantName,
+			Bindings: bindings,
+			Span_:    lonelexer.Span{Start: id1.Start, End: p.previous().End},
+		}, nil
+	}
+
+	return nil, fmt.Errorf("unexpected pattern token %s (%q) at %s", tok.Kind, tok.Text, tok.Start)
 }

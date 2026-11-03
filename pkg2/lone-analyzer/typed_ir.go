@@ -69,6 +69,14 @@ type TTraitDec struct {
 
 func (t *TTraitDec) Span() loneast.Span { return t.Span_ }
 
+type TEnumDec struct {
+	Name  string
+	Type  *EnumType
+	Span_ loneast.Span
+}
+
+func (e *TEnumDec) Span() loneast.Span { return e.Span_ }
+
 type TImplDec struct {
 	TraitName  string
 	TargetType Type
@@ -273,3 +281,35 @@ type TIndexExpr struct {
 
 func (i *TIndexExpr) Span() loneast.Span { return i.Span_ }
 func (i *TIndexExpr) ExprType() Type    { return i.Typ }
+
+type TEnumConstructExpr struct {
+	EnumType *EnumType
+	Variant  *EnumVariantInfo
+	Args     []TExpr
+	Typ      Type
+	Span_    loneast.Span
+}
+
+func (e *TEnumConstructExpr) Span() loneast.Span { return e.Span_ }
+func (e *TEnumConstructExpr) ExprType() Type    { return e.Typ }
+
+type TMatchArm struct {
+	Pattern   loneast.MatchPattern
+	Variant   *EnumVariantInfo // if matching an enum variant
+	Bindings  []*TVarDec       // variables bound by variant fields
+	BodyExpr  TExpr            // non-nil if arm body is an expression
+	BodyBlock *TBlock          // non-nil if arm body is a block
+	Span_     loneast.Span
+}
+
+func (a *TMatchArm) Span() loneast.Span { return a.Span_ }
+
+type TMatchExpr struct {
+	Target TExpr
+	Arms   []TMatchArm
+	Typ    Type
+	Span_  loneast.Span
+}
+
+func (m *TMatchExpr) Span() loneast.Span { return m.Span_ }
+func (m *TMatchExpr) ExprType() Type    { return m.Typ }

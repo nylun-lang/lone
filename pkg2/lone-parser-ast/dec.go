@@ -79,9 +79,20 @@ const (
 	TYPE_DEC_ALIAS TypeDecKind = iota
 	TYPE_DEC_STRUCT
 	TYPE_DEC_TRAIT
+	TYPE_DEC_ENUM
 )
 
-// TYPE_DEC represents struct, trait, or alias declarations.
+// EnumVariant represents a variant within an enum declaration.
+type EnumVariant struct {
+	Name   string
+	Fields []StructField
+	Tag    int
+	Span_  Span
+}
+
+func (v EnumVariant) NodeSpan() Span { return v.Span_ }
+
+// TYPE_DEC represents struct, trait, enum, or alias declarations.
 type TYPE_DEC struct {
 	Name       string
 	IsPublic   bool
@@ -89,6 +100,7 @@ type TYPE_DEC struct {
 	Kind       TypeDecKind
 	AliasType  *TYPE_REF
 	Fields     []StructField
+	Variants   []EnumVariant
 	Methods    []FN_DEC
 	TraitSigs  []TraitMethodSig
 	Span_      Span

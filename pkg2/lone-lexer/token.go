@@ -45,6 +45,7 @@ const (
 	TokenLet
 	TokenType
 	TokenStruct
+	TokenEnum
 	TokenTrait
 	TokenImpl
 	TokenOn
@@ -59,6 +60,7 @@ const (
 	TokenFor
 	TokenIn
 	TokenDrop
+	TokenMatch
 	TokenAnd
 	TokenOr
 	TokenXor
@@ -129,6 +131,7 @@ var tokenNames = map[TokenKind]string{
 	TokenLet:        "let",
 	TokenType:       "type",
 	TokenStruct:     "struct",
+	TokenEnum:       "enum",
 	TokenTrait:      "trait",
 	TokenImpl:       "impl",
 	TokenOn:         "on",
@@ -143,6 +146,7 @@ var tokenNames = map[TokenKind]string{
 	TokenFor:        "for",
 	TokenIn:         "in",
 	TokenDrop:       "drop",
+	TokenMatch:      "match",
 	TokenAnd:        "and",
 	TokenOr:         "or",
 	TokenXor:        "xor",
@@ -221,6 +225,7 @@ var Keywords = map[string]TokenKind{
 	"let":      TokenLet,
 	"type":     TokenType,
 	"struct":   TokenStruct,
+	"enum":     TokenEnum,
 	"trait":    TokenTrait,
 	"impl":     TokenImpl,
 	"on":       TokenOn,
@@ -235,6 +240,7 @@ var Keywords = map[string]TokenKind{
 	"for":      TokenFor,
 	"in":       TokenIn,
 	"drop":     TokenDrop,
+	"match":    TokenMatch,
 	"and":      TokenAnd,
 	"or":       TokenOr,
 	"xor":      TokenXor,

@@ -616,6 +616,95 @@ func (p *Parser) parseTypeDec(isPub bool) (loneast.TYPE_DEC, error) {
 		}, nil
 	}
 
+	// Enum definition: type Name = enum { ... }
+	if p.peek().Kind == lonelexer.TokenEnum {
+		p.advance()
+		lbrace, err := p.expect(lonelexer.TokenLBrace)
+		if err != nil {
+			return loneast.TYPE_DEC{}, err
+		}
+		_ = lbrace
+
+		var variants []loneast.EnumVariant
+		tag := 0
+		for p.peek().Kind != lonelexer.TokenRBrace && !p.isAtEnd() {
+			vName, err := p.expect(lonelexer.TokenIdent)
+			if err != nil {
+				return loneast.TYPE_DEC{}, err
+			}
+			var fields []loneast.StructField
+			if p.peek().Kind == lonelexer.TokenLParen {
+				p.advance()
+				if p.peek().Kind != lonelexer.TokenRParen {
+					for {
+						if p.peek().Kind == lonelexer.TokenIdent && p.peekN(1).Kind == lonelexer.TokenColon {
+							fId := p.advance()
+							p.advance() // consume ':'
+							fieldType, err := p.parseTypeRef()
+							if err != nil {
+								return loneast.TYPE_DEC{}, err
+							}
+							fields = append(fields, loneast.StructField{
+								Name:  fId.Text,
+								Type:  fieldType,
+								Span_: lonelexer.Span{Start: fId.Start, End: fieldType.NodeSpan().End},
+							})
+						} else {
+							fieldType, err := p.parseTypeRef()
+							if err != nil {
+								return loneast.TYPE_DEC{}, err
+							}
+							fields = append(fields, loneast.StructField{
+								Name:  fmt.Sprintf("_%d", len(fields)),
+								Type:  fieldType,
+								Span_: fieldType.NodeSpan(),
+							})
+						}
+
+						if p.peek().Kind == lonelexer.TokenComma {
+							p.advance()
+							if p.peek().Kind == lonelexer.TokenRParen {
+								break
+							}
+						} else {
+							break
+						}
+					}
+				}
+				_, err = p.expect(lonelexer.TokenRParen)
+				if err != nil {
+					return loneast.TYPE_DEC{}, err
+				}
+			}
+
+			variants = append(variants, loneast.EnumVariant{
+				Name:   vName.Text,
+				Fields: fields,
+				Tag:    tag,
+				Span_:  lonelexer.Span{Start: vName.Start, End: p.previous().End},
+			})
+			tag++
+
+			if p.peek().Kind == lonelexer.TokenComma {
+				p.advance()
+			}
+		}
+
+		rbrace, err := p.expect(lonelexer.TokenRBrace)
+		if err != nil {
+			return loneast.TYPE_DEC{}, err
+		}
+
+		return loneast.TYPE_DEC{
+			Name:       nameTok.Text,
+			IsPublic:   isPub,
+			TypeParams: typeParams,
+			Kind:       loneast.TYPE_DEC_ENUM,
+			Variants:   variants,
+			Span_:      lonelexer.Span{Start: typeTok.Start, End: rbrace.End},
+		}, nil
+	}
+
 	// Alias: type Name = TargetType
 	aliasTarget, err := p.parseTypeRef()
 	if err != nil {

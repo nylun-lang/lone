@@ -22,6 +22,7 @@ const (
 	ExprDrop
 	ExprAssign
 	ExprLabelDec
+	ExprMatch
 )
 
 type Expr interface {
@@ -353,3 +354,62 @@ type LabelDec struct {
 
 func (LabelDec) IsExpr() ExprKind { return ExprLabelDec }
 func (l LabelDec) NodeSpan() Span  { return l.Span_ }
+
+// =====================
+// PATTERN MATCHING
+// =====================
+
+type PatternKind int
+
+const (
+	PatternWildcard PatternKind = iota // _
+	PatternVariant                     // Shape::Circle(r) or Circle(r) or Shape::Point
+	PatternLiteral                     // 1, "foo", true
+)
+
+type MatchPattern interface {
+	Node
+	IsPattern() PatternKind
+}
+
+type WildcardPattern struct {
+	Span_ Span
+}
+
+func (WildcardPattern) IsPattern() PatternKind { return PatternWildcard }
+func (w WildcardPattern) NodeSpan() Span       { return w.Span_ }
+
+type VariantPattern struct {
+	TypeName string   // e.g. "Shape" (optional, can be empty if inferred)
+	Variant  string   // e.g. "Circle"
+	Bindings []string // e.g. ["r"] or ["w", "h"]
+	Span_    Span
+}
+
+func (VariantPattern) IsPattern() PatternKind { return PatternVariant }
+func (v VariantPattern) NodeSpan() Span       { return v.Span_ }
+
+type LiteralPattern struct {
+	Literal Literal
+	Span_   Span
+}
+
+func (LiteralPattern) IsPattern() PatternKind { return PatternLiteral }
+func (l LiteralPattern) NodeSpan() Span       { return l.Span_ }
+
+type MatchArm struct {
+	Pattern MatchPattern
+	Body    any // Expr or Block
+	Span_   Span
+}
+
+func (m MatchArm) NodeSpan() Span { return m.Span_ }
+
+type MatchExpr struct {
+	Target Expr
+	Arms   []MatchArm
+	Span_  Span
+}
+
+func (MatchExpr) IsExpr() ExprKind { return ExprMatch }
+func (m MatchExpr) NodeSpan() Span { return m.Span_ }

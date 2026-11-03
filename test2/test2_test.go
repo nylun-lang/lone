@@ -84,6 +84,22 @@ func TestLabeledBlocks(t *testing.T) {
 	}
 }
 
+func TestEnums(t *testing.T) {
+	got := compileAndRun(t, "behavior/enums.lone")
+	want := "Tagged union enums and match pattern extraction verified!\n"
+	if got != want {
+		t.Errorf("unexpected output: got %q, want %q", got, want)
+	}
+}
+
+func TestMatchExpr(t *testing.T) {
+	got := compileAndRun(t, "behavior/match_expr.lone")
+	want := "Match expressions with enums, literals, and wildcards verified!\n"
+	if got != want {
+		t.Errorf("unexpected output: got %q, want %q", got, want)
+	}
+}
+
 func TestCheckAllTest2Suite(t *testing.T) {
 	files, err := filepath.Glob("behavior/*.lone")
 	if err != nil {

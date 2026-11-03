@@ -18,6 +18,7 @@ const (
 	TypeKindStruct
 	TypeKindTrait
 	TypeKindOptional
+	TypeKindEnum
 )
 
 func (k TypeKind) String() string {
@@ -40,6 +41,8 @@ func (k TypeKind) String() string {
 		return "Trait"
 	case TypeKindOptional:
 		return "Optional"
+	case TypeKindEnum:
+		return "Enum"
 	default:
 		return "Unknown"
 	}
@@ -358,6 +361,46 @@ func (o *OptionalType) AssignableTo(target Type) bool {
 }
 
 // =====================
+// ENUM (TAGGED UNION)
+// =====================
+
+type EnumVariantInfo struct {
+	Name       string
+	Tag        int
+	Fields     []StructFieldInfo
+	FieldMap   map[string]StructFieldInfo
+	TotalSize  int
+	TotalAlign int
+}
+
+type EnumType struct {
+	Name       string
+	Variants   []EnumVariantInfo
+	VariantMap map[string]*EnumVariantInfo
+	TotalSize  int // 4 bytes (tag) + max payload size (aligned)
+	TotalAlign int
+}
+
+func (e *EnumType) Kind() TypeKind { return TypeKindEnum }
+func (e *EnumType) String() string { return e.Name }
+func (e *EnumType) Equals(other Type) bool {
+	if oe, ok := other.(*EnumType); ok {
+		return e.Name == oe.Name
+	}
+	return false
+}
+func (e *EnumType) AssignableTo(target Type) bool {
+	if oe, ok := target.(*EnumType); ok {
+		return e.Name == oe.Name
+	}
+	return false
+}
+func (e *EnumType) Variant(name string) (*EnumVariantInfo, bool) {
+	v, ok := e.VariantMap[name]
+	return v, ok
+}
+
+// =====================
 // FUNCTION
 // =====================
 
@@ -429,6 +472,8 @@ func TypeSize(t Type) int {
 		return TypeSize(v.Inner) + 4 // discriminant tag + value
 	case *StructType:
 		return v.TotalSize
+	case *EnumType:
+		return v.TotalSize
 	case *ListType:
 		if v.Fixed {
 			return v.Size * TypeSize(v.Elem)
@@ -460,6 +505,8 @@ func TypeAlign(t Type) int {
 	case *PtrType, *RefType:
 		return 4
 	case *StructType:
+		return v.TotalAlign
+	case *EnumType:
 		return v.TotalAlign
 	default:
 		return 4

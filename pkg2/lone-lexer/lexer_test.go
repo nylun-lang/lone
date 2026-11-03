@@ -133,3 +133,42 @@ var ok = a is int and b is not none
 		}
 	}
 }
+
+func TestLexerEnumAndMatch(t *testing.T) {
+	code := `
+type Shape = enum {
+	Circle(radius: f32),
+	Rect(width: f32, height: f32),
+	Point,
+}
+
+let a = match s {
+	Shape::Circle(r) => 3.14,
+	Shape::Point => 0.0,
+	_ => 0.0,
+}
+`
+	lex := NewLexer([]byte(code))
+	tokens, err := lex.Tokenize()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	foundEnum := false
+	foundMatch := false
+	for _, tok := range tokens {
+		if tok.Kind == TokenEnum {
+			foundEnum = true
+		}
+		if tok.Kind == TokenMatch {
+			foundMatch = true
+		}
+	}
+
+	if !foundEnum {
+		t.Errorf("expected to find TokenEnum in tokens")
+	}
+	if !foundMatch {
+		t.Errorf("expected to find TokenMatch in tokens")
+	}
+}

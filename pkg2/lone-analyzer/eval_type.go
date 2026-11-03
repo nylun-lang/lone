@@ -13,6 +13,7 @@ type TypeEvaluator struct {
 	diags           []Diagnostic
 	structs         map[string]*StructType
 	traits          map[string]*TraitType
+	enums           map[string]*EnumType
 	currentSelfType Type
 }
 
@@ -21,6 +22,7 @@ func NewTypeEvaluator() *TypeEvaluator {
 		stack:   NewScopeStack(),
 		structs: make(map[string]*StructType),
 		traits:  make(map[string]*TraitType),
+		enums:   make(map[string]*EnumType),
 	}
 }
 
@@ -172,6 +174,68 @@ func (te *TypeEvaluator) hoistTypeDec(t *loneast.TYPE_DEC) {
 		}
 		te.traits[t.Name] = tr
 		_ = te.stack.Define(&Symbol{Name: t.Name, Kind: SymbolType, Type: tr, Node: t})
+	}
+
+	if t.Kind == loneast.TYPE_DEC_ENUM {
+		et := &EnumType{
+			Name:       t.Name,
+			VariantMap: make(map[string]*EnumVariantInfo),
+		}
+
+		maxPayloadSize := 0
+		maxAlign := 4 // tag is i32, so align is at least 4
+
+		for tag, v := range t.Variants {
+			var fields []StructFieldInfo
+			fieldMap := make(map[string]StructFieldInfo)
+			vOffset := 4 // Tag is at offset 0 (4 bytes), payload starts at 4
+			vMaxAlign := 1
+
+			for _, f := range v.Fields {
+				fType := te.resolveType(f.Type)
+				sz := TypeSize(fType)
+				al := TypeAlign(fType)
+				if al > vMaxAlign {
+					vMaxAlign = al
+				}
+				if al > maxAlign {
+					maxAlign = al
+				}
+				if al > 0 && vOffset%al != 0 {
+					vOffset += al - (vOffset % al)
+				}
+				info := StructFieldInfo{Name: f.Name, Type: fType, Offset: vOffset}
+				fields = append(fields, info)
+				fieldMap[f.Name] = info
+				vOffset += sz
+			}
+
+			payloadSize := vOffset - 4
+			if payloadSize > maxPayloadSize {
+				maxPayloadSize = payloadSize
+			}
+
+			vInfo := EnumVariantInfo{
+				Name:       v.Name,
+				Tag:        tag,
+				Fields:     fields,
+				FieldMap:   fieldMap,
+				TotalSize:  vOffset,
+				TotalAlign: vMaxAlign,
+			}
+			et.Variants = append(et.Variants, vInfo)
+			et.VariantMap[v.Name] = &et.Variants[len(et.Variants)-1]
+		}
+
+		totalSize := 4 + maxPayloadSize
+		if maxAlign > 0 && totalSize%maxAlign != 0 {
+			totalSize += maxAlign - (totalSize % maxAlign)
+		}
+		et.TotalSize = totalSize
+		et.TotalAlign = maxAlign
+
+		te.enums[t.Name] = et
+		_ = te.stack.Define(&Symbol{Name: t.Name, Kind: SymbolType, Type: et, Node: t})
 	}
 }
 
@@ -394,6 +458,9 @@ func (te *TypeEvaluator) analyzeTopLevel(decl any) TNode {
 		}
 		if tr, ok := te.traits[d.Name]; ok {
 			return &TTraitDec{Name: d.Name, Type: tr, Span_: d.Span_}
+		}
+		if et, ok := te.enums[d.Name]; ok {
+			return &TEnumDec{Name: d.Name, Type: et, Span_: d.Span_}
 		}
 		return nil
 
@@ -897,6 +964,11 @@ func (te *TypeEvaluator) EvalExpr(e loneast.Expr) TExpr {
 	case *loneast.LabelDec:
 		return te.analyzeLabelDec(expr, TypeUnknown)
 
+	case loneast.MatchExpr:
+		return te.evalMatchExpr(expr)
+	case *loneast.MatchExpr:
+		return te.evalMatchExpr(*expr)
+
 	default:
 		return nil
 	}
@@ -1090,11 +1162,60 @@ func (te *TypeEvaluator) evalPostfixExpr(p loneast.PostFixExpr) TExpr {
 			for _, arg := range suff.Args {
 				tArgs = append(tArgs, te.EvalExpr(arg))
 			}
-			retType := Type(TypeVoid)
-			if fnT, ok := curr.ExprType().(*FnType); ok {
-				retType = fnT.Return
+			if enumConstr, ok := curr.(*TEnumConstructExpr); ok {
+				if len(tArgs) != len(enumConstr.Variant.Fields) {
+					te.addDiag(SeverityError, suff.Span_, "type/variant-arity-mismatch",
+						fmt.Sprintf("variant %q::%q expects %d arguments, got %d",
+							enumConstr.EnumType.Name, enumConstr.Variant.Name, len(enumConstr.Variant.Fields), len(tArgs)))
+				} else {
+					for i, arg := range tArgs {
+						expectedF := enumConstr.Variant.Fields[i]
+						if !arg.ExprType().AssignableTo(expectedF.Type) {
+							te.addDiag(SeverityError, arg.Span(), "type/mismatch",
+								fmt.Sprintf("cannot pass argument of type %q to field %q of type %q",
+									arg.ExprType().String(), expectedF.Name, expectedF.Type.String()))
+						}
+					}
+				}
+				enumConstr.Args = tArgs
+				enumConstr.Span_ = loneast.Span{Start: enumConstr.Span_.Start, End: suff.Span_.End}
+				curr = enumConstr
+			} else {
+				retType := Type(TypeVoid)
+				if fnT, ok := curr.ExprType().(*FnType); ok {
+					retType = fnT.Return
+				}
+				curr = &TCallExpr{Callee: curr, Args: tArgs, Typ: retType, Span_: suff.Span_}
 			}
-			curr = &TCallExpr{Callee: curr, Args: tArgs, Typ: retType, Span_: suff.Span_}
+
+		case loneast.SuffixAssociatedAccess:
+			var targetEnum *EnumType
+			if et, ok := curr.ExprType().(*EnumType); ok {
+				targetEnum = et
+			} else if vref, ok := curr.(*TVarRefExpr); ok {
+				if et, ok := te.enums[vref.Name]; ok {
+					targetEnum = et
+				}
+			}
+
+			if targetEnum != nil {
+				vInfo, ok := targetEnum.Variant(suff.Name)
+				if !ok {
+					te.addDiag(SeverityError, suff.Span_, "type/undefined-variant",
+						fmt.Sprintf("enum %q has no variant %q", targetEnum.Name, suff.Name))
+					curr = &TVarRefExpr{Name: suff.Name, Typ: TypeUnknown, Span_: suff.Span_}
+				} else {
+					curr = &TEnumConstructExpr{
+						EnumType: targetEnum,
+						Variant:  vInfo,
+						Args:     nil,
+						Typ:      targetEnum,
+						Span_:    loneast.Span{Start: curr.Span().Start, End: suff.Span_.End},
+					}
+				}
+			} else {
+				curr = &TVarRefExpr{Name: suff.Name, Typ: TypeUnknown, Span_: suff.Span_}
+			}
 
 		case loneast.SuffixIndex:
 			tIdx := te.EvalExpr(suff.Index)
@@ -1110,6 +1231,150 @@ func (te *TypeEvaluator) evalPostfixExpr(p loneast.PostFixExpr) TExpr {
 	}
 
 	return curr
+}
+
+func (te *TypeEvaluator) evalMatchExpr(m loneast.MatchExpr) TExpr {
+	target := te.EvalExpr(m.Target)
+	targetType := target.ExprType()
+
+	var tArms []TMatchArm
+	var armTypes []Type
+	hasWildcard := false
+	coveredVariants := make(map[string]bool)
+
+	enumType, isEnum := targetType.(*EnumType)
+
+	for _, arm := range m.Arms {
+		te.stack.Push(ScopeBlock)
+
+		var vInfo *EnumVariantInfo
+		var bindings []*TVarDec
+
+		switch pat := arm.Pattern.(type) {
+		case loneast.WildcardPattern:
+			hasWildcard = true
+
+		case loneast.VariantPattern:
+			if !isEnum {
+				te.addDiag(SeverityError, pat.NodeSpan(), "type/invalid-pattern",
+					fmt.Sprintf("cannot match variant on non-enum type %q", targetType.String()))
+			} else {
+				if pat.TypeName != "" && pat.TypeName != enumType.Name {
+					te.addDiag(SeverityError, pat.NodeSpan(), "type/enum-type-mismatch",
+						fmt.Sprintf("variant pattern belongs to enum %q, but target is enum %q", pat.TypeName, enumType.Name))
+				}
+				varName := pat.Variant
+				v, found := enumType.Variant(varName)
+				if !found {
+					te.addDiag(SeverityError, pat.NodeSpan(), "type/unknown-variant",
+						fmt.Sprintf("enum %q has no variant %q", enumType.Name, varName))
+				} else {
+					vInfo = v
+					coveredVariants[varName] = true
+					if len(pat.Bindings) != len(v.Fields) {
+						te.addDiag(SeverityError, pat.NodeSpan(), "type/pattern-arity-mismatch",
+							fmt.Sprintf("variant %q has %d fields, but pattern binds %d variables",
+								varName, len(v.Fields), len(pat.Bindings)))
+					} else {
+						for i, bName := range pat.Bindings {
+							fInfo := v.Fields[i]
+							if bName != "_" {
+								sym := &Symbol{
+									Name:      bName,
+									Kind:      SymbolVar,
+									Type:      fInfo.Type,
+									IsMutable: false,
+								}
+								_ = te.stack.Define(sym)
+								bindings = append(bindings, &TVarDec{
+									Name:      bName,
+									IsMutable: false,
+									Type:      fInfo.Type,
+									Value:     nil,
+									Span_:     pat.NodeSpan(),
+								})
+							}
+						}
+					}
+				}
+			}
+
+		case loneast.LiteralPattern:
+			litExpr := te.evalLiteral(pat.Literal)
+			if !litExpr.ExprType().AssignableTo(targetType) && !targetType.AssignableTo(litExpr.ExprType()) {
+				te.addDiag(SeverityError, pat.NodeSpan(), "type/pattern-mismatch",
+					fmt.Sprintf("pattern of type %q cannot match target of type %q",
+						litExpr.ExprType().String(), targetType.String()))
+			}
+		}
+
+		var bodyExpr TExpr
+		var bodyBlock *TBlock
+		var armType Type = TypeVoid
+
+		if blk, ok := arm.Body.(loneast.Block); ok {
+			tb := te.analyzeBlock(&blk, TypeUnknown)
+			bodyBlock = &tb
+			armType = tb.Typ
+		} else if pblk, ok := arm.Body.(*loneast.Block); ok {
+			tb := te.analyzeBlock(pblk, TypeUnknown)
+			bodyBlock = &tb
+			armType = tb.Typ
+		} else if expr, ok := arm.Body.(loneast.Expr); ok {
+			bodyExpr = te.EvalExpr(expr)
+			armType = bodyExpr.ExprType()
+		}
+
+		te.stack.Pop()
+
+		tArms = append(tArms, TMatchArm{
+			Pattern:   arm.Pattern,
+			Variant:   vInfo,
+			Bindings:  bindings,
+			BodyExpr:  bodyExpr,
+			BodyBlock: bodyBlock,
+			Span_:     arm.Span_,
+		})
+		armTypes = append(armTypes, armType)
+	}
+
+	// Check exhaustiveness for enum targets
+	if isEnum && !hasWildcard {
+		if len(coveredVariants) < len(enumType.Variants) {
+			var missing []string
+			for _, v := range enumType.Variants {
+				if !coveredVariants[v.Name] {
+					missing = append(missing, v.Name)
+				}
+			}
+			te.addDiag(SeverityError, m.Span_, "type/non-exhaustive-match",
+				fmt.Sprintf("non-exhaustive match on enum %q: missing variants %s",
+					enumType.Name, strings.Join(missing, ", ")))
+		}
+	} else if !isEnum && !hasWildcard && len(m.Arms) > 0 {
+		te.addDiag(SeverityError, m.Span_, "type/non-exhaustive-match",
+			fmt.Sprintf("non-exhaustive match on type %q: missing wildcard '_' arm", targetType.String()))
+	}
+
+	// Unify arm result types
+	var resultType Type = TypeVoid
+	if len(armTypes) > 0 {
+		resultType = armTypes[0]
+		for i := 1; i < len(armTypes); i++ {
+			if !armTypes[i].AssignableTo(resultType) && !resultType.AssignableTo(armTypes[i]) {
+				te.addDiag(SeverityError, m.Arms[i].Span_, "type/match-arm-mismatch",
+					fmt.Sprintf("match arm has incompatible return type %q (expected %q)",
+						armTypes[i].String(), resultType.String()))
+			}
+		}
+	}
+
+	return &TMatchExpr{
+		Target: target,
+		Arms:   tArms,
+		Typ:    resultType,
+		Span_:  m.Span_,
+	}
 }
 
 func (te *TypeEvaluator) resolveType(tr loneast.TYPE_REF) Type {

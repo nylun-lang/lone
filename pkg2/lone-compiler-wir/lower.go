@@ -598,6 +598,12 @@ func (l *lowerer) lowerExpr(expr loneanalyzer.TExpr, alloc *LocalAllocator) []Wa
 			},
 		}
 
+	case *loneanalyzer.TEnumConstructExpr:
+		return l.lowerEnumConstructExpr(e, alloc)
+
+	case *loneanalyzer.TMatchExpr:
+		return l.lowerMatchExpr(e, alloc)
+
 	default:
 		return nil
 	}
@@ -666,7 +672,9 @@ func (l *lowerer) lowerCallExpr(e *loneanalyzer.TCallExpr, alloc *LocalAllocator
 func (l *lowerer) mapBinaryOp(op loneast.BinaryOp, operandType loneanalyzer.Type) string {
 	isFloat := isFloatType(operandType)
 	prefix := "i32."
-	if isFloat {
+	if operandType == loneanalyzer.TypeF32 {
+		prefix = "f32."
+	} else if operandType == loneanalyzer.TypeF64 {
 		prefix = "f64."
 	} else if operandType == loneanalyzer.TypeI64 || operandType == loneanalyzer.TypeU64 {
 		prefix = "i64."
@@ -805,4 +813,217 @@ func toWasmType(t loneanalyzer.Type) WasmType {
 
 func isFloatType(t loneanalyzer.Type) bool {
 	return t == loneanalyzer.TypeF32 || t == loneanalyzer.TypeF64
+}
+
+func (l *lowerer) lowerEnumConstructExpr(e *loneanalyzer.TEnumConstructExpr, alloc *LocalAllocator) []WasmInst {
+	var insts []WasmInst
+	ptrLocal := alloc.AllocTemp(TypeI32)
+	defer alloc.FreeTemp(ptrLocal, TypeI32)
+
+	totalSize := e.EnumType.TotalSize
+	if totalSize < 4 {
+		totalSize = 4
+	}
+
+	// 1. Bump heap pointer to allocate memory for enum
+	insts = append(insts, InstGlobalGet{Name: "$__heap_pointer"})
+	insts = append(insts, InstLocalTee{Name: ptrLocal})
+	insts = append(insts, InstConstI32{Value: int32(totalSize)})
+	insts = append(insts, InstBinaryOp{Op: "i32.add"})
+	insts = append(insts, InstGlobalSet{Name: "$__heap_pointer"})
+
+	// 2. Store tag at offset 0
+	insts = append(insts, InstLocalGet{Name: ptrLocal})
+	insts = append(insts, InstConstI32{Value: int32(e.Variant.Tag)})
+	insts = append(insts, InstStore{Op: "i32.store", Offset: 0})
+
+	// 3. Store payload fields
+	for i, arg := range e.Args {
+		if i < len(e.Variant.Fields) {
+			fieldInfo := e.Variant.Fields[i]
+			insts = append(insts, InstLocalGet{Name: ptrLocal})
+			insts = append(insts, l.lowerExpr(arg, alloc)...)
+			insts = append(insts, InstStore{Op: storeOpForType(fieldInfo.Type), Offset: fieldInfo.Offset})
+		}
+	}
+
+	// 4. Return pointer to enum on operand stack
+	insts = append(insts, InstLocalGet{Name: ptrLocal})
+	return insts
+}
+
+func (l *lowerer) lowerMatchExpr(m *loneanalyzer.TMatchExpr, alloc *LocalAllocator) []WasmInst {
+	var insts []WasmInst
+
+	targetType := m.Target.ExprType()
+	targetWType := toWasmType(targetType)
+	targetLocal := alloc.AllocTemp(targetWType)
+	defer alloc.FreeTemp(targetLocal, targetWType)
+
+	// Evaluate target
+	insts = append(insts, l.lowerExpr(m.Target, alloc)...)
+	insts = append(insts, InstLocalSet{Name: targetLocal})
+
+	_, isEnum := targetType.(*loneanalyzer.EnumType)
+	tagLocal := ""
+	if isEnum {
+		tagLocal = alloc.AllocTemp(TypeI32)
+		defer alloc.FreeTemp(tagLocal, TypeI32)
+		// Load tag from offset 0
+		insts = append(insts, InstLocalGet{Name: targetLocal})
+		insts = append(insts, InstLoad{Op: "i32.load", Offset: 0})
+		insts = append(insts, InstLocalSet{Name: tagLocal})
+	}
+
+	var resultLocal string
+	if m.Typ != loneanalyzer.TypeVoid && m.Typ != nil {
+		resWType := toWasmType(m.Typ)
+		resultLocal = alloc.AllocTemp(resWType)
+		defer alloc.FreeTemp(resultLocal, resWType)
+	}
+
+	armInsts := l.lowerMatchArms(m.Arms, 0, targetLocal, tagLocal, resultLocal, isEnum, targetType, alloc)
+	insts = append(insts, armInsts...)
+
+	if resultLocal != "" {
+		insts = append(insts, InstLocalGet{Name: resultLocal})
+	}
+
+	return insts
+}
+
+func (l *lowerer) lowerMatchArms(arms []loneanalyzer.TMatchArm, index int, targetLocal, tagLocal, resultLocal string, isEnum bool, targetType loneanalyzer.Type, alloc *LocalAllocator) []WasmInst {
+	if index >= len(arms) {
+		return nil
+	}
+
+	arm := arms[index]
+	alloc.EnterScope()
+	defer alloc.ExitScope()
+
+	switch pat := arm.Pattern.(type) {
+	case loneast.WildcardPattern:
+		var thenInsts []WasmInst
+		if arm.BodyExpr != nil {
+			thenInsts = append(thenInsts, l.lowerExpr(arm.BodyExpr, alloc)...)
+			if resultLocal != "" {
+				thenInsts = append(thenInsts, InstLocalSet{Name: resultLocal})
+			}
+		} else if arm.BodyBlock != nil {
+			thenInsts = append(thenInsts, l.lowerBlock(*arm.BodyBlock, alloc)...)
+		}
+		return thenInsts
+
+	case loneast.VariantPattern:
+		var condInsts []WasmInst
+		condInsts = append(condInsts, InstLocalGet{Name: tagLocal})
+		tagVal := 0
+		if arm.Variant != nil {
+			tagVal = arm.Variant.Tag
+		}
+		condInsts = append(condInsts, InstConstI32{Value: int32(tagVal)})
+		condInsts = append(condInsts, InstBinaryOp{Op: "i32.eq"})
+
+		var thenInsts []WasmInst
+		// Bind payload variables
+		if arm.Variant != nil {
+			for i, b := range arm.Bindings {
+				if i < len(arm.Variant.Fields) {
+					fInfo := arm.Variant.Fields[i]
+					bLocal := alloc.AllocVar(b.Name, toWasmType(fInfo.Type))
+					thenInsts = append(thenInsts, InstLocalGet{Name: targetLocal})
+					thenInsts = append(thenInsts, InstLoad{Op: loadOpForType(fInfo.Type), Offset: fInfo.Offset})
+					thenInsts = append(thenInsts, InstLocalSet{Name: bLocal})
+				}
+			}
+		}
+
+		if arm.BodyExpr != nil {
+			thenInsts = append(thenInsts, l.lowerExpr(arm.BodyExpr, alloc)...)
+			if resultLocal != "" {
+				thenInsts = append(thenInsts, InstLocalSet{Name: resultLocal})
+			}
+		} else if arm.BodyBlock != nil {
+			thenInsts = append(thenInsts, l.lowerBlock(*arm.BodyBlock, alloc)...)
+		}
+
+		elseInsts := l.lowerMatchArms(arms, index+1, targetLocal, tagLocal, resultLocal, isEnum, targetType, alloc)
+		var res []WasmInst
+		res = append(res, condInsts...)
+		res = append(res, InstIf{
+			Then: thenInsts,
+			Else: elseInsts,
+		})
+		return res
+
+	case loneast.LiteralPattern:
+		var condInsts []WasmInst
+		condInsts = append(condInsts, InstLocalGet{Name: targetLocal})
+		litWasm := l.lowerExpr(&loneanalyzer.TLiteralExpr{
+			Kind:  pat.Literal.Kind,
+			Value: pat.Literal.Value,
+			Typ:   targetType,
+			Span_: pat.Span_,
+		}, alloc)
+		condInsts = append(condInsts, litWasm...)
+		eqOp := "i32.eq"
+		if isFloatType(targetType) {
+			if targetType == loneanalyzer.TypeF32 {
+				eqOp = "f32.eq"
+			} else {
+				eqOp = "f64.eq"
+			}
+		} else if targetType == loneanalyzer.TypeI64 || targetType == loneanalyzer.TypeU64 {
+			eqOp = "i64.eq"
+		}
+		condInsts = append(condInsts, InstBinaryOp{Op: eqOp})
+
+		var thenInsts []WasmInst
+		if arm.BodyExpr != nil {
+			thenInsts = append(thenInsts, l.lowerExpr(arm.BodyExpr, alloc)...)
+			if resultLocal != "" {
+				thenInsts = append(thenInsts, InstLocalSet{Name: resultLocal})
+			}
+		} else if arm.BodyBlock != nil {
+			thenInsts = append(thenInsts, l.lowerBlock(*arm.BodyBlock, alloc)...)
+		}
+
+		elseInsts := l.lowerMatchArms(arms, index+1, targetLocal, tagLocal, resultLocal, isEnum, targetType, alloc)
+		var res []WasmInst
+		res = append(res, condInsts...)
+		res = append(res, InstIf{
+			Then: thenInsts,
+			Else: elseInsts,
+		})
+		return res
+
+	default:
+		return nil
+	}
+}
+
+func loadOpForType(t loneanalyzer.Type) string {
+	switch t {
+	case loneanalyzer.TypeI64, loneanalyzer.TypeU64:
+		return "i64.load"
+	case loneanalyzer.TypeF32:
+		return "f32.load"
+	case loneanalyzer.TypeF64:
+		return "f64.load"
+	default:
+		return "i32.load"
+	}
+}
+
+func storeOpForType(t loneanalyzer.Type) string {
+	switch t {
+	case loneanalyzer.TypeI64, loneanalyzer.TypeU64:
+		return "i64.store"
+	case loneanalyzer.TypeF32:
+		return "f32.store"
+	case loneanalyzer.TypeF64:
+		return "f64.store"
+	default:
+		return "i32.store"
+	}
 }

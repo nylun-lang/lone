@@ -350,3 +350,63 @@ impl TrWriter for Stdout {
 		t.Errorf("expected method 'write', got %+v", impl.Methods)
 	}
 }
+
+func TestParseEnumAndMatch(t *testing.T) {
+	code := `
+pub type Shape = enum {
+    Circle(radius: f32),
+    Rect(width: f32, height: f32),
+    Point,
+}
+
+fn area(s: Shape) f32 {
+    return match s {
+        Shape::Circle(r) => 3.14 * r * r,
+        Shape::Rect(w, h) => w * h,
+        Shape::Point => 0.0,
+        _ => 0.0,
+    }
+}
+`
+	decls, err := Parse([]byte(code))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(decls) != 2 {
+		t.Fatalf("expected 2 decls, got %d", len(decls))
+	}
+
+	enumDec, ok := decls[0].(loneast.TYPE_DEC)
+	if !ok || enumDec.Kind != loneast.TYPE_DEC_ENUM {
+		t.Fatalf("expected TYPE_DEC_ENUM, got %#v", decls[0])
+	}
+	if enumDec.Name != "Shape" || len(enumDec.Variants) != 3 {
+		t.Fatalf("expected Shape with 3 variants, got %#v", enumDec)
+	}
+	if enumDec.Variants[0].Name != "Circle" || len(enumDec.Variants[0].Fields) != 1 {
+		t.Errorf("expected Circle with 1 field, got %#v", enumDec.Variants[0])
+	}
+	if enumDec.Variants[1].Name != "Rect" || len(enumDec.Variants[1].Fields) != 2 {
+		t.Errorf("expected Rect with 2 fields, got %#v", enumDec.Variants[1])
+	}
+	if enumDec.Variants[2].Name != "Point" || len(enumDec.Variants[2].Fields) != 0 {
+		t.Errorf("expected Point with 0 fields, got %#v", enumDec.Variants[2])
+	}
+
+	fnDec, ok := decls[1].(loneast.FN_DEC)
+	if !ok || fnDec.Name != "area" {
+		t.Fatalf("expected fn area, got %#v", decls[1])
+	}
+	retStmt, ok := fnDec.Body.Stmts[0].(loneast.ReturnStmt)
+	if !ok {
+		t.Fatalf("expected ReturnStmt, got %#v", fnDec.Body.Stmts[0])
+	}
+	matchExpr, ok := retStmt.Value.(loneast.MatchExpr)
+	if !ok {
+		t.Fatalf("expected MatchExpr, got %#v", retStmt.Value)
+	}
+	if len(matchExpr.Arms) != 4 {
+		t.Fatalf("expected 4 match arms, got %d", len(matchExpr.Arms))
+	}
+}

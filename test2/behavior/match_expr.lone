@@ -1,0 +1,39 @@
+pub type Command = enum {
+    Quit,
+    Move(x: i32, y: i32),
+    Write(msg: str),
+}
+
+fn eval_command(cmd: Command) i32 {
+    let result = match cmd {
+        Command::Quit => 0,
+        Command::Move(x, y) => x + y,
+        Command::Write(msg) => 100,
+        _ => -1,
+    }
+    return result
+}
+
+fn classify_number(n: i32) str {
+    return match n {
+        0 => "zero",
+        1 => "one",
+        _ => "other",
+    }
+}
+
+fn main() void {
+    let cmd1 = Command::Quit
+    let cmd2 = Command::Move(15, 25)
+
+    let r1 = eval_command(cmd1)
+    let r2 = eval_command(cmd2)
+
+    let s0 = classify_number(0)
+    let s1 = classify_number(1)
+    let s9 = classify_number(9)
+
+    if r1 == 0 and r2 == 40 and s0 == "zero" and s1 == "one" and s9 == "other" {
+        #print("Match expressions with enums, literals, and wildcards verified!\n")
+    }
+}

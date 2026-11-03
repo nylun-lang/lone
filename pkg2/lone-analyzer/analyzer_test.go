@@ -187,3 +187,75 @@ var f: f32 = 100
 		t.Errorf("expected rule 'type/mismatch', got %q", diags[0].Rule)
 	}
 }
+
+func TestEnumAndMatchAnalysis(t *testing.T) {
+	code := `
+type Shape = enum {
+    Circle(radius: f32),
+    Rect(width: f32, height: f32),
+    Point,
+}
+
+fn area(s: Shape) f32 {
+    return match s {
+        Shape::Circle(r) => 3.14 * r * r,
+        Shape::Rect(w, h) => w * h,
+        Shape::Point => 0.0,
+    }
+}
+
+fn test_construct() Shape {
+    let c = Shape::Circle(10.5)
+    let p = Shape::Point
+    return c
+}
+`
+	analyzer := NewAnalyzer()
+	prog, diags, err := analyzer.AnalyzeSource([]byte(code))
+	if err != nil {
+		t.Fatalf("unexpected parse error: %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("expected 0 diagnostics, got %d: %v", len(diags), diags)
+	}
+
+	enumDec, ok := prog.Decls[0].(*TEnumDec)
+	if !ok {
+		t.Fatalf("expected TEnumDec, got %#v", prog.Decls[0])
+	}
+	// Tag (4) + Rect payload (4+4) = 12 bytes
+	if enumDec.Type.TotalSize != 12 {
+		t.Errorf("expected Shape size 12, got %d", enumDec.Type.TotalSize)
+	}
+}
+
+func TestNonExhaustiveMatchError(t *testing.T) {
+	code := `
+type Shape = enum {
+    Circle(radius: f32),
+    Rect(width: f32, height: f32),
+    Point,
+}
+
+fn area(s: Shape) f32 {
+    return match s {
+        Shape::Circle(r) => 3.14 * r * r,
+        Shape::Point => 0.0,
+    }
+}
+`
+	analyzer := NewAnalyzer()
+	_, diags, err := analyzer.AnalyzeSource([]byte(code))
+	if err != nil {
+		t.Fatalf("unexpected parse error: %v", err)
+	}
+	if len(diags) != 1 {
+		t.Fatalf("expected 1 diagnostic for missing Rect variant, got %d: %v", len(diags), diags)
+	}
+	if diags[0].Rule != "type/non-exhaustive-match" {
+		t.Errorf("expected rule 'type/non-exhaustive-match', got %q", diags[0].Rule)
+	}
+	if !strings.Contains(diags[0].Message, "Rect") {
+		t.Errorf("expected message to mention missing variant 'Rect', got %q", diags[0].Message)
+	}
+}
