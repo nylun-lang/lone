@@ -49,6 +49,16 @@
             "text": "Built-in Intrinsics",
             "link": "/content/latest/language/intrinsics",
             "order": 5
+          },
+          {
+            "text": "Operators & Precedence",
+            "link": "/content/latest/language/operators",
+            "order": 5
+          },
+          {
+            "text": "Modules, Imports & Standard Library",
+            "link": "/content/latest/language/modules-and-imports",
+            "order": 6
           }
         ]
       },
@@ -71,6 +81,92 @@
           {
             "text": "Runtime Glue & Adapters",
             "link": "/content/latest/toolchain/runtime-adapters",
+            "order": 3
+          }
+        ]
+      }
+    ],
+    "/content/0.4.0/": [
+      {
+        "text": "Getting Started & Guides",
+        "collapsible": true,
+        "collapsed": false,
+        "key": "guide",
+        "items": [
+          {
+            "text": "Introduction",
+            "link": "/content/0.4.0/guide/introduction",
+            "order": 1
+          },
+          {
+            "text": "Getting Started",
+            "link": "/content/0.4.0/guide/getting-started",
+            "order": 2
+          }
+        ]
+      },
+      {
+        "text": "Language Reference",
+        "collapsible": true,
+        "collapsed": false,
+        "key": "language",
+        "items": [
+          {
+            "text": "Variables & Types",
+            "link": "/content/0.4.0/language/variables-and-types",
+            "order": 1
+          },
+          {
+            "text": "Functions & Signatures",
+            "link": "/content/0.4.0/language/functions",
+            "order": 2
+          },
+          {
+            "text": "Control Flow & Loops",
+            "link": "/content/0.4.0/language/control-flow",
+            "order": 3
+          },
+          {
+            "text": "Type System & Drop Rule",
+            "link": "/content/0.4.0/language/type-system",
+            "order": 4
+          },
+          {
+            "text": "Built-in Intrinsics",
+            "link": "/content/0.4.0/language/intrinsics",
+            "order": 5
+          },
+          {
+            "text": "Operators & Precedence",
+            "link": "/content/0.4.0/language/operators",
+            "order": 5
+          },
+          {
+            "text": "Modules, Imports & Standard Library",
+            "link": "/content/0.4.0/language/modules-and-imports",
+            "order": 6
+          }
+        ]
+      },
+      {
+        "text": "Compiler & Toolchain",
+        "collapsible": true,
+        "collapsed": false,
+        "key": "toolchain",
+        "items": [
+          {
+            "text": "Falone CLI Reference",
+            "link": "/content/0.4.0/toolchain/falone-cli",
+            "order": 1
+          },
+          {
+            "text": "WebAssembly & WASI",
+            "link": "/content/0.4.0/toolchain/wasm-and-wasi",
+            "order": 2
+          },
+          {
+            "text": "Runtime Glue & Adapters",
+            "link": "/content/0.4.0/toolchain/runtime-adapters",
             "order": 3
           }
         ]
@@ -197,10 +293,14 @@
       "link": "/content/latest/guide/introduction"
     },
     {
-      "text": "v0.2.0 (latest)",
+      "text": "v0.4.0 (latest)",
       "items": [
         {
-          "text": "0.2.0 (latest)",
+          "text": "0.4.0 (latest)",
+          "link": "/content/0.4.0/guide/introduction"
+        },
+        {
+          "text": "0.2.0",
           "link": "/content/0.2.0/guide/introduction"
         },
         {
@@ -210,8 +310,9 @@
       ]
     }
   ],
-  "latestVersion": "0.2.0",
+  "latestVersion": "0.4.0",
   "versions": [
+    "0.4.0",
     "0.2.0",
     "0.1.0"
   ]

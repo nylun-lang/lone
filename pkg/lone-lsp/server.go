@@ -101,7 +101,7 @@ func (s *Server) handleMessage(req *Request) {
 			},
 			ServerInfo: ServerInfo{
 				Name:    "lone-lsp",
-				Version: "0.3.0",
+				Version: "0.4.0",
 			},
 		}
 		s.sendResponse(req.ID, res, nil)

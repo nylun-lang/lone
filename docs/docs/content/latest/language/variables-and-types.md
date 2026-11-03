@@ -12,15 +12,15 @@ Lone is statically typed with powerful type inference, explicit memory represent
 Variables are declared using the `var` keyword. Types can be written explicitly or inferred:
 
 ```rust
-// Explicitly typed
+-- Explicitly typed
 var counter: i32 = 0
 var ratio: f64 = 3.14159
 var message: str = "Welcome to Lone\n"
 var is_active: bool = true
 
-// Inferred types (resolved during lone-alyzer type evaluation)
-var total = 100         // Inferred as i32
-var greeting = "Hello"  // Inferred as str
+-- Inferred types
+var total = 100         -- Inferred as i32
+var greeting = "Hello"  -- Inferred as str
 ```
 
 ## Primitive Types
@@ -39,29 +39,57 @@ Lone supports standard fixed-width numeric types matching WebAssembly primitives
 | `void` | Empty return type | No return value |
 | `none` | Nil/null value | `0` |
 
-## Lists
+## Optional Types (`?T`)
 
-### Fixed-Size Lists
-
-Fixed-size lists have their length checked at compile time:
+An optional type represents a value of type `T` or `none`:
 
 ```rust
-var scores: [3]i32 = [95, 88, 100]
+var opt_name: ?str = "Alice"
+var empty_val: ?i32 = none
 ```
 
-### Dynamic Lists
+Optional types can be tested and narrowed using `is` / `is not`:
+```rust
+if opt_name is not none {
+    println(opt_name) -- Automatically narrowed to str
+}
+```
 
-Dynamic lists represent growable sequences:
+## Structs & Traits
+
+### Struct Declarations
 
 ```rust
-var items: []str = ["apple", "banana", "cherry"]
+type Point = struct {
+    x: i32,
+    y: i32,
+}
 ```
 
-## Object Literals
+### Trait Declarations
 
-Object literals use dot-prefixed fields:
+Traits define interfaces. Trait names **must** follow the `PascalCase` convention ending with `Trait`:
 
 ```rust
-var point = { .x: 10, .y: 20 }
-var config = { .max_retries: 3, .timeout: 5000 }
+type DrawableTrait = trait {
+    fn draw(self) void
+}
 ```
+
+### Implementing Traits
+
+```rust
+impl DrawableTrait for Point {
+    fn draw(self) void {
+        println_int(self.x)
+    }
+}
+```
+
+## Pointers and References
+
+Lone distinguishes between safe references and raw linear memory pointers:
+
+- `ref<T>`: Safe managed reference (`&x`).
+- `ptr<T>`: Unsafe linear memory address pointer (`&raw x`).
+- `ro`: Read-only memory modifier (`ref<ro T>`, `ptr<ro T>`).
