@@ -1,6 +1,6 @@
-# Lone Language Specification
+# Lone Language Specification (v0.5.0-beta)
 
-This specification documents the current implementation of the **Lone Programming Language** based on the active compiler toolchain, parser grammar (`pkg/lone-parser`), abstract syntax tree (`pkg/lone-parser-ast`), semantic analyzer (`pkg/lone-analyzer`), and WebAssembly code generator (`pkg/lone-compiler`).
+This specification documents the current implementation of the **Lone Programming Language** (v0.5.0-beta) based on the active Greenfield compiler toolchain (`pkg2/lone-lexer`, `pkg2/lone-parser`, `pkg2/lone-analyzer`, `pkg2/lone-compiler-wir`, and `test2`).
 
 ---
 
@@ -13,8 +13,9 @@ This specification documents the current implementation of the **Lone Programmin
 
 ### Key Invariants
 - **IL1 - Explicit over implicit**: Every name reference, type indirection, and memory allocation must be unambiguous regarding *what it is* and *where it came from*.
-- **IL2 - No implicit built-ins**: Compiler intrinsics are prefixed with `#` (e.g. `#panic`, `#print`) to cleanly distinguish them from user code.
+- **IL2 - No implicit built-ins**: Compiler intrinsics are prefixed with `#` (e.g. `#panic`, `#print`, `#alloc`, `#free`) to cleanly distinguish them from user code.
 - **IL3 - Strict Resource & Result Accounting**: Non-void expressions in statement position must be consumed or explicitly dropped (`drop <expr>`). Unconsumed values trigger a static analysis error (`type/unused-result`).
+- **IL4 - Explicit Trait Materialization**: Traits are pure contracts and do not inject methods into type namespaces. Trait methods must be explicitly materialized via `TrTrait::|TargetType|`.
 - **IF1 - Syntax-level feedback**: Grammar layout and keywords provide readability without resorting to confusing punctuation.
 - **IF2 - Progressive information**: Information displays progressively from left to right wherever possible.
 - **IUI1 - Declared topology is stable**: UI declarations establish a persistent topology known to the compiler.
@@ -24,24 +25,26 @@ This specification documents the current implementation of the **Lone Programmin
 ## 2. Lexical Structure
 
 ### 2.1 Identifiers
-Identifiers name variables, functions, types, fields, parameters, and labels.
+Identifiers name variables, functions, types, fields, parameters, variants, and labels.
 - **Pattern**: `[a-zA-Z_][a-zA-Z0-9_]*`
-- **Intrinsics / Built-in Names**: May optionally be prefixed with `#` (e.g. `#panic`, `#print`).
+- **Intrinsics / Built-in Names**: Prefixed with `#` (e.g. `#panic`, `#print`, `#alloc`, `#free`).
 - **Naming Conventions**:
   - **Functions & Local Variables**: `snake_case` (e.g. `calculate_hash`, `user_id`).
   - **Globals & Constants**: `ALL_CAPS` or `snake_case` (e.g. `MAX_BUFFER_SIZE`, `default_timeout`).
-  - **Types & Structs**: `CamelCase` / PascalCase (e.g. `UserData`, `TokenStream`).
-  - **Trait Types**: **Must** end with the exact suffix `Trait` (e.g. `ComparableTrait`, `WriterTrait`, `ReaderTrait`).
-  - **Non-Trait Identifiers**: Any type or symbol that is **not** a trait must **not** end with `trait` (case-insensitive, e.g. `_trait`, `_TRAIT`, `Trait`) or be named `Trait`/`trait`. Legitimate English words ending in "trait" (such as `portrait`, `strait`, `distrait`) are preserved.
+  - **Types, Structs & Enums**: `CamelCase` / PascalCase (e.g. `UserData`, `TokenStream`, `Shape`).
+  - **Trait Types**: **Must** begin with prefix `Tr` followed by an uppercase letter (e.g. `TrWriter`, `TrReader`, `TrClonable`, `TrDisplayer`).
+  - **Non-Trait Identifiers**: Any type or symbol that is **not** a trait must **not** begin with prefix `Tr` followed by an uppercase letter.
 
 ### 2.2 Keywords
-The following keywords are reserved and guarded by word boundaries (`![a-zA-Z0-9_]`):
+The following keywords are reserved in Lone:
 ```
 import    from      as        pub       var       let
-type      struct    trait     impl      fn        return
-break     if        else      while     loop      for
-in        drop      and       or        xor       is
-not       true      false     none      ro        comptime
+type      struct    enum      trait     impl      fn
+return    break     if        else      while     loop
+for       in        drop      match     must      try
+and       or        xor       is        satisfies where
+infer     not       true      false     none      ro
+comptime
 ```
 
 ### 2.3 Comments
@@ -255,7 +258,7 @@ pub type Vec2 = struct {
 ```
 
 #### Struct Instantiation
-1. **Bare Struct Construct (`T::{ ... }`)**: Directly initializes fields without invoking a constructor:
+1. **Associated Construct (`T::{ ... }`)**: Directly initializes fields without invoking a constructor:
    ```lone
    var v = Vec2::{ .x: 10, .y: 20 }
    ```
@@ -264,35 +267,68 @@ pub type Vec2 = struct {
    var v = Vec2.new(10, 20)
    ```
 
-### 5.6 Trait Declarations (`TYPE_DEC_TRAIT`)
-Traits define behavioral contracts that types can satisfy.
-- **Convention Rule**: Trait type names **must** end with the `Trait` suffix (e.g. `WriterTrait`, `ReaderTrait`, `ComparableTrait`).
-
+### 5.6 Tagged Union Enums (`TYPE_DEC_ENUM`)
+Enums define tagged unions whose variants may optionally hold named payload fields:
 ```lone
-pub type WriterTrait = trait {
-    fn write(self, msg: str) i32
+pub type Shape = enum {
+    Circle(radius: int),
+    Rectangle(width: int, height: int),
+    Point,
 }
 
-pub type ReaderTrait = trait {
+pub type Option<T> = enum {
+    Some(val: T),
+    None,
+}
+
+pub type Result<V, U = Error where { U is Error }> = enum {
+    Ok(val: V),
+    Err(err: U),
+}
+```
+
+- **Tag Allocation**: Variants are assigned sequential integer discriminant tags starting at `0`.
+- **Memory Layout**: 4-byte discriminant tag at offset `0`, followed by payload fields aligned to the maximum payload alignment.
+- **Dynamic Allocation**: Constructed on the heap via the Free-List allocator runtime (`$__lone_rt_alloc`).
+
+### 5.7 Trait Declarations (`TYPE_DEC_TRAIT`)
+Traits define behavioral contracts that types can satisfy.
+- **Naming Rule**: Trait type names **must** start with the `Tr` prefix followed by an uppercase letter (e.g. `TrWriter`, `TrReader`, `TrClonable`).
+
+```lone
+pub type TrWriter = trait {
+    fn write(self, msg: str) void
+}
+
+pub type TrReader = trait {
     fn read(self, buf: ptr<u8>, max_len: i32) i32
 }
 ```
 
-### 5.7 Implementation Declarations (`IMPL_DEC`)
-Implementations attach trait methods to concrete types:
+### 5.8 Implementation Declarations (`IMPL_DEC`)
+Implementations attach trait contracts to concrete target types:
 ```lone
-impl WriterTrait on Stdout {
-    fn write(self, msg: str) i32 {
-        return sys_write(self.fd, &raw msg[0], str_len(msg))
-    }
-}
-
-impl ReaderTrait on Stdin {
-    fn read(self, buf: ptr<u8>, max_len: i32) i32 {
-        return sys_read(self.fd, buf, max_len)
+impl TrWriter on Console {
+    fn write(self, msg: str) void {
+        #print(msg)
     }
 }
 ```
+
+### 5.9 Explicit Trait Materialization (`TrTrait::|T|`)
+In accordance with **IL4 (Explicit Trait Materialization)**, traits are pure contracts and do not implicitly inject methods into a type's namespace. To invoke a trait method on a conforming type, the trait implementation must be explicitly materialized:
+
+```lone
+fn log_data<T where { T satisfies TrWriter }>(writer: T, msg: str) void {
+    let w = TrWriter::|T|
+    w.write(writer, msg)
+}
+
+-- Or directly chained:
+TrWriter::|Console|.write(con, "hello\n")
+```
+
+The compiler statically checks that `TargetType` implements `TrTrait` via an `impl` declaration, synthesizes a `MaterializedTraitType`, and binds `self` to `TargetType`.
 
 ---
 
@@ -506,11 +542,105 @@ if !(opt is none) {
 - For optional types (`?T`), runtime lowering checks the discriminant tag / null-pointer.
 - For statically fixed concrete types, `is` tests are resolved at compile time with zero runtime overhead.
 
+### 7.6 Match Expression (`MATCH_EXPR`)
+Exhaustive pattern matching across enums, variants, literals, and wildcards:
+```lone
+let name = match shape {
+    Shape::Circle(r) => "Circle",
+    Shape::Rectangle(w, h) => "Rectangle",
+    Shape::Point => "Point",
+    _ => "Unknown",
+}
+```
+- **Exhaustiveness Check**: The compiler validates that all enum variants are handled. Missing variants without a wildcard `_` fallback trigger a static analysis error (`type/non-exhaustive-match`).
+- **Pattern Destructuring**: Variant payload fields are extracted directly into arm-scoped variable bindings.
+
+### 7.7 Error Handling: `must` and `try`
+In Lone, `Result<V, U = Error where { U is Error }>` is the standard representation for fallible operations:
+- **`must <expr>`**: Asserts that `expr` evaluated to `Result::Ok(val)` and returns `val`. If `expr` evaluated to `Result::Err`, it executes WebAssembly `unreachable` (panics immediately with zero overhead):
+  ```lone
+  let content = must read_file("config.txt")
+  ```
+- **`try <expr>`**: Early-return error propagation. If `expr` is `Result::Ok(val)`, evaluates to `val`. If `expr` is `Result::Err(err)`, returns early from the enclosing function with `Result::Err(err)`:
+  ```lone
+  fn calculate(x: i32, y: i32) Result<i32> {
+      let d = try divide(x, y)
+      return Result::Ok(d + 10)
+  }
+  ```
+  The enclosing function must have a compatible `Result` return type. Using `infer` as the error type (`Result<T, infer>`) automatically unifies all propagated error variants.
+
+### 7.8 Generics & Constraints (`where`)
+Functions, structs, and enums support generic type parameters with compile-time constraints:
+```lone
+-- Generic type with constraint
+pub type Container<T where { T satisfies TrClone }> = struct {
+    item: T,
+}
+
+-- Generic function with trait constraint
+fn log_item<T where { T satisfies TrWriter }>(writer: T, msg: str) void {
+    let w = TrWriter::|T|
+    w.write(writer, msg)
+}
+
+-- Multi-parameter constraints
+pub type Result<V, U = Error where { U is Error }> = enum {
+    Ok(val: V),
+    Err(err: U),
+}
+```
+- **Constraint Operators**:
+  - `is`: Nominal type/category constraint (e.g. `U is Error`).
+  - `satisfies`: Trait contract check (verifying that `impl TrTrait on T` exists).
+- **Monomorphization**: Generic functions and types are monomorphized on demand during compilation.
+
 ---
 
-## 8. AST / Intermediate Representation Reference
+## 8. WebAssembly Linear Memory Architecture
 
-| Source Syntax | IR Node (`pkg/lone-parser-ast`) |
+### 8.1 Memory Layout & Partitioning
+Lone organizes 64 KiB WebAssembly linear memory pages into dedicated, non-overlapping regions:
+
+```
++--------------------+ 0
+| Reserved Scratch   | WASI iovec (0..63)
++--------------------+ 64
+| Static Constants   | String literals and metadata tables (64..dataEnd)
++--------------------+ dataEnd
+| Stack Guard Page   | $__stack_limit (minimum 1024)
+|                    | 
+| Datastack Area     | Downward-growing stack ($__stack_pointer starts at 65536)
++--------------------+ 65536 ($__heap_base)
+| Dynamic Heap       | Upward-growing heap managed by Free-List Allocator
+|                    | Automatic dynamic expansion via memory.grow
++--------------------+ memory.size * 65536
+```
+
+- **Zero Collisions**: Because stack grows downward in Page 0 and heap grows upward starting at Page 1, stack and heap cannot collide.
+
+### 8.2 Free-List Allocator Runtime
+Heap allocations are managed by an inlined WebAssembly runtime:
+- **Block Headers (8 bytes)**: Tracks payload size and allocation status (`0 = FREE`, `1 = ALLOCATED`).
+- **Bi-directional Coalescing**: When `#free` is called, adjacent free blocks to both the left and right are merged in constant time.
+- **Block Splitting**: Allocations split large free blocks if residual space is $\ge 8$ bytes.
+- **Dynamic Memory Expansion**: When heap space is exhausted, `$__lone_rt_alloc` automatically invokes `memory.grow`.
+
+### 8.3 Linear Memory Intrinsics
+- `#alloc(size: int) int`: Dynamic heap allocation via free-list runtime.
+- `#free(ptr: int) void`: Free block and coalesce with adjacent free blocks.
+- `#realloc(ptr: int, new_size: int) int`: Resizing with in-place reuse or copy.
+- `#memory_grow(pages: int) int`: Dynamic WebAssembly `memory.grow`.
+- `#memory_size() int`: Current page count.
+- `#stack_pointer() int`: Current linear stack pointer offset.
+- `#stack_alloc(size: int) int`: Bump datastack allocation with guard page overflow check.
+- `#stack_free(size: int) void`: Constant-time stack rewind.
+
+---
+
+## 9. AST / Intermediate Representation Reference
+
+| Source Syntax | IR Node (`pkg2/lone-parser-ast`) |
 | :--- | :--- |
 | `import .a, .b from :ns` | `ir.ImportDecl` |
 | `@fa:wasm { ... }` | `ir.WasmDirective` |
@@ -543,11 +673,10 @@ The Lone Static Analyzer translates parsed ASTs into a **Typed IR** (`TProgram`)
 
 ### 9.1 Naming Conventions (`PassNamingConventions`)
 1. **Trait Types (`naming/trait`)**:
-   - Every trait declaration must end with the exact suffix `Trait` (e.g. `ComparableTrait`, `WriterTrait`).
+   - Every trait declaration must begin with the exact prefix `Tr` followed by an uppercase letter (e.g. `TrWriter`, `TrReader`, `TrClonable`, `TrDisplayer`).
 2. **Non-Trait Identifiers**:
-   - Non-trait types (structs, aliases) must not end in `trait` or be named `Trait`/`trait` (`naming/type`).
-   - Non-trait declarations (functions, globals, local variables, parameters, fields, and labels) must not end in `trait` or be named `Trait`/`trait`.
-   - Legitimate English words (e.g. `portrait`, `strait`, `distrait`) are preserved.
+   - Non-trait types (structs, aliases, enums) must not begin with `Tr` followed by an uppercase letter (`naming/type`).
+   - Non-trait declarations (functions, globals, local variables, parameters, fields, and labels) must not begin with `Tr` followed by an uppercase letter.
 3. **General Identifiers**:
    - Functions, locals, parameters, labels, struct fields: `snake_case`.
    - Globals and constants: `ALL_CAPS` or `snake_case`.

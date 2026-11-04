@@ -42,10 +42,11 @@ Inspired by Zig (`_local/zig`), Lone uses a clean separation between **compiler 
 | `test/behavior/` | End-to-end `.lone` source files verifying compiler and execution outputs. |
 | `test/compile_errors/` | Negative `.lone` files asserting diagnostic errors and warnings. |
 | `packages/` | *Legacy multi-module implementation (kept for backwards compatibility during migration).* |
-| `drafts/` | Working documentation, designs, reports, and internal specs. |
-| `drafts/research/` | **Ideas and drafts of what the project could be** (language specs, sketches, RFCs). |
-| `drafts/under-the-hood/`| **Internal architectural documentation** explaining compiler subsystems. |
-| `drafts/reports/` | **Work session reports** generated at the conclusion of tasks. |
+| `dev/` | Working documentation, designs, reports, and internal specs. |
+| `dev/rfcs/` | **Ideas, RFCs, and architecture designs** (language specs, sketches, RFCs). |
+| `dev/internals/`| **Internal architectural documentation** explaining compiler subsystems under the hood. |
+| `dev/sessions/` | **Work session reports** generated at the conclusion of tasks. |
+| `dev/archive/` | Historical and legacy specifications. |
 | `assets/` | Brand assets, icons, banners, and vector artwork. |
 
 ---
@@ -64,8 +65,8 @@ Whenever assisting on this repository, you must strictly follow these rules:
   - `[Ai-assisted] fix(irtypes): correct type constraint flags for comptime`
 
 ### 3.2 End-of-Request Reports
-- At the end of every user request or milestone, **write a report** in `drafts/reports/`.
-- File naming convention: `drafts/reports/YYYY-MM-DD_<brief-topic>.md`.
+- At the end of every user request or milestone, **write a report** in `dev/sessions/`.
+- File naming convention: `dev/sessions/YYYY-MM-DD/<topic>.md` or `dev/sessions/YYYY-MM-DD_<topic>.md`.
 - The report should summarize:
   - What was requested.
   - What changes were made or investigated.
@@ -73,8 +74,8 @@ Whenever assisting on this repository, you must strictly follow these rules:
   - Pending questions, next steps, or open considerations.
 
 ### 3.3 Documentation Boundaries
-- **Language Ideas & Proposals:** Place in `drafts/research/` (e.g., grammar sketches, type system proposals).
-- **Internal Component Docs:** Place in `drafts/under-the-hood/` (e.g., how the PEG parser builds the AST, symbol resolution stages, memory layout).
+- **Language Ideas & Proposals:** Place in `dev/rfcs/` (e.g., grammar sketches, type system proposals).
+- **Internal Component Docs:** Place in `dev/internals/` (e.g., how the Pratt parser builds the AST, symbol resolution stages, memory layout).
 - **Legacy Reference:** Consult `_old/` when researching earlier design iterations, but write all new code in `packages/`.
 
 ---

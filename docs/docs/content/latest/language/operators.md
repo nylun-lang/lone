@@ -1,6 +1,6 @@
 ---
 title: "Operators & Precedence"
-order: 5
+order: 7
 ---
 
 # Operators & Precedence
