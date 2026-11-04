@@ -43,10 +43,20 @@ type FnParam struct {
 
 func (p FnParam) NodeSpan() Span { return p.Span_ }
 
+// TypeParam represents a generic type parameter: T or U = DefaultType
+type TypeParam struct {
+	Name    string
+	Default *TYPE_REF
+	Span_   Span
+}
+
+func (tp TypeParam) NodeSpan() Span { return tp.Span_ }
+
 // FN_DEC represents a function declaration.
 type FN_DEC struct {
 	Name       string
 	IsPublic   bool
+	TypeParams []TypeParam
 	Params     []FnParam
 	ReturnType *TYPE_REF
 	Body       Block
@@ -97,7 +107,7 @@ func (v EnumVariant) NodeSpan() Span { return v.Span_ }
 type TYPE_DEC struct {
 	Name       string
 	IsPublic   bool
-	TypeParams []string
+	TypeParams []TypeParam
 	Kind       TypeDecKind
 	AliasType  *TYPE_REF
 	Fields     []StructField

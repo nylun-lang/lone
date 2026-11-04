@@ -320,3 +320,48 @@ fn bad_try(r: Result) i32 {
 		t.Errorf("expected rule 'type/try-incompatible-return', got %q", diags[0].Rule)
 	}
 }
+
+func TestGenericsAndResultInfer(t *testing.T) {
+	code := `
+pub type Option<T> = enum {
+    Some(val: T),
+    None,
+}
+
+pub type Pair<A, B> = struct {
+    first: A,
+    second: B,
+}
+
+fn wrap_val<T>(val: T) Option<T> {
+    return Option::Some(val)
+}
+
+fn get_pair() Pair<i32, string> {
+    return Pair::{ .first: 10, .second: "hello" }
+}
+
+fn compute_inferred(a: i32) Result<i32, infer> {
+    if a < 0 {
+        return Result::Err(Error::Code(400))
+    }
+    return Result::Ok(a * 2)
+}
+
+fn call_inferred() Result<i32> {
+    let x = try compute_inferred(21)
+    return Result::Ok(x)
+}
+`
+	analyzer := NewAnalyzer()
+	prog, diags, err := analyzer.AnalyzeSource([]byte(code))
+	if err != nil {
+		t.Fatalf("unexpected parse error: %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("unexpected diags: %v", diags)
+	}
+	if prog == nil {
+		t.Fatalf("expected prog")
+	}
+}

@@ -390,8 +390,33 @@ func (e *EnumType) Equals(other Type) bool {
 	return false
 }
 func (e *EnumType) AssignableTo(target Type) bool {
+	if target == nil {
+		return false
+	}
+	if target.Kind() == TypeKindUnknown || target == TypeAny {
+		return true
+	}
 	if oe, ok := target.(*EnumType); ok {
-		return e.Name == oe.Name
+		if e.Name == oe.Name {
+			return true
+		}
+		// Result covariance: Result<V, SubErr> is assignable to Result<V, Error>
+		if strings.HasPrefix(e.Name, "Result<") && strings.HasPrefix(oe.Name, "Result<") {
+			eOk, hasEOk := e.Variant("Ok")
+			oeOk, hasOeOk := oe.Variant("Ok")
+			if hasEOk && hasOeOk {
+				eOkType := Type(TypeVoid)
+				if len(eOk.Fields) > 0 {
+					eOkType = eOk.Fields[0].Type
+				}
+				oeOkType := Type(TypeVoid)
+				if len(oeOk.Fields) > 0 {
+					oeOkType = oeOk.Fields[0].Type
+				}
+				return eOkType.AssignableTo(oeOkType)
+			}
+		}
+		return false
 	}
 	return false
 }

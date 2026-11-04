@@ -1,0 +1,27 @@
+pub type Option<T> = enum {
+    Some(val: T),
+    None,
+}
+
+fn test_option(opt: Option<i32>) i32 {
+    let res = match opt {
+        Option::Some(v) => v * 2,
+        Option::None => -1,
+    }
+    return res
+}
+
+fn main() void {
+    let s = Option::Some(25)
+    let n = Option::None
+
+    let v1 = test_option(s)
+    let v2 = test_option(n)
+
+    let is_some = s is Option::Some
+    let is_none = n is Option::None
+
+    if v1 == 50 and v2 == -1 and is_some and is_none {
+        #print("Generic Option<T> enum and monomorphization verified!\n")
+    }
+}

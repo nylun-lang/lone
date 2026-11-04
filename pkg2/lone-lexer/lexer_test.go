@@ -201,3 +201,22 @@ let y = try compute()
 		t.Errorf("expected TokenTry")
 	}
 }
+
+func TestLexerInfer(t *testing.T) {
+	code := `fn foo() Result<i32, infer> {}`
+	lex := NewLexer([]byte(code))
+	tokens, err := lex.Tokenize()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	foundInfer := false
+	for _, tok := range tokens {
+		if tok.Kind == TokenInfer {
+			foundInfer = true
+		}
+	}
+	if !foundInfer {
+		t.Errorf("expected TokenInfer")
+	}
+}

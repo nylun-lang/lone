@@ -124,6 +124,30 @@ func TestMustTry(t *testing.T) {
 	}
 }
 
+func TestGenericsStructEnum(t *testing.T) {
+	got := compileAndRun(t, "behavior/generics_struct_enum.lone")
+	want := "Generic Option<T> enum and monomorphization verified!\n"
+	if got != want {
+		t.Errorf("unexpected output: got %q, want %q", got, want)
+	}
+}
+
+func TestResultInfer(t *testing.T) {
+	got := compileAndRun(t, "behavior/result_infer.lone")
+	want := "Result with default Error and infer escape hatch verified!\n"
+	if got != want {
+		t.Errorf("unexpected output: got %q, want %q", got, want)
+	}
+}
+
+func TestGenericFn(t *testing.T) {
+	got := compileAndRun(t, "behavior/generic_fn.lone")
+	want := "Generic functions and automatic monomorphization verified!\n"
+	if got != want {
+		t.Errorf("unexpected output: got %q, want %q", got, want)
+	}
+}
+
 func TestCheckAllTest2Suite(t *testing.T) {
 	files, err := filepath.Glob("behavior/*.lone")
 	if err != nil {

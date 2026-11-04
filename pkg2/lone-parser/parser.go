@@ -346,6 +346,47 @@ func (p *Parser) parseFnDec(isPub bool) (loneast.FN_DEC, error) {
 		return loneast.FN_DEC{}, fmt.Errorf("expected function name at %s", p.peek().Start)
 	}
 
+	// Generic type parameters: fn foo<T, U = Default>(...)
+	var typeParams []loneast.TypeParam
+	if p.peek().Kind == lonelexer.TokenLt {
+		p.advance()
+		for {
+			tp, err := p.expect(lonelexer.TokenIdent)
+			if err != nil {
+				return loneast.FN_DEC{}, err
+			}
+			var defType *loneast.TYPE_REF
+			tpEnd := tp.End
+			if p.peek().Kind == lonelexer.TokenAssign {
+				p.advance()
+				def, err := p.parseTypeRef()
+				if err != nil {
+					return loneast.FN_DEC{}, err
+				}
+				defType = &def
+				tpEnd = def.NodeSpan().End
+			}
+			typeParams = append(typeParams, loneast.TypeParam{
+				Name:    tp.Text,
+				Default: defType,
+				Span_:   lonelexer.Span{Start: tp.Start, End: tpEnd},
+			})
+			if p.peek().Kind == lonelexer.TokenComma {
+				p.advance()
+				if p.peek().Kind == lonelexer.TokenGt {
+					break
+				}
+			} else {
+				break
+			}
+		}
+		gt, err := p.expect(lonelexer.TokenGt)
+		if err != nil {
+			return loneast.FN_DEC{}, err
+		}
+		_ = gt
+	}
+
 	// Parameters: (p1: T1, p2: T2)
 	lparen, err := p.expect(lonelexer.TokenLParen)
 	if err != nil {
@@ -425,6 +466,7 @@ func (p *Parser) parseFnDec(isPub bool) (loneast.FN_DEC, error) {
 	return loneast.FN_DEC{
 		Name:       nameTok.Text,
 		IsPublic:   isPub,
+		TypeParams: typeParams,
 		Params:     params,
 		ReturnType: retType,
 		Body:       body,
@@ -440,8 +482,8 @@ func (p *Parser) parseTypeDec(isPub bool) (loneast.TYPE_DEC, error) {
 		return loneast.TYPE_DEC{}, err
 	}
 
-	// Generic type parameters: <T, U>
-	var typeParams []string
+	// Generic type parameters: <T, U = Default>
+	var typeParams []loneast.TypeParam
 	if p.peek().Kind == lonelexer.TokenLt {
 		p.advance()
 		for {
@@ -449,7 +491,22 @@ func (p *Parser) parseTypeDec(isPub bool) (loneast.TYPE_DEC, error) {
 			if err != nil {
 				return loneast.TYPE_DEC{}, err
 			}
-			typeParams = append(typeParams, tp.Text)
+			var defType *loneast.TYPE_REF
+			tpEnd := tp.End
+			if p.peek().Kind == lonelexer.TokenAssign {
+				p.advance()
+				def, err := p.parseTypeRef()
+				if err != nil {
+					return loneast.TYPE_DEC{}, err
+				}
+				defType = &def
+				tpEnd = def.NodeSpan().End
+			}
+			typeParams = append(typeParams, loneast.TypeParam{
+				Name:    tp.Text,
+				Default: defType,
+				Span_:   lonelexer.Span{Start: tp.Start, End: tpEnd},
+			})
 			if p.peek().Kind == lonelexer.TokenComma {
 				p.advance()
 				if p.peek().Kind == lonelexer.TokenGt {
@@ -1376,9 +1433,9 @@ func (p *Parser) parseTypeRef() (loneast.TYPE_REF, error) {
 		}, nil
 	}
 
-	// Base type: Name<T1, T2> (includes ptr<T>, ref<T>, i32, str, TrWriter, etc.)
+	// Base type: Name<T1, T2> (includes ptr<T>, ref<T>, i32, str, TrWriter, infer, etc.)
 	var nameTok lonelexer.Token
-	if p.peek().Kind == lonelexer.TokenIdent || p.peek().Kind == lonelexer.TokenNone {
+	if p.peek().Kind == lonelexer.TokenIdent || p.peek().Kind == lonelexer.TokenNone || p.peek().Kind == lonelexer.TokenInfer {
 		nameTok = p.advance()
 	} else {
 		return loneast.TYPE_REF{}, fmt.Errorf("expected type name at %s, got %s", p.peek().Start, p.peek().Kind)
@@ -1483,6 +1540,7 @@ func (p *Parser) expect(kind lonelexer.TokenKind) (lonelexer.Token, error) {
 func isTypeStart(k lonelexer.TokenKind) bool {
 	return k == lonelexer.TokenIdent ||
 		k == lonelexer.TokenNone ||
+		k == lonelexer.TokenInfer ||
 		k == lonelexer.TokenLBracket ||
 		k == lonelexer.TokenFn ||
 		k == lonelexer.TokenQuestion ||

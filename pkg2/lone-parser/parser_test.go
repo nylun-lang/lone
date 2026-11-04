@@ -244,7 +244,7 @@ pub type TrIterator<T> = trait {
 	}
 
 	tr2 := decls[1].(loneast.TYPE_DEC)
-	if tr2.Name != "TrIterator" || len(tr2.TypeParams) != 1 || tr2.TypeParams[0] != "T" {
+	if tr2.Name != "TrIterator" || len(tr2.TypeParams) != 1 || tr2.TypeParams[0].Name != "T" {
 		t.Errorf("expected TrIterator<T> trait, got %+v", tr2)
 	}
 }
@@ -467,5 +467,56 @@ fn test_features(s: Shape, r: Result) void {
 	bind4 := stmts[3].(loneast.BIND_DEC)
 	if _, ok := bind4.Value.(loneast.TryExpr); !ok {
 		t.Fatalf("expected TryExpr, got %#v", bind4.Value)
+	}
+}
+
+func TestParseGenericsAndInfer(t *testing.T) {
+	code := `
+pub type Result<V, U = Error> = enum {
+    Ok(val: V),
+    Err(err: U),
+}
+
+fn wrap<T>(val: T) Result<T, infer> {
+    return Result::Ok(val)
+}
+`
+	decls, err := Parse([]byte(code))
+	if err != nil {
+		t.Fatalf("Parse error: %v", err)
+	}
+	if len(decls) != 2 {
+		t.Fatalf("expected 2 decls, got %d", len(decls))
+	}
+
+	tdec := decls[0].(loneast.TYPE_DEC)
+	if tdec.Name != "Result" || len(tdec.TypeParams) != 2 {
+		t.Fatalf("expected Result with 2 type params, got %+v", tdec)
+	}
+	if tdec.TypeParams[0].Name != "V" || tdec.TypeParams[0].Default != nil {
+		t.Errorf("expected param V with no default")
+	}
+	if tdec.TypeParams[1].Name != "U" || tdec.TypeParams[1].Default == nil {
+		t.Fatalf("expected param U with default")
+	}
+	tb := tdec.TypeParams[1].Default.Value.(*loneast.TypeBase)
+	if tb.Name != "Error" {
+		t.Errorf("expected default type Error, got %q", tb.Name)
+	}
+
+	fdec := decls[1].(loneast.FN_DEC)
+	if fdec.Name != "wrap" || len(fdec.TypeParams) != 1 || fdec.TypeParams[0].Name != "T" {
+		t.Fatalf("expected fn wrap<T>, got %+v", fdec)
+	}
+	if fdec.ReturnType == nil {
+		t.Fatalf("expected return type for wrap")
+	}
+	retTb := fdec.ReturnType.Value.(*loneast.TypeBase)
+	if retTb.Name != "Result" || len(retTb.Args) != 2 {
+		t.Fatalf("expected Result<T, infer>, got %+v", retTb)
+	}
+	inferTb := retTb.Args[1].Value.(*loneast.TypeBase)
+	if inferTb.Name != "infer" {
+		t.Errorf("expected arg 1 to be infer, got %q", inferTb.Name)
 	}
 }

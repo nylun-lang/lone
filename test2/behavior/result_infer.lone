@@ -1,0 +1,32 @@
+fn divide(a: i32, b: i32) Result<i32, infer> {
+    if b == 0 {
+        return Result::Err(Error::Code(500))
+    }
+    return Result::Ok(a / b)
+}
+
+fn calculate(x: i32, y: i32) Result<i32> {
+    let d = try divide(x, y)
+    return Result::Ok(d + 10)
+}
+
+fn main() void {
+    let good = calculate(100, 2)
+    let bad = calculate(100, 0)
+
+    let val = must good
+
+    let is_err = bad is Result::Err
+
+    let err_code = match bad {
+        Result::Ok(v) => 0,
+        Result::Err(e) => match e {
+            Error::Code(c) => c,
+            _ => 1,
+        },
+    }
+
+    if val == 60 and is_err and err_code == 500 {
+        #print("Result with default Error and infer escape hatch verified!\n")
+    }
+}

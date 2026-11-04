@@ -1,0 +1,26 @@
+pub type Box<T> = enum {
+    Wrap(val: T),
+}
+
+fn wrap<T>(item: T) Box<T> {
+    return Box::Wrap(item)
+}
+
+fn unwrap_i32(b: Box<i32>) i32 {
+    let v = match b {
+        Box::Wrap(x) => x,
+    }
+    return v
+}
+
+fn main() void {
+    let b1 = wrap(42)
+    let v1 = unwrap_i32(b1)
+
+    let b2 = wrap(100)
+    let v2 = unwrap_i32(b2)
+
+    if v1 == 42 and v2 == 100 {
+        #print("Generic functions and automatic monomorphization verified!\n")
+    }
+}
