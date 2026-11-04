@@ -53,14 +53,15 @@ pub type Account = struct {
 }
 ```
 
-### 3.2 Visibility: The Leading Underscore Rule
+### 3.2 Visibility: The Leading Underscore Rule (File-Scoped Privacy)
 To eliminate repetitive `pub` keywords on individual fields:
 - **Public Field**: Any field name that does **not** begin with `_`. Accessible everywhere the struct is imported.
-- **Private/Hidden Field**: Any field name that begins with `_`. Accessible **only** within the declaring file/module.
+- **Private/Hidden Field**: Any field name that begins with `_`. Accessible **strictly within the declaring `.lone` source file**. Other files—even within the same local folder—must treat these fields as hidden.
 
 ### 3.3 Immutability: The `ro` Modifier
 - **Default (Mutable)**: If the struct variable is declared with `var`, the field can be read and reassigned (`acc.owner = "Bob"`). If declared with `let`, the entire instance is immutable.
 - **Permanently Read-Only (`ro`)**: Once initialized during construction, the field can **never** be reassigned, even on a mutable `var` binding. Attempting to write `acc.id = 99` triggers a compile-time error (`type/immutable-field-write`).
+- **Strict Immutability Invariant**: Reassigning an `ro` field via assignment syntax (`s.ro_field = val`) is prohibited **everywhere**, including inside `__init__`. `ro` fields can only receive values during the initial aggregate literal expression.
 
 ---
 
@@ -144,6 +145,15 @@ pub fn main() void {
 - **Private `ro` fields (`ro _hash: str`)**: **MUST** have an `__init__` constructor.
   - If a struct declares private `ro` fields without providing an `__init__`, the compiler flags a static analysis error (`type/missing-init-for-ro-private-field`).
   - *Rationale*: A private `ro` field can never be initialized from outside. Without an `__init__`, it would remain uninitializable.
+
+### 5.5 Factory Methods & Module-Internal Construction
+Structs often provide alternative named constructors (e.g. `TcpSocket::connect(host, port)` or `TcpSocket::from_raw_fd(fd)`):
+- Any associated function declared in the **same source file** as the struct can use raw aggregate syntax `Self::{ ... }`, populating both private `_*` fields and `ro` fields.
+- Outside callers access these factory methods as standard functions (`TcpSocket.connect(...)`), while direct raw construction from outside remains blocked.
+
+### 5.6 Zero-Field Structs (`type Unit = struct {}`)
+- `Unit::{}` declares zero private fields and is legal from anywhere.
+- `Unit::()` is **illegal** unless the struct explicitly declares `pub fn __init__() Unit`. Lone never synthesizes magic parameterless constructors (**IL1**).
 
 ---
 

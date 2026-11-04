@@ -82,6 +82,9 @@ pub type IfcEntity = interface {
 }
 ```
 
+- **Deduplication Rule**: If multiple embedded interfaces declare the exact same field name with identical type and mutability, they deduplicate into a single requirement.
+- **Collision Error**: If embedded interfaces declare the same field name with conflicting types or mutability (e.g. `id: int` vs `id: str`), compilation fails with `type/interface-embedding-collision`.
+
 ---
 
 ## 4. Semantic Rules & Duck Typing Conformance
@@ -117,6 +120,19 @@ pub fn main() void {
 }
 ```
 
+### 4.3 Method-Field Separation (No Implicit Getters)
+In Lone, method signatures **never** satisfy data fields:
+- If a struct declares `pub fn x(self) int`, it does **not** satisfy `x: int` in an interface.
+- *Rationale (IL1 & IL2)*: Interface fields are direct memory offset loads (`i32.load offset=N`). Emitting hidden synthetic getter wrappers or dynamic vtables is strictly forbidden. Interface fields must correspond to physical struct fields or object literal fields.
+
+### 4.4 Enums Cannot Satisfy Interfaces
+- Enums are tagged unions with discriminant tags at offset 0. Monomorphized direct memory loads without discriminant checks would violate memory safety.
+- Enums must be pattern-matched via `match`. Only nominal structs and object literals can satisfy interfaces.
+
+### 4.5 Memory Layout Invariance (Fixed Array vs. Dynamic Slice)
+- A struct declaring fixed array `data: [1024]u8` **cannot** satisfy an interface declaring `data: []u8`.
+- `[1024]u8` is an inline flat byte sequence; `[]u8` is an 8-byte fat-pointer `{ ptr, len }`. Duck typing requires identical memory layouts. Callers must pass explicit slice views if needed.
+
 ---
 
 ## 5. Field Mutability & Safety (`ro`)
@@ -147,6 +163,13 @@ pub type ImmutablePoint = struct {
 -- Fails static analysis: ImmutablePoint cannot satisfy IfcMutablePoint
 ```
 
+### 5.3 Transitive Reference Mutability
+Mutating a field through an interface reference requires three simultaneous invariants:
+1. The interface field is mutable (not `ro`).
+2. The concrete struct field is mutable (not `ro`).
+3. The reference binding itself is mutable (`ref<T>`, not `ref<ro T>`).
+Passing a reference to an immutable binding (`let s = Struct{...}; &s`) produces `ref<ro Struct>`. Writing to any field through `ref<ro Struct>` triggers a compile-time error (`type/immutable-reference-write`).
+
 ---
 
 ## 6. WebAssembly Compilation & Zero-Cost Abstraction
@@ -170,6 +193,10 @@ fn scale_point<T where { T satisfies IfcMutablePoint }>(p: ref<T>, factor: int) 
    - Zero fat pointers.
    - Zero heap allocation.
    - Direct linear memory load/store operations.
+
+### 6.2 Object Literal Stack Allocation & Escape Prevention
+- Anonymous object literals `{ .x: 10, .y: 20 }` allocated inline are placed on the Page 0 datastack frame of the caller.
+- Because datastack frames rewind upon function return, escape analysis strictly forbids returning a reference to a datastack-allocated object literal (`borrow/stack-use-after-free`). Object literals intended to outlive their frame must be allocated via heap `#alloc`.
 
 ---
 
