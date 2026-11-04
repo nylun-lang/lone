@@ -180,7 +180,7 @@ A major strength of this architecture is complete orthogonality between data and
 
 ```lone
 -- Data Contract (Interface)
-pub type ItLoggableEvent = interface {
+pub type IfcLoggableEvent = interface {
     event_id: int,
     timestamp: i64,
     payload: str,
@@ -191,8 +191,11 @@ pub type TrSerializer = trait {
     fn serialize(self) str
 }
 
--- Generic function requiring BOTH:
-fn dispatch_event<T where { T satisfies ItLoggableEvent and T satisfies TrSerializer }>(event: T) void {
+-- Generic function requiring BOTH via declarative comma-separated bounds:
+fn dispatch_event<T where {
+    T satisfies IfcLoggableEvent,
+    T satisfies TrSerializer,
+}>(event: T) void {
     -- Access data directly:
     let id = event.event_id
     
@@ -210,7 +213,26 @@ fn dispatch_event<T where { T satisfies ItLoggableEvent and T satisfies TrSerial
 
 ---
 
-## 7. Open Questions for Discussion
+## 7. Constraint Bounds Syntax: Why Boolean `and` is Prohibited
+
+Generic type constraints in `where { ... }` use **comma-separated declarative bounds**, strictly prohibiting boolean conjunctions like `and`:
+
+```lone
+-- Disallowed / Anti-pattern:
+T where { T satisfies A and T satisfies B }
+
+-- Canonical Lone Syntax:
+T where { T satisfies A, T satisfies B }
+```
+
+### Rationale:
+1. **Avoiding the Disjunction Slippery Slope**: Allowing `and` falsely implies that `or`, `xor`, and `not` are valid constraint operators.
+2. **Preserving Static Narrowing**: In a zero-overhead language without runtime type tags, disjunctive constraints (`A or B`) break static type narrowing. The compiler cannot know which contract is valid at a given call site, preventing safe field or method dispatch.
+3. **Set-Based Conjunction**: Multiple bounds in a `where` block represent a simultaneous set of requirements (an intersection). Separating them with commas (`,`) treats them as a clean declarative list, identical to struct fields or parameter lists.
+
+---
+
+## 8. Open Questions for Discussion
 
 1. **Prefix Choice**: Do you prefer **`It*`** (`ItUser`) or **`Ifc*`** (`IfcUser`)?
 2. **Width Subtyping**: If an interface requires `{ x: int, y: int }`, should a struct with `{ x: int, y: int, z: int }` satisfy it? (Width subtyping is standard in structural typing).

@@ -177,7 +177,7 @@ fn scale_point<T where { T satisfies IfcMutablePoint }>(p: ref<T>, factor: int) 
 Interfaces and Traits compose cleanly in generic where-clauses:
 
 ```lone
-fn process_record<T where { T satisfies IfcUser and T satisfies TrSerializable }>(record: T) void {
+fn process_record<T where { T satisfies IfcUser, T satisfies TrSerializable }>(record: T) void {
     -- Data field access (direct):
     let user_id = record.id
     
