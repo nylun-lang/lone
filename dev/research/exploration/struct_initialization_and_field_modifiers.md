@@ -106,7 +106,26 @@ pub fn main() void {
 }
 ```
 
-### 5.3 The `ro` Constructor Requirement Rule:
+### 5.3 Calling `Type::(...)` Without an `__init__` Method
+Calling constructor syntax `Type::(...)` on a struct that does **not** define an `__init__` method is a **compile-time error** (`type/unresolved-constructor`).
+
+```lone
+pub type Point = struct {
+    x: int,
+    y: int,
+    -- No __init__ declared!
+}
+
+pub fn main() void {
+    -- COMPILE ERROR: struct 'Point' defines no '__init__' constructor.
+    -- Use raw aggregate Point::{ .x: 10, .y: 20 } instead.
+    var p = Point::(10, 20)
+}
+```
+
+*Rationale (IL1 - Explicit over implicit)*: Lone **never** synthesizes implicit magic constructors. If a developer wants constructor syntax `Point::(...)`, they must explicitly write `pub fn __init__(x: int, y: int) Point`. Otherwise, callers must use the raw aggregate construct `Point::{ .x: 10, .y: 20 }`.
+
+### 5.4 The `ro` Constructor Requirement Rule:
 - **Public `ro` fields only (`ro id: int`)**: No `__init__` is required. Outside callers can supply `id` once in `Type::{ .id: 10 }`, and it remains immutable thereafter.
 - **Private `ro` fields (`ro _secret: T`)**: An `__init__` constructor is **MANDATORY**. If omitted, the compiler emits a compile-time error (`type/missing-init-for-ro-private-field`), because private `ro` fields could otherwise never be set by callers.
 
