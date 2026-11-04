@@ -156,6 +156,14 @@ func TestGenericConstraints(t *testing.T) {
 	}
 }
 
+func TestLinearMemory(t *testing.T) {
+	got := compileAndRun(t, "behavior/linear_memory.lone")
+	want := "WebAssembly linear memory management, free-list allocator, and dynamic memory.grow verified!\n"
+	if got != want {
+		t.Errorf("unexpected output: got %q, want %q", got, want)
+	}
+}
+
 func TestCheckAllTest2Suite(t *testing.T) {
 	files, err := filepath.Glob("behavior/*.lone")
 	if err != nil {

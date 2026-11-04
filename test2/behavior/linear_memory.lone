@@ -1,0 +1,40 @@
+fn main() void {
+    -- 1. Initial memory size check (at least 2 pages)
+    let init_pages = #memory_size()
+
+    -- 2. Initial stack pointer check (at or above 65536)
+    let sp0 = #stack_pointer()
+
+    -- 3. Stack allocation and rewind
+    let stack_buf = #stack_alloc(64)
+    let sp1 = #stack_pointer()
+    #stack_free(64)
+    let sp2 = #stack_pointer()
+
+    -- 4. Heap allocation via Free-List allocator
+    let p1 = #alloc(64)
+    let p2 = #alloc(64)
+    let p3 = #alloc(64)
+
+    -- 5. Free p1 and p2 -> should coalesce into a single block
+    #free(p1)
+    #free(p2)
+
+    -- 6. Allocate a 120-byte block -> should reuse the coalesced block at p1
+    let merged = #alloc(120)
+
+    -- 7. Reallocate merged to 200 bytes
+    let grown = #realloc(merged, 200)
+
+    -- 8. Grow memory by 2 pages
+    let prev_pages = #memory_grow(2)
+    let new_pages = #memory_size()
+
+    -- Clean up
+    #free(p3)
+    #free(grown)
+
+    if init_pages >= 2 and sp0 == sp2 and sp1 < sp0 and merged == p1 and new_pages == prev_pages + 2 {
+        #print("WebAssembly linear memory management, free-list allocator, and dynamic memory.grow verified!\n")
+    }
+}

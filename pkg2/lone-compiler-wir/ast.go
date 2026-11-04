@@ -284,6 +284,22 @@ func (i InstUnreachable) FormatWat(indent int) string {
 }
 func (i InstUnreachable) IsPure() bool { return false }
 
+// InstMemoryGrow represents a memory.grow instruction.
+type InstMemoryGrow struct{}
+
+func (i InstMemoryGrow) FormatWat(indent int) string {
+	return fmt.Sprintf("%smemory.grow", strings.Repeat("  ", indent))
+}
+func (i InstMemoryGrow) IsPure() bool { return false }
+
+// InstMemorySize represents a memory.size instruction.
+type InstMemorySize struct{}
+
+func (i InstMemorySize) FormatWat(indent int) string {
+	return fmt.Sprintf("%smemory.size", strings.Repeat("  ", indent))
+}
+func (i InstMemorySize) IsPure() bool { return false }
+
 // InstBlock represents a structured block.
 type InstBlock struct {
 	Label  string

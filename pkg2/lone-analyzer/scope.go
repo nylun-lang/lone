@@ -149,4 +149,68 @@ func registerBuiltins(root *Scope) {
 			Return: TypeVoid,
 		},
 	})
+	_ = root.Define(&Symbol{
+		Name: "#alloc",
+		Kind: SymbolFn,
+		Type: &FnType{
+			Params: []FnParamInfo{{Name: "size", Type: TypeI32}},
+			Return: TypeI32,
+		},
+	})
+	_ = root.Define(&Symbol{
+		Name: "#free",
+		Kind: SymbolFn,
+		Type: &FnType{
+			Params: []FnParamInfo{{Name: "ptr", Type: TypeI32}},
+			Return: TypeVoid,
+		},
+	})
+	_ = root.Define(&Symbol{
+		Name: "#realloc",
+		Kind: SymbolFn,
+		Type: &FnType{
+			Params: []FnParamInfo{{Name: "ptr", Type: TypeI32}, {Name: "new_size", Type: TypeI32}},
+			Return: TypeI32,
+		},
+	})
+	_ = root.Define(&Symbol{
+		Name: "#memory_grow",
+		Kind: SymbolFn,
+		Type: &FnType{
+			Params: []FnParamInfo{{Name: "pages", Type: TypeI32}},
+			Return: TypeI32,
+		},
+	})
+	_ = root.Define(&Symbol{
+		Name: "#memory_size",
+		Kind: SymbolFn,
+		Type: &FnType{
+			Params: []FnParamInfo{},
+			Return: TypeI32,
+		},
+	})
+	_ = root.Define(&Symbol{
+		Name: "#stack_pointer",
+		Kind: SymbolFn,
+		Type: &FnType{
+			Params: []FnParamInfo{},
+			Return: TypeI32,
+		},
+	})
+	_ = root.Define(&Symbol{
+		Name: "#stack_alloc",
+		Kind: SymbolFn,
+		Type: &FnType{
+			Params: []FnParamInfo{{Name: "size", Type: TypeI32}},
+			Return: TypeI32,
+		},
+	})
+	_ = root.Define(&Symbol{
+		Name: "#stack_free",
+		Kind: SymbolFn,
+		Type: &FnType{
+			Params: []FnParamInfo{{Name: "size", Type: TypeI32}},
+			Return: TypeVoid,
+		},
+	})
 }

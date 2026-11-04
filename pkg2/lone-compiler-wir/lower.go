@@ -143,24 +143,590 @@ func LowerProgram(prog *loneanalyzer.TProgram, opts LowerOptions) (*WasmModule, 
   )`)
 	}
 
-	// Compute heap pointer after data segments
-	dataEnd := l.nextOffset
-	heapStart := (dataEnd + 15) & ^15
-	totalMemBytes := opts.MemoryPages * 65536
+	l.mod.InlinedRuntime = append(l.mod.InlinedRuntime, `  ;; Inlined runtime: memcpy(dst, src, len)
+  (func $__lone_rt_memcpy (param $dst i32) (param $src i32) (param $len i32)
+    (local $d i32)
+    (local $s i32)
+    (local $rem i32)
+    local.get $dst
+    local.set $d
+    local.get $src
+    local.set $s
+    local.get $len
+    local.set $rem
+    (block $word_done
+      (loop $word_loop
+        local.get $rem
+        i32.const 4
+        i32.lt_s
+        br_if $word_done
+        local.get $d
+        local.get $s
+        i32.load
+        i32.store
+        local.get $d
+        i32.const 4
+        i32.add
+        local.set $d
+        local.get $s
+        i32.const 4
+        i32.add
+        local.set $s
+        local.get $rem
+        i32.const 4
+        i32.sub
+        local.set $rem
+        br $word_loop
+      )
+    )
+    (block $byte_done
+      (loop $byte_loop
+        local.get $rem
+        i32.const 0
+        i32.le_s
+        br_if $byte_done
+        local.get $d
+        local.get $s
+        i32.load8_u
+        i32.store8
+        local.get $d
+        i32.const 1
+        i32.add
+        local.set $d
+        local.get $s
+        i32.const 1
+        i32.add
+        local.set $s
+        local.get $rem
+        i32.const 1
+        i32.sub
+        local.set $rem
+        br $byte_loop
+      )
+    )
+  )
 
-	// Emit memory runtime globals: stack pointer and heap pointer
+  ;; Inlined runtime: memset(dst, val, len)
+  (func $__lone_rt_memset (param $dst i32) (param $val i32) (param $len i32)
+    (local $d i32)
+    (local $rem i32)
+    local.get $dst
+    local.set $d
+    local.get $len
+    local.set $rem
+    (block $done
+      (loop $loop
+        local.get $rem
+        i32.const 0
+        i32.le_s
+        br_if $done
+        local.get $d
+        local.get $val
+        i32.store8
+        local.get $d
+        i32.const 1
+        i32.add
+        local.set $d
+        local.get $rem
+        i32.const 1
+        i32.sub
+        local.set $rem
+        br $loop
+      )
+    )
+  )
+
+  ;; Inlined runtime: Free-List alloc(size) -> ptr
+  (func $__lone_rt_alloc (param $size i32) (result i32)
+    (local $req i32)
+    (local $curr i32)
+    (local $prev i32)
+    (local $bsize i32)
+    (local $rem i32)
+    (local $split_hdr i32)
+    (local $next_f i32)
+    (local $total_needed i32)
+    (local $curr_mem i32)
+    (local $pages_needed i32)
+    (local $hdr i32)
+
+    local.get $size
+    i32.const 0
+    i32.le_s
+    if
+      i32.const 0
+      return
+    end
+
+    local.get $size
+    i32.const 7
+    i32.add
+    i32.const -8
+    i32.and
+    local.tee $req
+    i32.const 8
+    i32.lt_s
+    if
+      i32.const 8
+      local.set $req
+    end
+
+    global.get $__free_list_head
+    local.set $curr
+    i32.const 0
+    local.set $prev
+
+    (block $search_done
+      (loop $search_loop
+        local.get $curr
+        i32.const 0
+        i32.eq
+        br_if $search_done
+
+        local.get $curr
+        i32.load
+        local.set $bsize
+        local.get $bsize
+        local.get $req
+        i32.ge_s
+        if
+          local.get $bsize
+          local.get $req
+          i32.sub
+          i32.const 8
+          i32.sub
+          local.set $rem
+          local.get $rem
+          i32.const 8
+          i32.ge_s
+          if
+            local.get $curr
+            local.get $req
+            i32.store
+            local.get $curr
+            i32.const 8
+            i32.add
+            local.get $req
+            i32.add
+            local.set $split_hdr
+            local.get $split_hdr
+            local.get $rem
+            i32.store
+            local.get $split_hdr
+            i32.const 4
+            i32.add
+            i32.const 0
+            i32.store
+            local.get $split_hdr
+            i32.const 8
+            i32.add
+            local.get $curr
+            i32.const 8
+            i32.add
+            i32.load
+            i32.store
+
+            local.get $prev
+            i32.const 0
+            i32.eq
+            if
+              local.get $split_hdr
+              global.set $__free_list_head
+            else
+              local.get $prev
+              i32.const 8
+              i32.add
+              local.get $split_hdr
+              i32.store
+            end
+          else
+            local.get $curr
+            i32.const 8
+            i32.add
+            i32.load
+            local.set $next_f
+            local.get $prev
+            i32.const 0
+            i32.eq
+            if
+              local.get $next_f
+              global.set $__free_list_head
+            else
+              local.get $prev
+              i32.const 8
+              i32.add
+              local.get $next_f
+              i32.store
+            end
+          end
+
+          local.get $curr
+          i32.const 4
+          i32.add
+          i32.const 1
+          i32.store
+
+          local.get $curr
+          i32.const 8
+          i32.add
+          return
+        end
+
+        local.get $curr
+        local.set $prev
+        local.get $curr
+        i32.const 8
+        i32.add
+        i32.load
+        local.set $curr
+        br $search_loop
+      )
+    )
+
+    local.get $req
+    i32.const 8
+    i32.add
+    local.set $total_needed
+
+    memory.size
+    i32.const 16
+    i32.shl
+    local.set $curr_mem
+
+    global.get $__heap_top
+    local.get $total_needed
+    i32.add
+    local.get $curr_mem
+    i32.gt_u
+    if
+      global.get $__heap_top
+      local.get $total_needed
+      i32.add
+      local.get $curr_mem
+      i32.sub
+      i32.const 65535
+      i32.add
+      i32.const 16
+      i32.shr_u
+      local.set $pages_needed
+
+      local.get $pages_needed
+      memory.grow
+      i32.const -1
+      i32.eq
+      if
+        i32.const 0
+        return
+      end
+    end
+
+    global.get $__heap_top
+    local.set $hdr
+
+    local.get $hdr
+    local.get $req
+    i32.store
+
+    local.get $hdr
+    i32.const 4
+    i32.add
+    i32.const 1
+    i32.store
+
+    global.get $__heap_top
+    local.get $total_needed
+    i32.add
+    global.set $__heap_top
+
+    local.get $hdr
+    i32.const 8
+    i32.add
+    return
+  )
+
+  ;; Inlined runtime: Free-List free(ptr)
+  (func $__lone_rt_free (param $ptr i32)
+    (local $hdr i32)
+    (local $curr i32)
+    (local $prev i32)
+
+    local.get $ptr
+    i32.const 0
+    i32.le_s
+    if
+      return
+    end
+
+    local.get $ptr
+    i32.const 8
+    i32.sub
+    local.set $hdr
+
+    local.get $hdr
+    i32.const 4
+    i32.add
+    i32.load
+    i32.const 1
+    i32.ne
+    if
+      return
+    end
+
+    local.get $hdr
+    i32.const 4
+    i32.add
+    i32.const 0
+    i32.store
+
+    global.get $__free_list_head
+    local.set $curr
+    i32.const 0
+    local.set $prev
+
+    (block $find_done
+      (loop $find_loop
+        local.get $curr
+        i32.const 0
+        i32.eq
+        br_if $find_done
+
+        local.get $curr
+        local.get $hdr
+        i32.gt_u
+        br_if $find_done
+
+        local.get $curr
+        local.set $prev
+        local.get $curr
+        i32.const 8
+        i32.add
+        i32.load
+        local.set $curr
+        br $find_loop
+      )
+    )
+
+    ;; 1. Coalesce right
+    local.get $curr
+    i32.const 0
+    i32.ne
+    if
+      local.get $hdr
+      i32.const 8
+      i32.add
+      local.get $hdr
+      i32.load
+      i32.add
+      local.get $curr
+      i32.eq
+      if
+        local.get $hdr
+        local.get $hdr
+        i32.load
+        i32.const 8
+        i32.add
+        local.get $curr
+        i32.load
+        i32.add
+        i32.store
+
+        local.get $curr
+        i32.const 8
+        i32.add
+        i32.load
+        local.set $curr
+      end
+    end
+
+    local.get $hdr
+    i32.const 8
+    i32.add
+    local.get $curr
+    i32.store
+
+    ;; 2. Coalesce left
+    local.get $prev
+    i32.const 0
+    i32.ne
+    if
+      local.get $prev
+      i32.const 8
+      i32.add
+      local.get $prev
+      i32.load
+      i32.add
+      local.get $hdr
+      i32.eq
+      if
+        local.get $prev
+        local.get $prev
+        i32.load
+        i32.const 8
+        i32.add
+        local.get $hdr
+        i32.load
+        i32.add
+        i32.store
+
+        local.get $prev
+        i32.const 8
+        i32.add
+        local.get $curr
+        i32.store
+        return
+      else
+        local.get $prev
+        i32.const 8
+        i32.add
+        local.get $hdr
+        i32.store
+        return
+      end
+    end
+
+    local.get $hdr
+    global.set $__free_list_head
+  )
+
+  ;; Inlined runtime: Free-List realloc(ptr, new_size) -> ptr
+  (func $__lone_rt_realloc (param $ptr i32) (param $new_size i32) (result i32)
+    (local $hdr i32)
+    (local $curr_size i32)
+    (local $new_req i32)
+    (local $new_ptr i32)
+    (local $copy_len i32)
+
+    local.get $ptr
+    i32.const 0
+    i32.eq
+    if
+      local.get $new_size
+      call $__lone_rt_alloc
+      return
+    end
+
+    local.get $new_size
+    i32.const 0
+    i32.le_s
+    if
+      local.get $ptr
+      call $__lone_rt_free
+      i32.const 0
+      return
+    end
+
+    local.get $ptr
+    i32.const 8
+    i32.sub
+    local.set $hdr
+
+    local.get $hdr
+    i32.load
+    local.set $curr_size
+
+    local.get $new_size
+    i32.const 7
+    i32.add
+    i32.const -8
+    i32.and
+    local.tee $new_req
+    i32.const 8
+    i32.lt_s
+    if
+      i32.const 8
+      local.set $new_req
+    end
+
+    local.get $new_req
+    local.get $curr_size
+    i32.le_s
+    if
+      local.get $ptr
+      return
+    end
+
+    local.get $new_size
+    call $__lone_rt_alloc
+    local.set $new_ptr
+
+    local.get $new_ptr
+    i32.const 0
+    i32.eq
+    if
+      i32.const 0
+      return
+    end
+
+    local.get $curr_size
+    local.set $copy_len
+    local.get $new_size
+    local.get $copy_len
+    i32.lt_s
+    if
+      local.get $new_size
+      local.set $copy_len
+    end
+
+    local.get $new_ptr
+    local.get $ptr
+    local.get $copy_len
+    call $__lone_rt_memcpy
+
+    local.get $ptr
+    call $__lone_rt_free
+
+    local.get $new_ptr
+    return
+  )`)
+
+	// Compute memory layout: stack in Page 0 (growing downward), heap in Page 1+ (growing upward)
+	dataEnd := l.nextOffset
+	stackLimit := (dataEnd + 15) & ^15
+	if stackLimit < 1024 {
+		stackLimit = 1024
+	}
+	heapBase := 65536
+	if stackLimit >= heapBase {
+		heapBase = (stackLimit + 65535) & ^65535
+	}
+
+	// Emit memory runtime globals: stack pointer, stack limit, heap base, heap top, and free list
 	l.mod.Globals = append([]Global{
 		{
 			Name:    "$__stack_pointer",
 			Type:    TypeI32,
 			Mutable: true,
-			InitVal: fmt.Sprintf("i32.const %d", totalMemBytes),
+			InitVal: fmt.Sprintf("i32.const %d", heapBase),
+		},
+		{
+			Name:    "$__stack_limit",
+			Type:    TypeI32,
+			Mutable: true,
+			InitVal: fmt.Sprintf("i32.const %d", stackLimit),
+		},
+		{
+			Name:    "$__heap_base",
+			Type:    TypeI32,
+			Mutable: false,
+			InitVal: fmt.Sprintf("i32.const %d", heapBase),
+		},
+		{
+			Name:    "$__heap_top",
+			Type:    TypeI32,
+			Mutable: true,
+			InitVal: fmt.Sprintf("i32.const %d", heapBase),
+		},
+		{
+			Name:    "$__free_list_head",
+			Type:    TypeI32,
+			Mutable: true,
+			InitVal: "i32.const 0",
 		},
 		{
 			Name:    "$__heap_pointer",
 			Type:    TypeI32,
 			Mutable: true,
-			InitVal: fmt.Sprintf("i32.const %d", heapStart),
+			InitVal: fmt.Sprintf("i32.const %d", heapBase),
 		},
 	}, l.mod.Globals...)
 
@@ -700,8 +1266,8 @@ func (l *lowerer) lowerCallExpr(e *loneanalyzer.TCallExpr, alloc *LocalAllocator
 		calleeName = mem.Field
 	}
 
-	// Handle legacy built-in intrinsic: #print
-	if calleeName == "#print" {
+	switch calleeName {
+	case "#print":
 		l.usesPrint = true
 		var insts []WasmInst
 		if len(e.Args) == 1 {
@@ -743,6 +1309,86 @@ func (l *lowerer) lowerCallExpr(e *loneanalyzer.TCallExpr, alloc *LocalAllocator
 			return insts
 		}
 		return nil
+
+	case "#alloc":
+		var insts []WasmInst
+		if len(e.Args) == 1 {
+			insts = append(insts, l.lowerExpr(e.Args[0], alloc)...)
+			insts = append(insts, InstCall{Target: "$__lone_rt_alloc"})
+		}
+		return insts
+
+	case "#free":
+		var insts []WasmInst
+		if len(e.Args) == 1 {
+			insts = append(insts, l.lowerExpr(e.Args[0], alloc)...)
+			insts = append(insts, InstCall{Target: "$__lone_rt_free"})
+		}
+		return insts
+
+	case "#realloc":
+		var insts []WasmInst
+		if len(e.Args) == 2 {
+			insts = append(insts, l.lowerExpr(e.Args[0], alloc)...)
+			insts = append(insts, l.lowerExpr(e.Args[1], alloc)...)
+			insts = append(insts, InstCall{Target: "$__lone_rt_realloc"})
+		}
+		return insts
+
+	case "#memory_grow":
+		var insts []WasmInst
+		if len(e.Args) == 1 {
+			insts = append(insts, l.lowerExpr(e.Args[0], alloc)...)
+			insts = append(insts, InstMemoryGrow{})
+		}
+		return insts
+
+	case "#memory_size":
+		return []WasmInst{InstMemorySize{}}
+
+	case "#stack_pointer":
+		return []WasmInst{InstGlobalGet{Name: "$__stack_pointer"}}
+
+	case "#stack_alloc":
+		var insts []WasmInst
+		if len(e.Args) == 1 {
+			spLocal := alloc.AllocTemp(TypeI32)
+			defer alloc.FreeTemp(spLocal, TypeI32)
+
+			insts = append(insts, InstGlobalGet{Name: "$__stack_pointer"})
+			insts = append(insts, l.lowerExpr(e.Args[0], alloc)...)
+			insts = append(insts, InstConstI32{Value: 15})
+			insts = append(insts, InstBinaryOp{Op: "i32.add"})
+			insts = append(insts, InstConstI32{Value: -16})
+			insts = append(insts, InstBinaryOp{Op: "i32.and"})
+			insts = append(insts, InstBinaryOp{Op: "i32.sub"})
+			insts = append(insts, InstLocalTee{Name: spLocal})
+
+			insts = append(insts, InstGlobalGet{Name: "$__stack_limit"})
+			insts = append(insts, InstBinaryOp{Op: "i32.lt_u"})
+			insts = append(insts, InstIf{
+				Then: []WasmInst{InstUnreachable{}},
+			})
+
+			insts = append(insts, InstLocalGet{Name: spLocal})
+			insts = append(insts, InstGlobalSet{Name: "$__stack_pointer"})
+			insts = append(insts, InstLocalGet{Name: spLocal})
+		}
+		return insts
+
+	case "#stack_free":
+		var insts []WasmInst
+		if len(e.Args) == 1 {
+			insts = append(insts, InstGlobalGet{Name: "$__stack_pointer"})
+			insts = append(insts, l.lowerExpr(e.Args[0], alloc)...)
+			insts = append(insts, InstConstI32{Value: 15})
+			insts = append(insts, InstBinaryOp{Op: "i32.add"})
+			insts = append(insts, InstConstI32{Value: -16})
+			insts = append(insts, InstBinaryOp{Op: "i32.and"})
+			insts = append(insts, InstBinaryOp{Op: "i32.add"})
+			insts = append(insts, InstGlobalSet{Name: "$__stack_pointer"})
+		}
+		return insts
 	}
 
 	// User function call
@@ -910,12 +1556,10 @@ func (l *lowerer) lowerEnumConstructExpr(e *loneanalyzer.TEnumConstructExpr, all
 		totalSize = 4
 	}
 
-	// 1. Bump heap pointer to allocate memory for enum
-	insts = append(insts, InstGlobalGet{Name: "$__heap_pointer"})
-	insts = append(insts, InstLocalTee{Name: ptrLocal})
+	// 1. Allocate memory for enum via Free-List Allocator
 	insts = append(insts, InstConstI32{Value: int32(totalSize)})
-	insts = append(insts, InstBinaryOp{Op: "i32.add"})
-	insts = append(insts, InstGlobalSet{Name: "$__heap_pointer"})
+	insts = append(insts, InstCall{Target: "$__lone_rt_alloc"})
+	insts = append(insts, InstLocalSet{Name: ptrLocal})
 
 	// 2. Store tag at offset 0
 	insts = append(insts, InstLocalGet{Name: ptrLocal})
