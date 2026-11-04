@@ -6,6 +6,7 @@
 - **Status**: Draft
 - **Created**: 2026-11-04
 - **Target Version**: v0.6.0
+- **Related RFCs**: [`RFC-20261104-struct_initialization_and_field_modifiers`](./RFC-20261104-struct_initialization_and_field_modifiers.md)
 - **Applies to**: `pkg2/lone-parser`, `pkg2/lone-analyzer`, `pkg2/lone-compiler-wir`, `dev/SPEC.md`
 
 ---
@@ -194,7 +195,77 @@ fn process_record<T where { T satisfies IfcUser, T satisfies TrSerializable }>(r
 
 ---
 
-## 8. Compiler Implementation Plan
+## 8. Integration with Struct Encapsulation (Cross-RFC Synthesis)
+
+This RFC directly interoperates with [**RFC-20261104-struct_initialization_and_field_modifiers**](./RFC-20261104-struct_initialization_and_field_modifiers.md):
+
+### 8.1 Private Fields Are Transparent to Interfaces
+- Interfaces only describe **public data contracts**. They cannot declare fields starting with `_`.
+- When an encapsulated struct contains private fields (e.g. `_socket_fd: int`), those private fields are **ignored** by structural matching.
+- As long as the struct exposes the required public fields with matching types and mutability, it satisfies the interface.
+
+### 8.2 End-to-End Cross-Compilation Scenario
+
+```lone
+-- ==========================================
+-- Module A: Encapsulated Domain Struct
+-- ==========================================
+pub type UserSession = struct {
+    ro session_id: int,    -- Public read-only
+    username: str,         -- Public mutable
+    _token_hash: str,      -- Private internal state
+    ro _created_at: i64,   -- Private read-only state
+
+    pub fn __init__(id: int, user: str, secret: str) UserSession {
+        return UserSession::{
+            .session_id: id,
+            .username: user,
+            ._token_hash: #sha256(secret),
+            ._created_at: #now(),
+        }
+    }
+}
+
+-- ==========================================
+-- Module B: Data Interface & Generic Function
+-- ==========================================
+pub type IfcSessionSummary = interface {
+    ro session_id: int,    -- Covariant read-only requirement
+    username: str,         -- Mutable or read-only access
+}
+
+fn print_session<T where { T satisfies IfcSessionSummary }>(s: ref<T>) void {
+    #print("Session ID: ")
+    println_int(s.session_id)
+    #print("User: ")
+    println(s.username)
+}
+
+-- ==========================================
+-- Consumer Execution & Monomorphization
+-- ==========================================
+pub fn main() void {
+    -- 1. Construct via enforcing constructor:
+    var sess = UserSession::(1001, "alice", "my_secret")
+
+    -- 2. Pass to interface-constrained generic function:
+    -- UserSession satisfies IfcSessionSummary!
+    print_session(&sess)
+
+    -- 3. Anonymous object literals also satisfy IfcSessionSummary:
+    print_session(&{ .session_id: 2002, .username: "bob" })
+}
+```
+
+### 8.3 Compiler Diagnostics & Verification
+The compiler guarantees that:
+1. `UserSession::{ .session_id: 1001 }` from outside triggers `type/raw-construct-private-fields`.
+2. Inside `print_session`, accesses `s.session_id` and `s.username` are lowered to direct `i32.load` WebAssembly instructions using `UserSession`'s static linear memory offsets.
+3. Private fields `_token_hash` and `_created_at` remain safely encapsulated and untouched.
+
+---
+
+## 9. Compiler Implementation Plan
 
 1. **`pkg2/lone-lexer`**:
    - Add keyword `interface`.
@@ -212,7 +283,7 @@ fn process_record<T where { T satisfies IfcUser, T satisfies TrSerializable }>(r
 
 ---
 
-## 9. Alternatives & Prior Art
+## 10. Alternatives & Prior Art
 
 - **TypeScript Interfaces**: Structural typing with width subtyping. Lone adapts this for a statically compiled WebAssembly systems language via monomorphization.
 - **Go Interfaces**: Go interfaces define method sets rather than data fields. Lone reserves method sets for **Traits** (`Tr*`) and uses **Interfaces** (`Ifc*`) exclusively for data shapes.

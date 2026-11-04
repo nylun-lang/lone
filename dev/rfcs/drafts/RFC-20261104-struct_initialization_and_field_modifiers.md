@@ -6,6 +6,7 @@
 - **Status**: Draft
 - **Created**: 2026-11-04
 - **Target Version**: v0.6.0
+- **Related RFCs**: [`RFC-20261104-interface_data_contracts`](./RFC-20261104-interface_data_contracts.md)
 - **Applies to**: `pkg2/lone-parser`, `pkg2/lone-analyzer`, `pkg2/lone-compiler-wir`, `dev/SPEC.md`
 
 ---
@@ -180,3 +181,49 @@ The compiler (`pkg2/lone-analyzer`) enforces the following invariants:
 2. **Zero Runtime Overhead**:
    - `Type::(...)` resolves statically to direct call dispatch: `call $ModuleName.Type.__init__`.
    - No vtables, dynamic dispatch, or heap allocation required for stack-allocated structs.
+
+---
+
+## 9. Integration with Data Interfaces (Cross-RFC Synthesis)
+
+This RFC directly interoperates with [**RFC-20261104-interface_data_contracts**](./RFC-20261104-interface_data_contracts.md):
+
+### 9.1 Encapsulated Structs Satisfy Interfaces Seamlessly
+- While an encapsulated struct with private fields (`_*`) restricts external construction to `Type::(...)`, its **public fields** naturally satisfy structural duck-typing for `Ifc*` interfaces.
+- The struct's private fields remain hidden and unexposed:
+  ```lone
+  pub type TcpClient = struct {
+      ro host: str,           -- Public read-only
+      port: int,              -- Public mutable
+      _socket_fd: int,        -- Private internal socket descriptor
+      _rx_buf: ptr<u8>,       -- Private receive buffer
+
+      pub fn __init__(host: str, port: int) TcpClient {
+          return TcpClient::{
+              .host: host,
+              .port: port,
+              ._socket_fd: #sys_socket_connect(host, port),
+              ._rx_buf: #alloc(4096),
+          }
+      }
+  }
+
+  -- Data Contract:
+  pub type IfcNetworkTarget = interface {
+      ro host: str,
+      port: int,
+  }
+
+  -- TcpClient automatically satisfies IfcNetworkTarget!
+  fn log_target<T where { T satisfies IfcNetworkTarget }>(t: ref<T>) void {
+      #print(t.host)
+      #print(":")
+      println_int(t.port)
+  }
+  ```
+
+### 9.2 Complete Lifecycle Workflow
+1. **Creation**: Caller executes `var client = TcpClient::("10.0.0.1", 443)`. Direct field access to `_socket_fd` is rejected.
+2. **Passing**: Caller passes `&client` to `log_target(&client)`.
+3. **Monomorphization**: `log_target` is monomorphized for `TcpClient`, reading `host` and `port` at their exact linear memory offsets.
+4. **Safety & Zero Leaks**: Invariants remain completely intact, with zero runtime indirection or fat pointers.
