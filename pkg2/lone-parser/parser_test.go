@@ -520,3 +520,48 @@ fn wrap<T>(val: T) Result<T, infer> {
 		t.Errorf("expected arg 1 to be infer, got %q", inferTb.Name)
 	}
 }
+
+func TestParseGenericConstraints(t *testing.T) {
+	code := `
+pub type Result<V, U = Error where { U is Error }> = enum {
+    Ok(val: V),
+    Err(err: U),
+}
+
+fn write_data<T where { T satisfies TrWriter }>(writer: T, msg: str) void {
+}
+`
+	decls, err := Parse([]byte(code))
+	if err != nil {
+		t.Fatalf("Parse error: %v", err)
+	}
+	if len(decls) != 2 {
+		t.Fatalf("expected 2 decls, got %d", len(decls))
+	}
+
+	tdec := decls[0].(loneast.TYPE_DEC)
+	if len(tdec.Constraints) != 1 {
+		t.Fatalf("expected 1 constraint on Result, got %d", len(tdec.Constraints))
+	}
+	c1 := tdec.Constraints[0]
+	if c1.TypeParam != "U" || c1.Op != loneast.ConstraintIs {
+		t.Errorf("expected U is ..., got %+v", c1)
+	}
+	tb1 := c1.Target.Value.(*loneast.TypeBase)
+	if tb1.Name != "Error" {
+		t.Errorf("expected target Error, got %q", tb1.Name)
+	}
+
+	fdec := decls[1].(loneast.FN_DEC)
+	if len(fdec.Constraints) != 1 {
+		t.Fatalf("expected 1 constraint on write_data, got %d", len(fdec.Constraints))
+	}
+	c2 := fdec.Constraints[0]
+	if c2.TypeParam != "T" || c2.Op != loneast.ConstraintSatisfies {
+		t.Errorf("expected T satisfies ..., got %+v", c2)
+	}
+	tb2 := c2.Target.Value.(*loneast.TypeBase)
+	if tb2.Name != "TrWriter" {
+		t.Errorf("expected target TrWriter, got %q", tb2.Name)
+	}
+}

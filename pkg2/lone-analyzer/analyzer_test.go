@@ -365,3 +365,111 @@ fn call_inferred() Result<i32> {
 		t.Fatalf("expected prog")
 	}
 }
+
+func TestGenericConstraintsIsError(t *testing.T) {
+	goodCode := `
+pub type CustomErr = enum {
+    Failed,
+}
+
+fn valid_default() Result<i32> {
+    return Result::Ok(1)
+}
+
+fn valid_infer() Result<i32, infer> {
+    return Result::Ok(2)
+}
+
+fn valid_custom() Result<i32, CustomErr> {
+    return Result::Ok(3)
+}
+`
+	analyzer := NewAnalyzer()
+	_, diags, err := analyzer.AnalyzeSource([]byte(goodCode))
+	if err != nil {
+		t.Fatalf("unexpected parse error: %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("expected 0 diags for valid Result types, got %d: %v", len(diags), diags)
+	}
+
+	badCode := `
+fn invalid_err_type() Result<i32, string> {
+    return Result::Ok(42)
+}
+`
+	analyzer2 := NewAnalyzer()
+	_, diags2, err := analyzer2.AnalyzeSource([]byte(badCode))
+	if err != nil {
+		t.Fatalf("unexpected parse error: %v", err)
+	}
+	if len(diags2) == 0 {
+		t.Fatalf("expected constraint violation diagnostic for Result<i32, string>")
+	}
+	hasViolation := false
+	for _, d := range diags2 {
+		if d.Rule == "type/constraint-violation" && strings.Contains(d.Message, "does not satisfy 'is Error'") {
+			hasViolation = true
+			break
+		}
+	}
+	if !hasViolation {
+		t.Errorf("expected diagnostic with rule 'type/constraint-violation' and message mentioning 'is Error', got: %v", diags2)
+	}
+}
+
+func TestGenericConstraintsSatisfiesAndTraitMaterialization(t *testing.T) {
+	code := `
+pub type TrWriter = trait {
+    fn write(self, msg: str) void
+}
+
+pub type Console = struct {
+    id: int,
+}
+
+impl TrWriter on Console {
+    fn write(self, msg: str) void {
+        #print(msg)
+    }
+}
+
+pub type Dummy = struct {
+    x: int,
+}
+
+fn log_msg<T where { T satisfies TrWriter }>(writer: T, msg: str) void {
+    let w = TrWriter::|T|
+    w.write(writer, msg)
+}
+
+fn test_valid() void {
+    let c = Console::{ .id: 1 }
+    log_msg(c, "hello\n")
+}
+
+fn test_invalid() void {
+    let d = Dummy::{ .x: 2 }
+    log_msg(d, "fail\n")
+}
+`
+	analyzer := NewAnalyzer()
+	_, diags, err := analyzer.AnalyzeSource([]byte(code))
+	if err != nil {
+		t.Fatalf("unexpected parse error: %v", err)
+	}
+	if len(diags) == 0 {
+		t.Fatalf("expected constraint violation for Dummy not implementing TrWriter")
+	}
+	hasViolation := false
+	for _, d := range diags {
+		if d.Rule == "type/constraint-violation" && strings.Contains(d.Message, "does not satisfy trait \"TrWriter\"") {
+			hasViolation = true
+			break
+		}
+	}
+	if !hasViolation {
+		t.Errorf("expected type/constraint-violation for Dummy, got: %v", diags)
+	}
+}
+

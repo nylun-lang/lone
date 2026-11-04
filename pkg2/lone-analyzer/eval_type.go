@@ -9,15 +9,17 @@ import (
 
 // Generic templates
 type GenericTypeTemplate struct {
-	Name       string
-	TypeParams []loneast.TypeParam
-	Decl       *loneast.TYPE_DEC
+	Name        string
+	TypeParams  []loneast.TypeParam
+	Constraints []loneast.GenericConstraint
+	Decl        *loneast.TYPE_DEC
 }
 
 type GenericFnTemplate struct {
-	Name       string
-	TypeParams []loneast.TypeParam
-	Decl       *loneast.FN_DEC
+	Name        string
+	TypeParams  []loneast.TypeParam
+	Constraints []loneast.GenericConstraint
+	Decl        *loneast.FN_DEC
 }
 
 // TypeEvaluator performs type checking, symbol resolution, and immutability validation.
@@ -27,26 +29,30 @@ type TypeEvaluator struct {
 	structs         map[string]*StructType
 	traits          map[string]*TraitType
 	enums           map[string]*EnumType
+	traitImpls      map[string]map[string]*loneast.IMPL_DEC
 	genericTypes    map[string]*GenericTypeTemplate
 	genericFns      map[string]*GenericFnTemplate
-	instantiatedFns map[string]*TFnDec
-	inferredErrors  map[string][]Type
-	currentSelfType Type
-	currentFnReturn Type
-	currentFnName   string
-	extraDecls      []TNode
+	instantiatedFns   map[string]*TFnDec
+	inferredErrors    map[string][]Type
+	currentTypeParams map[string]Type
+	currentSelfType   Type
+	currentFnReturn   Type
+	currentFnName     string
+	extraDecls        []TNode
 }
 
 func NewTypeEvaluator() *TypeEvaluator {
 	te := &TypeEvaluator{
-		stack:           NewScopeStack(),
-		structs:         make(map[string]*StructType),
-		traits:          make(map[string]*TraitType),
-		enums:           make(map[string]*EnumType),
-		genericTypes:    make(map[string]*GenericTypeTemplate),
-		genericFns:      make(map[string]*GenericFnTemplate),
-		instantiatedFns: make(map[string]*TFnDec),
-		inferredErrors:  make(map[string][]Type),
+		stack:             NewScopeStack(),
+		structs:           make(map[string]*StructType),
+		traits:            make(map[string]*TraitType),
+		enums:             make(map[string]*EnumType),
+		traitImpls:        make(map[string]map[string]*loneast.IMPL_DEC),
+		genericTypes:      make(map[string]*GenericTypeTemplate),
+		genericFns:        make(map[string]*GenericFnTemplate),
+		instantiatedFns:   make(map[string]*TFnDec),
+		inferredErrors:    make(map[string][]Type),
+		currentTypeParams: make(map[string]Type),
 	}
 	te.initBuiltins()
 	return te
@@ -91,7 +97,7 @@ func (te *TypeEvaluator) initBuiltins() {
 	te.enums["Error"] = errorEnum
 	_ = te.stack.Define(&Symbol{Name: "Error", Kind: SymbolType, Type: errorEnum})
 
-	// Built-in Result<V, U = Error> generic template
+	// Built-in Result<V, U = Error where { U is Error }> generic template
 	te.genericTypes["Result"] = &GenericTypeTemplate{
 		Name: "Result",
 		TypeParams: []loneast.TypeParam{
@@ -99,6 +105,16 @@ func (te *TypeEvaluator) initBuiltins() {
 			{
 				Name: "U",
 				Default: &loneast.TYPE_REF{
+					Kind:  loneast.TYPE_BASE,
+					Value: &loneast.TypeBase{Name: "Error"},
+				},
+			},
+		},
+		Constraints: []loneast.GenericConstraint{
+			{
+				TypeParam: "U",
+				Op:        loneast.ConstraintIs,
+				Target: loneast.TYPE_REF{
 					Kind:  loneast.TYPE_BASE,
 					Value: &loneast.TypeBase{Name: "Error"},
 				},
@@ -212,9 +228,10 @@ func (te *TypeEvaluator) EvaluateProgram(decls []any) *TProgram {
 func (te *TypeEvaluator) hoistTypeDec(t *loneast.TYPE_DEC) {
 	if len(t.TypeParams) > 0 {
 		te.genericTypes[t.Name] = &GenericTypeTemplate{
-			Name:       t.Name,
-			TypeParams: t.TypeParams,
-			Decl:       t,
+			Name:        t.Name,
+			TypeParams:  t.TypeParams,
+			Constraints: t.Constraints,
+			Decl:        t,
 		}
 		return
 	}
@@ -368,9 +385,10 @@ func (te *TypeEvaluator) hoistTypeDec(t *loneast.TYPE_DEC) {
 func (te *TypeEvaluator) hoistFn(f *loneast.FN_DEC) {
 	if len(f.TypeParams) > 0 {
 		te.genericFns[f.Name] = &GenericFnTemplate{
-			Name:       f.Name,
-			TypeParams: f.TypeParams,
-			Decl:       f,
+			Name:        f.Name,
+			TypeParams:  f.TypeParams,
+			Constraints: f.Constraints,
+			Decl:        f,
 		}
 		return
 	}
@@ -552,6 +570,10 @@ func (te *TypeEvaluator) hoistImpl(imp *loneast.IMPL_DEC) {
 		return
 	}
 	targetType := te.resolveType(imp.TargetType)
+	if te.traitImpls[imp.TraitName] == nil {
+		te.traitImpls[imp.TraitName] = make(map[string]*loneast.IMPL_DEC)
+	}
+	te.traitImpls[imp.TraitName][targetType.String()] = imp
 	if st, ok := targetType.(*StructType); ok {
 		for _, m := range imp.Methods {
 			var mParams []FnParamInfo
@@ -765,6 +787,10 @@ func (te *TypeEvaluator) analyzeVarDec(b *loneast.BIND_DEC) *TVarDec {
 func (te *TypeEvaluator) analyzeFnDec(f *loneast.FN_DEC) *TFnDec {
 	te.stack.Push(ScopeFunction)
 	defer te.stack.Pop()
+
+	for name, typ := range te.currentTypeParams {
+		_ = te.stack.Define(&Symbol{Name: name, Kind: SymbolType, Type: typ})
+	}
 
 	oldFnName := te.currentFnName
 	te.currentFnName = f.Name
@@ -1198,6 +1224,9 @@ func (te *TypeEvaluator) EvalExpr(e loneast.Expr) TExpr {
 		if st, ok := te.structs[expr.Name]; ok {
 			return &TVarRefExpr{Name: expr.Name, Typ: st, Span_: expr.Span_}
 		}
+		if tr, ok := te.traits[expr.Name]; ok {
+			return &TVarRefExpr{Name: expr.Name, Typ: tr, Span_: expr.Span_}
+		}
 		if _, ok := te.genericTypes[expr.Name]; ok {
 			return &TVarRefExpr{Name: expr.Name, Typ: TypeUnknown, Span_: expr.Span_}
 		}
@@ -1470,6 +1499,22 @@ func (te *TypeEvaluator) evalPostfixExpr(p loneast.PostFixExpr) TExpr {
 						fmt.Sprintf("struct %q has no field or method %q", targetStruct.Name, suff.Name))
 					curr = &TMemberAccessExpr{Base: curr, Field: suff.Name, Typ: TypeUnknown, Span_: suff.Span_}
 				}
+			} else if mat, ok := curr.ExprType().(*MaterializedTraitType); ok {
+				if mInfo, exists := mat.Methods[suff.Name]; exists {
+					curr = &TMemberAccessExpr{Base: curr, Field: suff.Name, Typ: mInfo, Span_: suff.Span_}
+				} else {
+					te.addDiag(SeverityError, suff.Span_, "type/undefined-trait-method",
+						fmt.Sprintf("trait %q has no method %q", mat.Trait.Name, suff.Name))
+					curr = &TMemberAccessExpr{Base: curr, Field: suff.Name, Typ: TypeUnknown, Span_: suff.Span_}
+				}
+			} else if tr, ok := curr.ExprType().(*TraitType); ok {
+				if mInfo, exists := tr.Methods[suff.Name]; exists {
+					curr = &TMemberAccessExpr{Base: curr, Field: suff.Name, Typ: mInfo, Span_: suff.Span_}
+				} else {
+					te.addDiag(SeverityError, suff.Span_, "type/undefined-trait-method",
+						fmt.Sprintf("trait %q has no method %q", tr.Name, suff.Name))
+					curr = &TMemberAccessExpr{Base: curr, Field: suff.Name, Typ: TypeUnknown, Span_: suff.Span_}
+				}
 			} else {
 				curr = &TMemberAccessExpr{Base: curr, Field: suff.Name, Typ: TypeUnknown, Span_: suff.Span_}
 			}
@@ -1482,12 +1527,14 @@ func (te *TypeEvaluator) evalPostfixExpr(p loneast.PostFixExpr) TExpr {
 			if vref, ok := curr.(*TVarRefExpr); ok {
 				if tmpl, ok := te.genericFns[vref.Name]; ok {
 					specialized := te.monomorphizeFn(tmpl, tArgs)
-					var fnParams []FnParamInfo
-					for _, p := range specialized.Params {
-						fnParams = append(fnParams, FnParamInfo{Name: p.Name, Type: p.Type})
+					if specialized != nil {
+						var fnParams []FnParamInfo
+						for _, p := range specialized.Params {
+							fnParams = append(fnParams, FnParamInfo{Name: p.Name, Type: p.Type})
+						}
+						fnTyp := &FnType{Params: fnParams, Return: specialized.ReturnType}
+						curr = &TVarRefExpr{Name: specialized.Name, Typ: fnTyp, Span_: vref.Span_}
 					}
-					fnTyp := &FnType{Params: fnParams, Return: specialized.ReturnType}
-					curr = &TVarRefExpr{Name: specialized.Name, Typ: fnTyp, Span_: vref.Span_}
 				}
 			}
 			if enumConstr, ok := curr.(*TEnumConstructExpr); ok {
@@ -1621,6 +1668,51 @@ func (te *TypeEvaluator) evalPostfixExpr(p loneast.PostFixExpr) TExpr {
 				elemType = lt.Elem
 			}
 			curr = &TIndexExpr{Base: curr, Index: tIdx, Typ: elemType, Span_: suff.Span_}
+
+		case loneast.SuffixTraitMat:
+			targetType := te.resolveType(suff.TargetType)
+			traitName := ""
+			var tr *TraitType
+			if traitT, ok := curr.ExprType().(*TraitType); ok {
+				tr = traitT
+				traitName = traitT.Name
+			} else if vref, ok := curr.(*TVarRefExpr); ok {
+				if traitT, ok := te.traits[vref.Name]; ok {
+					tr = traitT
+					traitName = vref.Name
+				}
+			}
+
+			if tr == nil {
+				te.addDiag(SeverityError, suff.Span_, "type/not-a-trait",
+					fmt.Sprintf("cannot materialize non-trait %q", curr.ExprType().String()))
+				curr = &TTraitMatExpr{TraitName: traitName, TargetType: targetType, Typ: TypeUnknown, Span_: suff.Span_}
+			} else {
+				if targetType != TypeUnknown && targetType != TypeInfer {
+					if te.traitImpls[traitName] == nil || te.traitImpls[traitName][targetType.String()] == nil {
+						te.addDiag(SeverityError, suff.Span_, "type/missing-trait-impl",
+							fmt.Sprintf("type %q does not implement trait %q", targetType.String(), traitName))
+					}
+				}
+				mMethods := make(map[string]*FnType)
+				for mName, sig := range tr.Methods {
+					var mParams []FnParamInfo
+					for _, p := range sig.Params {
+						pTyp := p.Type
+						if p.Name == "self" {
+							pTyp = targetType
+						}
+						mParams = append(mParams, FnParamInfo{Name: p.Name, Type: pTyp})
+					}
+					mMethods[mName] = &FnType{Params: mParams, Return: sig.Return}
+				}
+				matType := &MaterializedTraitType{
+					Trait:      tr,
+					TargetType: targetType,
+					Methods:    mMethods,
+				}
+				curr = &TTraitMatExpr{TraitName: traitName, TargetType: targetType, Typ: matType, Span_: suff.Span_}
+			}
 
 		default:
 			// No-op for now
@@ -1828,6 +1920,57 @@ func (te *TypeEvaluator) instantiateGenericType(tmpl *GenericTypeTemplate, args 
 		return st
 	}
 
+	// Validate constraints
+	for _, c := range tmpl.Constraints {
+		actualType, exists := paramMap[c.TypeParam]
+		if !exists || actualType == TypeUnknown {
+			continue
+		}
+		switch c.Op {
+		case loneast.ConstraintIs:
+			targetType := te.resolveType(c.Target)
+			targetName := ""
+			if tb, ok := c.Target.Value.(*loneast.TypeBase); ok {
+				targetName = tb.Name
+			} else {
+				targetName = targetType.String()
+			}
+
+			if targetName == "Error" {
+				isErr := false
+				if actualType.String() == "Error" || actualType == TypeInfer {
+					isErr = true
+				} else if _, isEnum := actualType.(*EnumType); isEnum {
+					isErr = true
+				}
+				if !isErr {
+					te.addDiag(SeverityError, c.Span_, "type/constraint-violation",
+						fmt.Sprintf("type parameter %q bound to %q does not satisfy 'is Error'", c.TypeParam, actualType.String()))
+					return TypeUnknown
+				}
+			} else {
+				if !actualType.AssignableTo(targetType) && !actualType.Equals(targetType) {
+					te.addDiag(SeverityError, c.Span_, "type/constraint-violation",
+						fmt.Sprintf("type parameter %q bound to %q does not satisfy 'is %s'", c.TypeParam, actualType.String(), targetType.String()))
+					return TypeUnknown
+				}
+			}
+
+		case loneast.ConstraintSatisfies:
+			traitName := ""
+			if tb, ok := c.Target.Value.(*loneast.TypeBase); ok {
+				traitName = tb.Name
+			} else {
+				traitName = te.resolveType(c.Target).String()
+			}
+			if te.traitImpls[traitName] == nil || te.traitImpls[traitName][actualType.String()] == nil {
+				te.addDiag(SeverityError, c.Span_, "type/constraint-violation",
+					fmt.Sprintf("type parameter %q bound to %q does not satisfy trait %q", c.TypeParam, actualType.String(), traitName))
+				return TypeUnknown
+			}
+		}
+	}
+
 	substType := func(tr loneast.TYPE_REF) Type {
 		if tr.Kind == loneast.TYPE_BASE {
 			if tb, ok := tr.Value.(*loneast.TypeBase); ok {
@@ -2023,6 +2166,60 @@ func (te *TypeEvaluator) monomorphizeFn(tmpl *GenericFnTemplate, args []TExpr) *
 		cloned.ReturnType = &rt
 	}
 
+	// Validate constraints
+	for _, c := range tmpl.Constraints {
+		actualType, exists := paramMap[c.TypeParam]
+		if !exists || actualType == TypeUnknown {
+			continue
+		}
+		switch c.Op {
+		case loneast.ConstraintIs:
+			targetType := te.resolveType(c.Target)
+			targetName := ""
+			if tb, ok := c.Target.Value.(*loneast.TypeBase); ok {
+				targetName = tb.Name
+			} else {
+				targetName = targetType.String()
+			}
+			if targetName == "Error" {
+				isErr := false
+				if actualType.String() == "Error" || actualType == TypeInfer {
+					isErr = true
+				} else if _, isEnum := actualType.(*EnumType); isEnum {
+					isErr = true
+				}
+				if !isErr {
+					te.addDiag(SeverityError, c.Span_, "type/constraint-violation",
+						fmt.Sprintf("type parameter %q bound to %q does not satisfy 'is Error'", c.TypeParam, actualType.String()))
+					return nil
+				}
+			} else {
+				if !actualType.AssignableTo(targetType) && !actualType.Equals(targetType) {
+					te.addDiag(SeverityError, c.Span_, "type/constraint-violation",
+						fmt.Sprintf("type parameter %q bound to %q does not satisfy 'is %s'", c.TypeParam, actualType.String(), targetType.String()))
+					return nil
+				}
+			}
+
+		case loneast.ConstraintSatisfies:
+			traitName := ""
+			if tb, ok := c.Target.Value.(*loneast.TypeBase); ok {
+				traitName = tb.Name
+			} else {
+				traitName = te.resolveType(c.Target).String()
+			}
+			if te.traitImpls[traitName] == nil || te.traitImpls[traitName][actualType.String()] == nil {
+				te.addDiag(SeverityError, c.Span_, "type/constraint-violation",
+					fmt.Sprintf("type parameter %q bound to %q does not satisfy trait %q", c.TypeParam, actualType.String(), traitName))
+				return nil
+			}
+		}
+	}
+
+	oldParams := te.currentTypeParams
+	te.currentTypeParams = paramMap
+	defer func() { te.currentTypeParams = oldParams }()
+
 	te.hoistFn(&cloned)
 	tfn := te.analyzeFnDec(&cloned)
 	te.instantiatedFns[monoIdent] = tfn
@@ -2165,6 +2362,9 @@ func (te *TypeEvaluator) resolveBaseType(tr loneast.TYPE_REF) Type {
 			}
 			if st, ok := te.structs[tb.Name]; ok {
 				return st
+			}
+			if tr, ok := te.traits[tb.Name]; ok {
+				return tr
 			}
 			// Generic template with default arguments (e.g. Result with 0 args)
 			if tmpl, ok := te.genericTypes[tb.Name]; ok {

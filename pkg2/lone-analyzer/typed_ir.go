@@ -339,3 +339,15 @@ type TTryExpr struct {
 
 func (t *TTryExpr) Span() loneast.Span { return t.Span_ }
 func (t *TTryExpr) ExprType() Type    { return t.OkType }
+
+type TTraitMatExpr struct {
+	TraitName  string
+	TargetType Type
+	Typ        Type
+	Span_      loneast.Span
+}
+
+func (t *TTraitMatExpr) Span() loneast.Span { return t.Span_ }
+func (t *TTraitMatExpr) ExprType() Type    { return t.Typ }
+func (t *TTraitMatExpr) tnode()            {}
+func (t *TTraitMatExpr) texpr()            {}

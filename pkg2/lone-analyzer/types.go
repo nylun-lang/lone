@@ -337,6 +337,26 @@ func (t *TraitType) AssignableTo(target Type) bool {
 	return false
 }
 
+type MaterializedTraitType struct {
+	Trait      *TraitType
+	TargetType Type
+	Methods    map[string]*FnType
+}
+
+func (m *MaterializedTraitType) Kind() TypeKind { return TypeKindTrait }
+func (m *MaterializedTraitType) String() string {
+	return fmt.Sprintf("%s::|%s|", m.Trait.Name, m.TargetType.String())
+}
+func (m *MaterializedTraitType) Equals(other Type) bool {
+	if om, ok := other.(*MaterializedTraitType); ok {
+		return m.Trait.Equals(om.Trait) && m.TargetType.Equals(om.TargetType)
+	}
+	return false
+}
+func (m *MaterializedTraitType) AssignableTo(target Type) bool {
+	return m.Equals(target)
+}
+
 // =====================
 // OPTIONAL
 // =====================

@@ -675,6 +675,18 @@ func (l *lowerer) lowerExpr(expr loneanalyzer.TExpr, alloc *LocalAllocator) []Wa
 	case *loneanalyzer.TTryExpr:
 		return l.lowerTryExpr(e, alloc)
 
+	case *loneanalyzer.TTraitMatExpr:
+		return []WasmInst{InstConstI32{Value: 0}}
+
+	case *loneanalyzer.TMemberAccessExpr:
+		if e.Offset >= 0 && e.Typ != loneanalyzer.TypeVoid && e.Typ != nil {
+			var insts []WasmInst
+			insts = append(insts, l.lowerExpr(e.Base, alloc)...)
+			insts = append(insts, InstLoad{Op: loadOpForType(e.Typ), Offset: e.Offset})
+			return insts
+		}
+		return []WasmInst{InstConstI32{Value: 0}}
+
 	default:
 		return nil
 	}
@@ -684,6 +696,8 @@ func (l *lowerer) lowerCallExpr(e *loneanalyzer.TCallExpr, alloc *LocalAllocator
 	calleeName := ""
 	if ref, ok := e.Callee.(*loneanalyzer.TVarRefExpr); ok {
 		calleeName = ref.Name
+	} else if mem, ok := e.Callee.(*loneanalyzer.TMemberAccessExpr); ok {
+		calleeName = mem.Field
 	}
 
 	// Handle legacy built-in intrinsic: #print

@@ -52,15 +52,33 @@ type TypeParam struct {
 
 func (tp TypeParam) NodeSpan() Span { return tp.Span_ }
 
+type ConstraintOp int
+
+const (
+	ConstraintIs ConstraintOp = iota
+	ConstraintSatisfies
+)
+
+// GenericConstraint represents where { U is Error } or where { T satisfies TrWriter }
+type GenericConstraint struct {
+	TypeParam string
+	Op        ConstraintOp
+	Target    TYPE_REF
+	Span_     Span
+}
+
+func (c GenericConstraint) NodeSpan() Span { return c.Span_ }
+
 // FN_DEC represents a function declaration.
 type FN_DEC struct {
-	Name       string
-	IsPublic   bool
-	TypeParams []TypeParam
-	Params     []FnParam
-	ReturnType *TYPE_REF
-	Body       Block
-	Span_      Span
+	Name        string
+	IsPublic    bool
+	TypeParams  []TypeParam
+	Constraints []GenericConstraint
+	Params      []FnParam
+	ReturnType  *TYPE_REF
+	Body        Block
+	Span_       Span
 }
 
 func (f FN_DEC) NodeSpan() Span { return f.Span_ }
@@ -105,10 +123,11 @@ func (v EnumVariant) NodeSpan() Span { return v.Span_ }
 
 // TYPE_DEC represents struct, trait, enum, or alias declarations.
 type TYPE_DEC struct {
-	Name       string
-	IsPublic   bool
-	TypeParams []TypeParam
-	Kind       TypeDecKind
+	Name        string
+	IsPublic    bool
+	TypeParams  []TypeParam
+	Constraints []GenericConstraint
+	Kind        TypeDecKind
 	AliasType  *TYPE_REF
 	Fields     []StructField
 	Variants   []EnumVariant

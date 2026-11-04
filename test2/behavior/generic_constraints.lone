@@ -1,0 +1,35 @@
+pub type TrWriter = trait {
+    fn write(self, msg: str) void
+}
+
+pub type Console = struct {
+    id: int,
+}
+
+impl TrWriter on Console {
+    fn write(self, msg: str) void {
+        #print(msg)
+    }
+}
+
+fn log_info<T where { T satisfies TrWriter }>(writer: T, msg: str) void {
+    let w = TrWriter::|T|
+    w.write(writer, msg)
+}
+
+fn safe_div(a: i32, b: i32) Result<i32> {
+    if b == 0 {
+        return Result::Err(Error::Code(404))
+    }
+    return Result::Ok(a / b)
+}
+
+fn main() void {
+    let res = safe_div(100, 4)
+    let val = must res
+
+    if val == 25 {
+        let con = Console::{ .id: 1 }
+        log_info(con, "Generic constraints and trait materialization verified!\n")
+    }
+}

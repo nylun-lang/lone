@@ -75,6 +75,7 @@ const (
 	TokenComptime
 	TokenSelf
 	TokenInfer
+	TokenSatisfies
 
 	// Directives
 	TokenFaDirective // e.g. @fa:wasm or @fa:doc
@@ -164,6 +165,7 @@ var tokenNames = map[TokenKind]string{
 	TokenComptime:   "comptime",
 	TokenSelf:       "self",
 	TokenInfer:      "infer",
+	TokenSatisfies:  "satisfies",
 	TokenFaDirective:"@fa:",
 	TokenPlus:       "+",
 	TokenMinus:      "-",
@@ -261,4 +263,5 @@ var Keywords = map[string]TokenKind{
 	"comptime": TokenComptime,
 	"self":     TokenSelf,
 	"infer":    TokenInfer,
+	"satisfies": TokenSatisfies,
 }

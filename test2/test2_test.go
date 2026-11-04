@@ -148,6 +148,14 @@ func TestGenericFn(t *testing.T) {
 	}
 }
 
+func TestGenericConstraints(t *testing.T) {
+	got := compileAndRun(t, "behavior/generic_constraints.lone")
+	want := "Generic constraints and trait materialization verified!\n"
+	if got != want {
+		t.Errorf("unexpected output: got %q, want %q", got, want)
+	}
+}
+
 func TestCheckAllTest2Suite(t *testing.T) {
 	files, err := filepath.Glob("behavior/*.lone")
 	if err != nil {

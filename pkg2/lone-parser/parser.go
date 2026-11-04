@@ -346,45 +346,16 @@ func (p *Parser) parseFnDec(isPub bool) (loneast.FN_DEC, error) {
 		return loneast.FN_DEC{}, fmt.Errorf("expected function name at %s", p.peek().Start)
 	}
 
-	// Generic type parameters: fn foo<T, U = Default>(...)
+	// Generic type parameters: fn foo<T, U = Default where { ... }>(...)
 	var typeParams []loneast.TypeParam
+	var constraints []loneast.GenericConstraint
 	if p.peek().Kind == lonelexer.TokenLt {
-		p.advance()
-		for {
-			tp, err := p.expect(lonelexer.TokenIdent)
-			if err != nil {
-				return loneast.FN_DEC{}, err
-			}
-			var defType *loneast.TYPE_REF
-			tpEnd := tp.End
-			if p.peek().Kind == lonelexer.TokenAssign {
-				p.advance()
-				def, err := p.parseTypeRef()
-				if err != nil {
-					return loneast.FN_DEC{}, err
-				}
-				defType = &def
-				tpEnd = def.NodeSpan().End
-			}
-			typeParams = append(typeParams, loneast.TypeParam{
-				Name:    tp.Text,
-				Default: defType,
-				Span_:   lonelexer.Span{Start: tp.Start, End: tpEnd},
-			})
-			if p.peek().Kind == lonelexer.TokenComma {
-				p.advance()
-				if p.peek().Kind == lonelexer.TokenGt {
-					break
-				}
-			} else {
-				break
-			}
-		}
-		gt, err := p.expect(lonelexer.TokenGt)
+		tps, cs, err := p.parseTypeParamsAndConstraints()
 		if err != nil {
 			return loneast.FN_DEC{}, err
 		}
-		_ = gt
+		typeParams = tps
+		constraints = cs
 	}
 
 	// Parameters: (p1: T1, p2: T2)
@@ -464,14 +435,104 @@ func (p *Parser) parseFnDec(isPub bool) (loneast.FN_DEC, error) {
 	}
 
 	return loneast.FN_DEC{
-		Name:       nameTok.Text,
-		IsPublic:   isPub,
-		TypeParams: typeParams,
-		Params:     params,
-		ReturnType: retType,
-		Body:       body,
-		Span_:      lonelexer.Span{Start: fnTok.Start, End: body.NodeSpan().End},
+		Name:        nameTok.Text,
+		IsPublic:    isPub,
+		TypeParams:  typeParams,
+		Constraints: constraints,
+		Params:      params,
+		ReturnType:  retType,
+		Body:        body,
+		Span_:       lonelexer.Span{Start: fnTok.Start, End: body.NodeSpan().End},
 	}, nil
+}
+
+func (p *Parser) parseTypeParamsAndConstraints() ([]loneast.TypeParam, []loneast.GenericConstraint, error) {
+	_, err := p.expect(lonelexer.TokenLt)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	var typeParams []loneast.TypeParam
+	var constraints []loneast.GenericConstraint
+
+	for p.peek().Kind != lonelexer.TokenGt && p.peek().Kind != lonelexer.TokenWhere && !p.isAtEnd() {
+		tp, err := p.expect(lonelexer.TokenIdent)
+		if err != nil {
+			return nil, nil, err
+		}
+		var defType *loneast.TYPE_REF
+		tpEnd := tp.End
+		if p.peek().Kind == lonelexer.TokenAssign {
+			p.advance()
+			def, err := p.parseTypeRef()
+			if err != nil {
+				return nil, nil, err
+			}
+			defType = &def
+			tpEnd = def.NodeSpan().End
+		}
+		typeParams = append(typeParams, loneast.TypeParam{
+			Name:    tp.Text,
+			Default: defType,
+			Span_:   lonelexer.Span{Start: tp.Start, End: tpEnd},
+		})
+		if p.peek().Kind == lonelexer.TokenComma {
+			p.advance()
+			if p.peek().Kind == lonelexer.TokenGt || p.peek().Kind == lonelexer.TokenWhere {
+				break
+			}
+		} else {
+			break
+		}
+	}
+
+	if p.peek().Kind == lonelexer.TokenWhere {
+		p.advance() // consume 'where'
+		_, err := p.expect(lonelexer.TokenLBrace)
+		if err != nil {
+			return nil, nil, err
+		}
+		for p.peek().Kind != lonelexer.TokenRBrace && !p.isAtEnd() {
+			paramTok, err := p.expect(lonelexer.TokenIdent)
+			if err != nil {
+				return nil, nil, err
+			}
+			op := loneast.ConstraintIs
+			if p.peek().Kind == lonelexer.TokenIs {
+				p.advance()
+				op = loneast.ConstraintIs
+			} else if p.peek().Kind == lonelexer.TokenSatisfies {
+				p.advance()
+				op = loneast.ConstraintSatisfies
+			} else {
+				return nil, nil, fmt.Errorf("expected 'is' or 'satisfies' in constraint at %s", p.peek().Start)
+			}
+			targetType, err := p.parseTypeRef()
+			if err != nil {
+				return nil, nil, err
+			}
+			constraints = append(constraints, loneast.GenericConstraint{
+				TypeParam: paramTok.Text,
+				Op:        op,
+				Target:    targetType,
+				Span_:     lonelexer.Span{Start: paramTok.Start, End: targetType.NodeSpan().End},
+			})
+			if p.peek().Kind == lonelexer.TokenComma {
+				p.advance()
+			}
+		}
+		_, err = p.expect(lonelexer.TokenRBrace)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+
+	_, err = p.expect(lonelexer.TokenGt)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return typeParams, constraints, nil
 }
 
 func (p *Parser) parseTypeDec(isPub bool) (loneast.TYPE_DEC, error) {
@@ -482,45 +543,16 @@ func (p *Parser) parseTypeDec(isPub bool) (loneast.TYPE_DEC, error) {
 		return loneast.TYPE_DEC{}, err
 	}
 
-	// Generic type parameters: <T, U = Default>
+	// Generic type parameters: <T, U = Default where { ... }>
 	var typeParams []loneast.TypeParam
+	var constraints []loneast.GenericConstraint
 	if p.peek().Kind == lonelexer.TokenLt {
-		p.advance()
-		for {
-			tp, err := p.expect(lonelexer.TokenIdent)
-			if err != nil {
-				return loneast.TYPE_DEC{}, err
-			}
-			var defType *loneast.TYPE_REF
-			tpEnd := tp.End
-			if p.peek().Kind == lonelexer.TokenAssign {
-				p.advance()
-				def, err := p.parseTypeRef()
-				if err != nil {
-					return loneast.TYPE_DEC{}, err
-				}
-				defType = &def
-				tpEnd = def.NodeSpan().End
-			}
-			typeParams = append(typeParams, loneast.TypeParam{
-				Name:    tp.Text,
-				Default: defType,
-				Span_:   lonelexer.Span{Start: tp.Start, End: tpEnd},
-			})
-			if p.peek().Kind == lonelexer.TokenComma {
-				p.advance()
-				if p.peek().Kind == lonelexer.TokenGt {
-					break
-				}
-			} else {
-				break
-			}
-		}
-		gt, err := p.expect(lonelexer.TokenGt)
+		tps, cs, err := p.parseTypeParamsAndConstraints()
 		if err != nil {
 			return loneast.TYPE_DEC{}, err
 		}
-		_ = gt
+		typeParams = tps
+		constraints = cs
 	}
 
 	assignTok, err := p.expect(lonelexer.TokenAssign)
@@ -585,13 +617,14 @@ func (p *Parser) parseTypeDec(isPub bool) (loneast.TYPE_DEC, error) {
 		}
 
 		return loneast.TYPE_DEC{
-			Name:       nameTok.Text,
-			IsPublic:   isPub,
-			TypeParams: typeParams,
-			Kind:       loneast.TYPE_DEC_STRUCT,
-			Fields:     fields,
-			Methods:    methods,
-			Span_:      lonelexer.Span{Start: typeTok.Start, End: rbrace.End},
+			Name:        nameTok.Text,
+			IsPublic:    isPub,
+			TypeParams:  typeParams,
+			Constraints: constraints,
+			Kind:        loneast.TYPE_DEC_STRUCT,
+			Fields:      fields,
+			Methods:     methods,
+			Span_:       lonelexer.Span{Start: typeTok.Start, End: rbrace.End},
 		}, nil
 	}
 
@@ -698,12 +731,13 @@ func (p *Parser) parseTypeDec(isPub bool) (loneast.TYPE_DEC, error) {
 		}
 
 		return loneast.TYPE_DEC{
-			Name:       nameTok.Text,
-			IsPublic:   isPub,
-			TypeParams: typeParams,
-			Kind:       loneast.TYPE_DEC_TRAIT,
-			TraitSigs:  traitSigs,
-			Span_:      lonelexer.Span{Start: typeTok.Start, End: rbrace.End},
+			Name:        nameTok.Text,
+			IsPublic:    isPub,
+			TypeParams:  typeParams,
+			Constraints: constraints,
+			Kind:        loneast.TYPE_DEC_TRAIT,
+			TraitSigs:   traitSigs,
+			Span_:       lonelexer.Span{Start: typeTok.Start, End: rbrace.End},
 		}, nil
 	}
 
@@ -787,12 +821,13 @@ func (p *Parser) parseTypeDec(isPub bool) (loneast.TYPE_DEC, error) {
 		}
 
 		return loneast.TYPE_DEC{
-			Name:       nameTok.Text,
-			IsPublic:   isPub,
-			TypeParams: typeParams,
-			Kind:       loneast.TYPE_DEC_ENUM,
-			Variants:   variants,
-			Span_:      lonelexer.Span{Start: typeTok.Start, End: rbrace.End},
+			Name:        nameTok.Text,
+			IsPublic:    isPub,
+			TypeParams:  typeParams,
+			Constraints: constraints,
+			Kind:        loneast.TYPE_DEC_ENUM,
+			Variants:    variants,
+			Span_:       lonelexer.Span{Start: typeTok.Start, End: rbrace.End},
 		}, nil
 	}
 
@@ -803,12 +838,13 @@ func (p *Parser) parseTypeDec(isPub bool) (loneast.TYPE_DEC, error) {
 	}
 
 	return loneast.TYPE_DEC{
-		Name:       nameTok.Text,
-		IsPublic:   isPub,
-		TypeParams: typeParams,
-		Kind:       loneast.TYPE_DEC_ALIAS,
-		AliasType:  &aliasTarget,
-		Span_:      lonelexer.Span{Start: typeTok.Start, End: aliasTarget.NodeSpan().End},
+		Name:        nameTok.Text,
+		IsPublic:    isPub,
+		TypeParams:  typeParams,
+		Constraints: constraints,
+		Kind:        loneast.TYPE_DEC_ALIAS,
+		AliasType:   &aliasTarget,
+		Span_:       lonelexer.Span{Start: typeTok.Start, End: aliasTarget.NodeSpan().End},
 	}, nil
 }
 

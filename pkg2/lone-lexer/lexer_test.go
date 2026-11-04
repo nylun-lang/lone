@@ -220,3 +220,22 @@ func TestLexerInfer(t *testing.T) {
 		t.Errorf("expected TokenInfer")
 	}
 }
+
+func TestLexerSatisfies(t *testing.T) {
+	code := `<T where { T satisfies TrWriter }>`
+	lex := NewLexer([]byte(code))
+	tokens, err := lex.Tokenize()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	foundSatisfies := false
+	for _, tok := range tokens {
+		if tok.Kind == TokenSatisfies {
+			foundSatisfies = true
+		}
+	}
+	if !foundSatisfies {
+		t.Errorf("expected TokenSatisfies")
+	}
+}
