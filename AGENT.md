@@ -42,18 +42,21 @@ Inspired by Zig (`_local/zig`), Lone uses a clean separation between **compiler 
 | `test/behavior/` | End-to-end `.lone` source files verifying compiler and execution outputs. |
 | `test/compile_errors/` | Negative `.lone` files asserting diagnostic errors and warnings. |
 | `packages/` | *Legacy multi-module implementation (kept for backwards compatibility during migration).* |
-| `dev/` | Working documentation, designs, reports, and internal specs. |
-| `dev/rfcs/` | **Ideas, RFCs, and architecture designs** (language specs, sketches, RFCs). |
-| `dev/internals/`| **Internal architectural documentation** explaining compiler subsystems under the hood. |
-| `dev/sessions/` | **Work session reports** generated at the conclusion of tasks. |
-| `dev/archive/` | Historical and legacy specifications. |
+| `dev/` | Central engineering hub for specifications, RFCs, research, and session logs. Follows [`dev/POLICY.md`](file:///home/char-c/Projects/lone/dev/POLICY.md). |
+| `dev/SPEC.md` | **Living Language Specification (v0.5.0-beta)** (Single source of truth for active features). |
+| `dev/adr/` | **Architectural Decision Records** (Immutable decisions on compiler architecture). |
+| `dev/rfcs/` | **Formal Proposals & RFCs** (`drafts/`, `accepted/`, `rejected/`). |
+| `dev/research/` | **Investigative Studies** (`exploration/`, `audits/`, `benchmarks/`). |
+| `dev/sessions/` | **Session History** (Daily roll-up `YYYY-MM-DD.md` and task reports in `YYYY-MM-DD/`). |
+| `dev/internals/`| **Compiler Subsystems** (Deep-dive documentation on IR, lowering, and memory). |
+| `dev/archive/` | **Historical Archive** (Pre-0.5.0 RFCs and legacy 2026-08 documents). |
 | `assets/` | Brand assets, icons, banners, and vector artwork. |
 
 ---
 
 ## 3. Mandatory AI Operating Directives
 
-Whenever assisting on this repository, you must strictly follow these rules:
+Whenever assisting on this repository, you must strictly follow these rules and adhere to [`dev/POLICY.md`](file:///home/char-c/Projects/lone/dev/POLICY.md):
 
 ### 3.1 Feature Commits
 - When asked to work on a feature, any git commit must be prefixed with:
@@ -67,16 +70,21 @@ Whenever assisting on this repository, you must strictly follow these rules:
 ### 3.2 End-of-Request Reports
 - At the end of every user request or milestone, **write a report** in `dev/sessions/`.
 - File naming convention: `dev/sessions/YYYY-MM-DD/<topic>.md` or `dev/sessions/YYYY-MM-DD_<topic>.md`.
+- Maintain or update the daily summary index: `dev/sessions/YYYY-MM-DD.md`.
 - The report should summarize:
   - What was requested.
   - What changes were made or investigated.
   - Any verification/testing done.
   - Pending questions, next steps, or open considerations.
 
-### 3.3 Documentation Boundaries
-- **Language Ideas & Proposals:** Place in `dev/rfcs/` (e.g., grammar sketches, type system proposals).
-- **Internal Component Docs:** Place in `dev/internals/` (e.g., how the Pratt parser builds the AST, symbol resolution stages, memory layout).
-- **Legacy Reference:** Consult `_old/` when researching earlier design iterations, but write all new code in `packages/`.
+### 3.3 Documentation Boundaries & Dev Lifecycles
+- Consult [`dev/POLICY.md`](file:///home/char-c/Projects/lone/dev/POLICY.md) for the mandatory 5-stage feature pipeline.
+- **Language Ideas & Proposals:** Draft in `dev/rfcs/drafts/`. Only move to `dev/rfcs/accepted/` upon user agreement.
+- **Exploratory Sketches & Audits:** Place in `dev/research/exploration/` or `dev/research/audits/`.
+- **Architectural Decisions:** Record in `dev/adr/`.
+- **Internal Component Docs:** Place in `dev/internals/` (e.g. Pratt parser precedence, memory layout, WIR lowering).
+- **Active Specification:** Update `dev/SPEC.md` only when features are fully implemented and passing in `pkg2/` and `test2/`.
+- **Historical Reference:** Consult `dev/archive/` for historical context, but treat it as read-only.
 
 ---
 
