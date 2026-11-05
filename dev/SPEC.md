@@ -1,6 +1,6 @@
-# Lone Language Specification (v0.5.0-beta)
+# Lone Language Specification (v0.6.0)
 
-This specification documents the current implementation of the **Lone Programming Language** (v0.5.0-beta) based on the active Greenfield compiler toolchain (`pkg2/lone-lexer`, `pkg2/lone-parser`, `pkg2/lone-analyzer`, `pkg2/lone-compiler-wir`, and `test2`).
+This specification documents the implementation of the **Lone Programming Language** (v0.6.0) based on the Greenfield compiler toolchain (`pkg2/lone-lexer`, `pkg2/lone-parser`, `pkg2/lone-analyzer`, `pkg2/lone-compiler-wir`, and `test2`).
 
 ---
 
@@ -16,6 +16,8 @@ This specification documents the current implementation of the **Lone Programmin
 - **IL2 - No implicit built-ins**: Compiler intrinsics are prefixed with `#` (e.g. `#panic`, `#print`, `#alloc`, `#free`) to cleanly distinguish them from user code.
 - **IL3 - Strict Resource & Result Accounting**: Non-void expressions in statement position must be consumed or explicitly dropped (`drop <expr>`). Unconsumed values trigger a static analysis error (`type/unused-result`).
 - **IL4 - Explicit Trait Materialization**: Traits are pure contracts and do not inject methods into type namespaces. Trait methods must be explicitly materialized via `TrTrait::|TargetType|`.
+- **IL5 - Structural Interface Contracts**: Interfaces define pure public data contracts via duck typing. Types satisfying interface contracts can be passed generically with zero runtime boxing overhead.
+- **IL6 - Zero Output Tearing**: Formatted string output is stack-buffered and emitted in exactly ONE atomic WASI `fd_write` syscall.
 - **IF1 - Syntax-level feedback**: Grammar layout and keywords provide readability without resorting to confusing punctuation.
 - **IF2 - Progressive information**: Information displays progressively from left to right wherever possible.
 - **IUI1 - Declared topology is stable**: UI declarations establish a persistent topology known to the compiler.
@@ -32,14 +34,16 @@ Identifiers name variables, functions, types, fields, parameters, variants, and 
   - **Functions & Local Variables**: `snake_case` (e.g. `calculate_hash`, `user_id`).
   - **Globals & Constants**: `ALL_CAPS` or `snake_case` (e.g. `MAX_BUFFER_SIZE`, `default_timeout`).
   - **Types, Structs & Enums**: `CamelCase` / PascalCase (e.g. `UserData`, `TokenStream`, `Shape`).
-  - **Trait Types**: **Must** begin with prefix `Tr` followed by an uppercase letter (e.g. `TrWriter`, `TrReader`, `TrClonable`, `TrDisplayer`).
-  - **Non-Trait Identifiers**: Any type or symbol that is **not** a trait must **not** begin with prefix `Tr` followed by an uppercase letter.
+  - **Trait Types**: **Must** begin with prefix `Tr` followed by an uppercase letter (e.g. `TrWriter`, `TrReader`, `TrClonable`, `TrDisplay`).
+  - **Interface Types**: **Must** begin with prefix `Ifc` followed by an uppercase letter (e.g. `IfcReader`, `IfcVector`, `IfcDrawable`).
+  - **Non-Trait / Non-Interface Identifiers**: Any type or symbol that is **not** a trait or interface must **not** begin with prefixes `Tr` or `Ifc` followed by an uppercase letter.
+  - **Private Struct Fields**: Struct fields prefixed with an underscore `_` (e.g. `_secret`, `_id`) are private to the declaring module.
 
 ### 2.2 Keywords
 The following keywords are reserved in Lone:
 ```
 import    from      as        pub       var       let
-type      struct    enum      trait     impl      fn
+type      struct    interface enum      trait     impl      fn
 return    break     if        else      while     loop
 for       in        drop      match     must      try
 and       or        xor       is        satisfies where
@@ -115,6 +119,27 @@ var numbers = { 1, 2, 3, 4, 5 }
 var matrix = { { 1, 0 }, { 0, 1 } }
 ```
 
+### 3.4 Formatted String Interpolation Literals (`f"..."`)
+Formatted string literals begin with `f"` and interpolate expressions enclosed in `${...}`:
+```lone
+let name = "Alice"
+let score = 95
+let msg = f"Player ${name} scored ${score} points (next: ${score + 5})"
+let price = f"Total is \${price}" -- '\${' escapes interpolation
+```
+Inside regular string literals (`"..."`), `$` is an ordinary literal character and requires no escaping.
+
+### 3.5 Tuple Literals
+Tuples are heterogeneous, fixed-size product types enclosed in parentheses `( ... )`:
+```lone
+let pair = (10, "hello")
+let triple = (true, 42, 3.14)
+
+-- Positional member access:
+let first = pair.0   -- 10
+let second = pair.1  -- "hello"
+```
+
 ---
 
 ## 4. Type System (`TYPE_REF`)
@@ -143,19 +168,27 @@ var c: comptime ro ?[]i32 = none
 
 In accordance with **IL1 (Explicit over implicit)**, Lone makes a strict distinction between managed references and unmanaged raw memory addresses:
 
-| Type | Name | Semantics | Creation Syntax | Target Memory |
-| :---: | :--- | :--- | :---: | :--- |
-| `ref<T>` | **Managed Reference** | Safe reference tracked by the escape analyzer and memory model. | `&x` | Datastack frame or promoted to Managed Store. |
-| `ptr<T>` | **Raw Memory Address** | Unsafe raw byte offset in WebAssembly linear memory (`i32`). Zero runtime overhead. | `&raw x` | WebAssembly linear memory (datastack / shadow stack). |
+| Type | Name | Semantics | Creation Syntax | Indexing (`[i]`) | Target Memory |
+| :---: | :--- | :--- | :---: | :---: | :--- |
+| `ref<T>` | **Managed Reference** | Safe reference tracked by escape analyzer. | `&x` | **Rejected** (`type/invalid-index`) | Datastack frame or promoted to Managed Store. |
+| `ptr<T>` | **Raw Memory Address** | Unsafe raw byte offset in Wasm memory (`i32`). Zero overhead. | `&raw x` | **Allowed** (`p[i]`) | WebAssembly linear memory. |
+
+#### Dereference & Assignment Rules:
+- **Deref Stores**: Modifying the target of a reference or pointer requires explicit dereference syntax `*r = val` or `*p = val`.
+- **Indexing**: Pointer buffers allow array-style indexing `p[i] = val`. Managed references forbid indexing (`r[i]` produces `type/invalid-index`).
+- **Immutability Enforcement**: Neither `ref<ro T>` nor `ptr<ro T>` can be stored into via dereference (`*r = val` produces `type/immutable-target-write`).
 
 ```lone
 var val: i32 = 42
 
 -- Managed reference to val
 var r: ref<i32> = &val
+*r = 99 -- Updates val to 99
 
--- Raw linear memory address (i32 byte offset)
+-- Raw linear memory address
 var p: ptr<i32> = &raw val
+*p = 100 -- Updates val to 100
+p[0] = 101 -- Indexing allowed on pointers
 ```
 
 ### 4.4 List & Array Types (`TypeList`)
@@ -171,7 +204,36 @@ var p: ptr<i32> = &raw val
   var fixed_grid: [9][10]i32
   ```
 
-### 4.5 Function Signatures (`TypeFn`)
+### 4.5 Tuple Types (`TupleType`)
+Tuples represent fixed-size heterogeneous product types:
+```lone
+type PointPair = (int, int)
+type KeyVal = (str, ?int)
+```
+Elements are laid out contiguously in memory with native alignment padding.
+
+### 4.6 Interface Data Contracts (`Ifc*`)
+Interfaces declare pure public data contracts validated via compile-time **structural duck typing**:
+
+```lone
+pub type IfcVector = interface {
+    x: int,
+    y: int,
+}
+
+pub type Ifc3D = interface {
+    IfcVector, -- Interface embedding
+    z: int,
+}
+```
+
+- **Naming Rule**: Interface names **must** begin with `Ifc` followed by an uppercase letter. Non-interface types must not begin with `Ifc`.
+- **Duck Typing (Width Subtyping)**: Any struct containing all required fields with compatible types satisfies the interface. Extra fields are allowed.
+- **Read-Only Covariance**: A mutable struct field satisfies a read-only (`ro`) interface field requirement.
+- **Private Fields Forbidden**: Interfaces describe public APIs and cannot contain private fields (`_*`).
+- **Enums Prohibited**: Enums cannot satisfy interfaces (`type/interface-enum-rejected`).
+
+### 4.7 Function Signatures (`TypeFn`)
 First-class function types with named or anonymous parameters and an optional return type:
 ```lone
 var callback: fn (event: Event) bool
@@ -220,6 +282,13 @@ Variables are introduced with `var` or `let`, with optional explicit type annota
 var count: i32 = 0
 let title = "Lone"          -- Type inferred as 'infer' -> lowered to concrete 'str'
 var uninit: ?str            -- Uninitialized, defaults to none
+
+-- Grouped variable declaration:
+let [a, b, c]: int = 10     -- Binds a=10, b=10, c=10
+
+-- Tuple pattern destructuring:
+let pair = (42, "hello")
+let (id, name) = pair
 ```
 
 ### 5.4 Function Declarations (`FN_DEC`)
@@ -227,6 +296,11 @@ Top-level functions are introduced with `fn`:
 ```lone
 fn add(a: i32, b: i32) i32 {
     return a + b
+}
+
+-- Grouped function parameters:
+fn draw_rect([x, y, w, h]: int, color: str) void {
+    -- x, y, w, h are all int
 }
 
 fn noop() void {
@@ -239,23 +313,49 @@ fn #panic(msg: str) void {
 ```
 
 ### 5.5 Struct Declarations (`TYPE_DEC_STRUCT`)
-Structs encapsulate data fields, associated constructors, and instance methods:
+Structs encapsulate data fields, field modifiers, constructors, and instance methods:
 ```lone
-pub type Vec2 = struct {
-    x: i32,
-    y: i32,
+pub type Point3D = struct {
+    -- Grouped fields:
+    [x, y]: int,
+    
+    -- Read-only field (immutable after construction):
+    ro z: int,
+    
+    -- Private field (accessible only in declaring module):
+    _secret: int,
 
-    -- Associated Constructor
-    pub fn new(x: i32, y: i32) Vec2 {
-        return Vec2::{ .x: x, .y: y }
+    -- Canonical Constructor (__init__):
+    pub fn __init__(x: int, y: int, z: int) Point3D {
+        return Point3D::{ .x: x, .y: y, .z: z, ._secret: 999 }
     }
 
     -- Instance Method (receiver 'self')
-    pub fn dot(self, other: Vec2) i32 {
-        return self.x * other.x + self.y * other.y
+    pub fn distance_squared(self) int {
+        return self.x * self.x + self.y * self.y + self.z * self.z
     }
 }
 ```
+
+#### Struct Rules & Enforcements:
+- **Constructor Dispatch `Type::(...)`**: Calling `Point3D::(1, 2, 3)` desugars directly to `Point3D::__init__(1, 2, 3)`.
+- **Encapsulation Protection**: Structs with private fields (`_*`) cannot be instantiated via raw aggregate syntax `Point3D::{ ... }` from outside; callers must use `Point3D::(...)`.
+- **Initialization Guarantees**: Structs with read-only private fields must declare an `__init__` constructor (`type/missing-init-for-ro-private-field`).
+- **Immutability Protection**: Writes to `ro` fields after instantiation trigger `type/immutable-field-write`.
+
+### 5.6 Interface Declarations (`TYPE_DEC_INTERFACE`)
+Interfaces declare pure data contracts without implementation:
+```lone
+pub type IfcVector = interface {
+    [x, y]: int,
+}
+
+pub type IfcTransform = interface {
+    IfcVector,       -- Embedding expands all fields from IfcVector
+    ro scale: float,
+}
+```
+Embedded interfaces must not declare conflicting field types (`type/interface-embedding-collision`).
 
 #### Struct Instantiation
 1. **Associated Construct (`T::{ ... }`)**: Directly initializes fields without invoking a constructor:
@@ -479,10 +579,13 @@ Postfix operators chain onto any primary expression from left to right:
 | Suffix Syntax | Meaning | Example |
 | :--- | :--- | :--- |
 | `.name` | Member property access | `user.name` |
+| `.0`, `.1` | Tuple positional element access | `pair.0`, `triple.1` |
 | `:name` | Namespace / module symbol access | `math:sin` |
 | `::name` | Associated function / type access | `Vec2::new` |
+| `::(...)` | **Canonical Constructor Call**: Dispatches to `Type::__init__(...)` | `Point3D::(1, 2, 3)` |
 | `(args...)` | Function / method call | `calc(1, 2)` |
-| `::{ ... }` | Type-make construct (struct/record) | `Vec2::{ .x: 1, .y: 2 }` |
+| `[i]` | Pointer buffer indexing (valid on `ptr<T>`, error on `ref<T>`) | `p[0]` |
+| `::{ ... }` | Raw aggregate construct (requires all fields to be public) | `Vec2::{ .x: 1, .y: 2 }` |
 | `::|Type|` | **Trait Materialization**: Binds a trait contract to a concrete type | `WriterTrait::|Stdout|` |
 
 #### Trait Materialization (`::|T|`)
@@ -501,7 +604,7 @@ Evaluated right-to-left before binary expressions:
 - `!` : Logical NOT
 - `&` : **Managed Reference** operator (produces `ref<T>`)
 - `&raw` : **Raw Memory Address** operator (produces `ptr<T>`)
-- `*` : Dereference operator
+- `*` : Dereference operator (required for reference / pointer stores: `*r = 10`)
 
 ### 7.4 Binary Operators & Precedence
 From highest precedence (evaluated first) to lowest:
@@ -528,6 +631,37 @@ Tests if a value matches a given type reference (`is`) or does not match (`is no
 ```lone
 if val is i32 {
     println_int(val) -- automatically narrowed to i32
+}
+```
+
+### 7.6 Anonymous Functions (`ANON_FN_EXPR`)
+Anonymous functions can be defined inline as expressions:
+```lone
+let square = fn(x: int) int {
+    return x * x
+}
+let res = square(5) -- 25
+```
+- **Closure Capture Analysis**: Closures capturing outer local variables by reference across escaping boundaries trigger `closure/escaping-reference-capture`.
+- **Lowering**: Anonymous functions are hoisted to top-level WebAssembly functions (`anon_fn_N`).
+
+### 7.7 Formatted String Interpolation & `TrDisplay`
+Formatted string interpolation (`f"..."`) provides zero-allocation, atomic output:
+```lone
+let name = "Alice"
+let count = 42
+println(f"Hello ${name}, you have ${count} notifications.")
+```
+
+- **Stack-Buffered Single Write Architecture**: When passed to output functions (`println`, `print`), the formatted string is built into a temporary Page 0 datastack buffer and flushed in **exactly ONE atomic WASI `fd_write` syscall**. This guarantees zero output tearing and eliminates fragmented pipe chunks without heap allocations.
+- **Escaping Value Scope**: In value position (`let s: str = f"..."`), the formatted string is allocated in the heap.
+- **The `TrDisplay` Trait**: Types can be formatted by implementing `TrDisplay`:
+  ```lone
+  pub type TrDisplay = trait {
+      fn fmt(self, buf: ref<StringBuilder>) void
+  }
+  ```
+  All primitive types (`str`, `int`, `float`, `bool`, `char`, `ptr<T>`) provide inlined zero-cost implementations out of the box. Un-displayable types trigger `type/missing-trait-impl`.
 }
 
 if opt is not none {
