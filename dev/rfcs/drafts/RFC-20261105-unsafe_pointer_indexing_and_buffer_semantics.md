@@ -23,9 +23,13 @@ Following the implementation of [`RFC-20261105-reference_and_pointer_semantics`]
 
 This proposal introduces a cohesive safety model centered on **Typestate Pointer Separation**:
 1. **Single-Element Pointer (`ptr<T>`)**: Points to exactly one instance of `T` (e.g. `let p = &raw x`). Array-style indexing `p[i]` is **statically forbidden** (`type/single-pointer-indexing-rejected`). Only dereference `*p` is allowed.
-2. **Raw Multi-Element Buffer Pointer (`ptr<[]T>`)**: Explicitly declares an unmanaged, unbounded contiguous buffer in linear memory (e.g. from `#alloc`, framebuffers, or FFI). Indexing `buf[i]` is **permitted** with zero runtime overhead.
-3. **Explicit Type Casting**: Transitioning from a single pointer to a buffer pointer requires an explicit cast (`p as ptr<[]T>`), ensuring developers consciously acknowledge unbounded memory traversal.
-4. **Safe Slice Promotion (`#slice(p, len)`)**: Provides an ergonomic bridge from unmanaged `ptr<[]T>` to safe, bounds-checked dynamic slices `[]T`.
+2. **Sized Buffer Pointer (`ptr<[N]T>`)**: Points to a fixed-size contiguous array of $N$ elements in linear memory (e.g. `let p = &raw scores` where `scores` is `[6]int`). 
+   - **Compile-Time Bounds Check**: Constant indices $i \ge N$ are rejected at compile time (`type/index-out-of-bounds`).
+   - **Zero-Cost Dynamic Bounds Check**: Variable indices `p[i]` are verified via a single unsigned WebAssembly instruction (`i32.ge_u N`), cleanly trapping before linear memory corruption can occur.
+   - **Safe Decay**: `ptr<[N]T>` safely coerces into an unsized buffer `ptr<[]T>`.
+3. **Unsized Multi-Element Buffer Pointer (`ptr<[]T>`)**: Explicitly declares an unmanaged, unbounded contiguous buffer in linear memory (e.g. from `#alloc`, framebuffers, or FFI). Indexing `buf[i]` is **permitted** with zero runtime overhead.
+4. **Explicit Type Casting**: Transitioning from a single pointer to a buffer pointer requires an explicit cast (`p as ptr<[]T>`), ensuring developers consciously acknowledge unbounded memory traversal.
+5. **Safe Slice Promotion (`#slice(p, len)`)**: Provides an ergonomic bridge from unmanaged `ptr<[]T>` to safe, bounds-checked dynamic slices `[]T`.
 
 ---
 
@@ -68,20 +72,20 @@ In **WebAssembly Linear Memory**, the execution environment is fundamentally dif
 | :--- | :---: | :---: | :--- | :--- |
 | **C / C++** | `T*` | Conflated | Allowed directly (`p[i]`) | None (Undefined Behavior; primary source of CVEs) |
 | **Rust** | `*const T`, `*mut T` | Conflated | Forbidden via `[]`; requires `*p.add(i)` inside `unsafe` block | Strict unsafe demarcation; standard type is slice `&[T]` |
-| **Zig** | `*T` vs `[*]T` | **Separated** | `*T`: **Forbidden**<br/>`[*]T`: **Allowed** | Typestate enforcement: single pointer cannot be indexed without explicit cast |
+| **Zig** | `*T` vs `[*]T` vs `*[N]T` | **Separated** | `*T`: **Forbidden**<br/>`[*]T`: **Allowed** (unsized)<br/>`*[N]T`: **Allowed** (bounds checked) | Typestate enforcement: single pointer cannot be indexed without explicit cast |
 | **Go** | `*T` | Conflated | Forbidden on `*T`; requires `unsafe.Pointer` + `uintptr` arithmetic | High-friction escape hatch |
 | **Lone (Status Quo v0.6.0)** | `ptr<T>` | Conflated | Allowed directly on all `ptr<T>` | Low friction, but vulnerable to Innocent Syntax trap |
-| **Lone (Proposed v0.6.1)** | `ptr<T>` vs `ptr<[]T>` | **Separated** | `ptr<T>`: **Forbidden** (`type/single-pointer-indexing-rejected`)<br/>`ptr<[]T>`: **Allowed** | Invariant IL1: Single reference cannot masquerade as buffer |
+| **Lone (Proposed v0.6.1)** | `ptr<T>`<br/>`ptr<[N]T>`<br/>`ptr<[]T>` | **Separated** | `ptr<T>`: **Forbidden** (`type/single-pointer-indexing-rejected`)<br/>`ptr<[N]T>`: **Checked** (static $i < N$, 1-inst dynamic)<br/>`ptr<[]T>`: **Allowed** (unbounded raw) | Invariant IL1: Single reference cannot masquerade as buffer |
 
-Zig's separation of single-item pointer `*T` from many-item pointer `[*]T` has proven exceptionally successful in production systems programming. It eliminates over 90% of unintended buffer-overflow bugs at compile time without adding runtime overhead or ugly syntactic friction.
+Zig's separation of single-item pointer `*T`, sized array pointer `*[N]T`, and many-item pointer `[*]T` has proven exceptionally successful in production systems programming. It eliminates over 90% of unintended buffer-overflow bugs at compile time without adding runtime overhead or ugly syntactic friction.
 
 ---
 
 ## 4. Proposed Architectural Design
 
-### 4.1 Typestate Separation: `ptr<T>` vs `ptr<[]T>`
+### 4.1 The 3-Tier Typestate Pointer Hierarchy
 
-Lone refines its pointer type grammar to distinguish pointer cardinality:
+Lone refines its pointer type grammar into three distinct tiers based on spatial cardinality:
 
 1. **Single-Item Pointer (`ptr<T>`)**:
    - Semantics: Points to a single, isolated value of type `T` in linear memory.
@@ -90,9 +94,19 @@ Lone refines its pointer type grammar to distinguish pointer cardinality:
      - Dereference write: `*p = val` (requires `ptr<T>`, rejected on `ptr<ro T>`)
    - Operations Forbidden:
      - Indexing `p[i]`: **Compile-time Error** (`type/single-pointer-indexing-rejected`).
-     - Invariant: A pointer obtained via `&raw x` on a variable is always `ptr<T>`. It cannot be indexed as an array.
+     - Invariant: A pointer obtained via `&raw x` on a non-array variable is always `ptr<T>`. It cannot be indexed as an array.
 
-2. **Buffer Pointer (`ptr<[]T>`)**:
+2. **Sized Array Pointer (`ptr<[N]T>`)**:
+   - Semantics: Points to a contiguous buffer of exactly $N$ elements in linear memory.
+   - Origin:
+     - Taking raw address of a fixed-size array: `let p = &raw my_array` where `my_array` is `[N]T`.
+     - Explicit sized cast: `raw_mem as ptr<[6]int>`.
+   - Bounds Safety Guarantees:
+     - **Compile-Time Constant Checking**: If $i$ is a constant and $i \ge N$ (or $i < 0$), the compiler raises a static error: `type/index-out-of-bounds`.
+     - **Single-Instruction Dynamic Checking**: If $i$ is a runtime variable, the compiler emits an unsigned comparison against immediate $N$ (`i32.ge_u N`), trapping before memory corruption occurs.
+     - **Safe Decay / Coercion**: A `ptr<[N]T>` can safely and implicitly coerce to an unsized buffer `ptr<[]T>`.
+
+3. **Unsized Buffer Pointer (`ptr<[]T>`)**:
    - Semantics: Points to an unmanaged, contiguous sequence of values of type `T` with unknown runtime length.
    - Operations Allowed:
      - Index read: `let elem = buf[i]`
@@ -102,6 +116,7 @@ Lone refines its pointer type grammar to distinguish pointer cardinality:
      - Memory allocators: `#alloc(size) as ptr<[]u8>`
      - Fixed buffer addresses: `0x10000 as ptr<[]u32>`
      - Explicit pointer cast: `single_ptr as ptr<[]T>`
+     - Coercion from sized pointer: `sized_ptr as ptr<[]T>`
 
 ```lone
 -- 1. Single pointer: indexing forbidden!
@@ -111,15 +126,22 @@ let p: ptr<int> = &raw x
 *p = 100    -- OK: dereference store updates x
 -- p[0] = 5 -- COMPILE ERROR: cannot index single-item pointer 'ptr<int>'
 
--- 2. Buffer pointer: indexing allowed!
+-- 2. Sized array pointer: bounds checked!
+var scores: [6]int = [10, 20, 30, 40, 50, 60]
+let sized_p: ptr<[6]int> = &raw scores
+
+sized_p[0] = 99 -- OK: within [0..5]
+sized_p[5] = 99 -- OK: within [0..5]
+-- sized_p[6] = 99 -- COMPILE ERROR: index 6 is out of bounds for 'ptr<[6]int>' of size 6
+
+-- Safe decay to unsized buffer:
+let buf_view: ptr<[]int> = sized_p -- OK: [6] safely coerces to []
+
+-- 3. Unsized buffer pointer: unmanaged raw access!
 let raw_mem = #alloc(1024) as ptr<[]int>
 raw_mem[0] = 10
 raw_mem[1] = 20
 raw_mem[2] = 30
-
--- 3. Explicit cast when a single pointer genuinely starts an array:
-let buf_view = p as ptr<[]int>
-buf_view[0] = 42 -- Explicit and intentional!
 ```
 
 ---
@@ -169,20 +191,24 @@ safe_slice[0] = 1 -- OK
 
 ### 5.1 Type Grammar
 ```ebnf
-PointerType   = "ptr" "<" [ "ro" ] ( ArrayType | TypeRef ) ">" ;
-ArrayType     = "[" "]" TypeRef ;
+PointerType     = "ptr" "<" [ "ro" ] ( FixedArrayType | ArrayType | TypeRef ) ">" ;
+FixedArrayType  = "[" IntLiteral "]" TypeRef ;
+ArrayType       = "[" "]" TypeRef ;
 ```
 
 - `ptr<T>`: Single-element raw pointer.
 - `ptr<ro T>`: Single-element read-only raw pointer.
-- `ptr<[]T>`: Multi-element raw buffer pointer.
+- `ptr<[N]T>`: Sized raw array pointer with compile-time known length $N$.
+- `ptr<ro [N]T>`: Sized read-only raw array pointer.
+- `ptr<[]T>`: Multi-element unmanaged raw buffer pointer.
 - `ptr<ro []T>`: Multi-element read-only raw buffer pointer.
 
 ### 5.2 Subtyping & Assignability Rules
-1. `ptr<T>` is **not** assignable to `ptr<[]T>` implicitly. Requires explicit cast: `p as ptr<[]T>`.
-2. `ptr<[]T>` is **not** assignable to `ptr<T>` implicitly. Requires explicit cast or dereference: `*p` or `p as ptr<T>`.
-3. Mutability covariance: `ptr<T>` is assignable to `ptr<ro T>`, and `ptr<[]T>` is assignable to `ptr<ro []T>`. The reverse requires an explicit cast.
-4. References (`ref<T>`) cannot be converted directly to buffer pointers without `&raw` and a cast.
+1. **Safe Decay**: `ptr<[N]T>` is implicitly assignable to `ptr<[]T>`. A known-size buffer safely decays into an unsized buffer view.
+2. **Reverse Restriction**: `ptr<[]T>` is **not** implicitly assignable to `ptr<[N]T>`. Requires explicit cast: `buf as ptr<[N]T>`.
+3. **Single Pointer Isolation**: `ptr<T>` is **not** implicitly assignable to either `ptr<[N]T>` or `ptr<[]T>`. Requires explicit cast: `p as ptr<[]T>`.
+4. **Mutability Covariance**: `ptr<T>` assigns to `ptr<ro T>`, `ptr<[N]T>` assigns to `ptr<ro [N]T>`, and `ptr<[]T>` assigns to `ptr<ro []T>`. Reversing mutability requires an explicit cast.
+5. **References (`ref<T>`)**: Cannot be converted directly to any raw pointer tier without explicit `&raw`.
 
 ---
 
@@ -191,7 +217,8 @@ ArrayType     = "[" "]" TypeRef ;
 | Diagnostic Code | Trigger Condition | Severity | Example Message |
 | :--- | :--- | :---: | :--- |
 | `type/single-pointer-indexing-rejected` | Attempting to index `p[i]` where `p` is `ptr<T>`. | **Error** | `cannot index single-item pointer "ptr<int>"; use "*p" for dereference or cast to buffer pointer "ptr<[]int>" for array indexing` |
-| `type/immutable-buffer-write` | Writing to `buf[i] = val` where `buf` is `ptr<ro []T>`. | **Error** | `cannot write to read-only buffer through "ptr<ro []int>"` |
+| `type/index-out-of-bounds` | Constant index $i \ge N$ or $i < 0$ on `ptr<[N]T>`. | **Error** | `index 6 is out of bounds for array pointer "ptr<[6]int>" of size 6` |
+| `type/immutable-buffer-write` | Writing to `buf[i] = val` on `ptr<ro [N]T>` or `ptr<ro []T>`. | **Error** | `cannot write to read-only buffer through "ptr<ro []int>"` |
 | `type/invalid-index-type` | Index `i` in `buf[i]` is not an integer (`i32`, `u32`, `int`). | **Error** | `buffer index must be an integer, got "str"` |
 
 ---
@@ -199,19 +226,29 @@ ArrayType     = "[" "]" TypeRef ;
 ## 7. WebAssembly Lowering (`pkg2/lone-compiler-wir`)
 
 In WebAssembly WIR lowering:
-1. Both `ptr<T>` and `ptr<[]T>` lower to `WasmType.TypeI32` (linear memory byte address).
-2. For `p[i]` on `ptr<[]T>`:
-   ```wat
-   ;; base + index * sizeof(T)
-   local.get $buf
-   local.get $index
-   i32.const sizeof(T)
-   i32.mul
-   i32.add
-   ;; load or store
-   i32.load (or i32.store)
-   ```
-3. Zero runtime cost: The typestate check is 100% compile-time. Emitted WebAssembly instructions are identical to direct pointer arithmetic.
+1. `ptr<T>`, `ptr<[N]T>`, and `ptr<[]T>` all lower to `WasmType.TypeI32` (linear memory byte address).
+2. For constant index on `ptr<[N]T>` (e.g. `p[2]`):
+   - Offset is statically folded at compile-time: `base + (2 * sizeof(T))`.
+   - Zero runtime bounds check emitted (compile-time verified).
+3. For dynamic index on `ptr<[N]T>` (e.g. `p[i]`):
+   - Emits a **single unsigned comparison** instruction (`i32.ge_u N`) that simultaneously validates $i \ge 0$ and $i < N$:
+     ```wat
+     local.get $index
+     i32.const N
+     i32.ge_u
+     if
+       unreachable ;; or call $__lone_rt_panic_oob
+     end
+     local.get $buf
+     local.get $index
+     i32.const sizeof(T)
+     i32.mul
+     i32.add
+     i32.load ;; or i32.store
+     ```
+4. For dynamic index on `ptr<[]T>` (e.g. `buf[i]`):
+   - Emits direct linear memory address calculation without bounds check: `base + index * sizeof(T)`.
+   - Zero runtime overhead for systems performance.
 
 ---
 
@@ -229,13 +266,19 @@ In WebAssembly WIR lowering:
 
 ## 9. Next Steps & Implementation Plan
 
-1. **Parser (`pkg2/lone-parser`)**: Support `ptr<[]T>` and `ptr<ro []T>` in `parseTypeRef`.
+1. **Parser (`pkg2/lone-parser`)**: Support `ptr<[N]T>`, `ptr<[]T>`, and their `ro` variants in `parseTypeRef`.
 2. **Analyzer (`pkg2/lone-analyzer`)**:
-   - Add `IsBuffer bool` (or `BufferElem Type`) to `PtrType`.
-   - Update `evalPostfixExpr` for `SuffixIndex`:
-     - If base is `*PtrType` with `!IsBuffer`: emit `type/single-pointer-indexing-rejected`.
-     - If base is `*PtrType` with `IsBuffer`: allow indexing.
-3. **Diagnostics & Tests**:
-   - Unit tests verifying rejection of `p[i]` on `ptr<T>`.
-   - Unit tests verifying acceptance of `buf[i]` on `ptr<[]T>`.
-   - Test read-only enforcement on `ptr<ro []T>`.
+   - Refine `PtrType`: add `IsBuffer bool` and `FixedSize int` (-1 for unsized buffer, $N > 0$ for sized array, 0 for single item).
+   - In `evalPostfixExpr` for `SuffixIndex`:
+     - If base is single-item pointer `ptr<T>`: emit `type/single-pointer-indexing-rejected`.
+     - If base is sized pointer `ptr<[N]T>` and index is a constant $\ge N$ (or $< 0$): emit `type/index-out-of-bounds`.
+     - If base is `ptr<[]T>`: allow unbounded raw indexing.
+   - Subtyping: Implement safe decay coercion from `ptr<[N]T>` to `ptr<[]T>`.
+3. **Lowering (`pkg2/lone-compiler-wir`)**:
+   - For `ptr<[N]T>` with dynamic index: emit single unsigned bounds check `i32.ge_u N` with trap/panic.
+   - For `ptr<[]T>`: emit direct zero-cost address offset.
+4. **Diagnostics & Tests**:
+   - Test rejection of `p[i]` on `ptr<T>`.
+   - Test compile-time rejection of constant `p[N]` on `ptr<[N]T>`.
+   - Test execution of dynamic `p[i]` on `ptr<[N]T>` with in-bounds success and out-of-bounds trap under wasmtime.
+   - Test raw buffer indexing on `ptr<[]T>`.

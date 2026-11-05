@@ -19,12 +19,13 @@ In WebAssembly's flat unsegmented linear memory sandbox, out-of-bounds pointer w
 
 Formulated and authored [`RFC-20261105-unsafe_pointer_indexing_and_buffer_semantics.md`](../../rfcs/drafts/RFC-20261105-unsafe_pointer_indexing_and_buffer_semantics.md):
 
-1. **Typestate Cardinality Separation**:
+1. **3-Tier Typestate Cardinality Separation**:
    - `ptr<T>`: Single-element raw pointer. Indexing `p[i]` is **statically forbidden** (`type/single-pointer-indexing-rejected`). Only dereference `*p` is allowed.
+   - `ptr<[N]T>`: Sized raw array pointer with fixed compile-time size $N$. Constant indices $i \ge N$ are rejected compile-time (`type/index-out-of-bounds`). Dynamic indices are bounds-checked using a single unsigned comparison instruction (`i32.ge_u N`). Safely coerces to `ptr<[]T>`.
    - `ptr<[]T>`: Multi-element raw buffer pointer (unbounded slice in linear memory). Indexing `buf[i]` is **permitted** with zero runtime overhead.
 2. **Explicit Intent & Transition**:
-   - `&raw x` on a variable always produces `ptr<T>`.
-   - Indexing requires an explicit cast: `p as ptr<[]T>`, guaranteeing intentionality.
+   - `&raw x` on a variable always produces `ptr<T>`, or `ptr<[N]T>` if `x` is a fixed-size array `[N]T`.
+   - Treating a single pointer as an unsized buffer requires an explicit cast: `p as ptr<[]T>`, guaranteeing intentionality.
 3. **Safe Promotion (`#slice`)**:
    - Intrinsic `#slice(raw_buf, len)` promotes `ptr<[]T>` into a safe, bounds-checked dynamic slice `[]T`.
 4. **Call-site Syntax Evaluation**:

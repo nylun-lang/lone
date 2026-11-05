@@ -50,7 +50,11 @@ In **WebAssembly Linear Memory**, the stakes are radically different:
 In Lone's greenfield architecture:
 1. **References (`ref<T>`)**: Safe, non-null, tracked by the compiler. Indexing is **strictly rejected** compile-time (`type/invalid-index`). If developers want indexing with references, they must use slices (`[]T`) or fixed arrays (`[N]T`).
 2. **Pointers (`ptr<T>`)**: Unmanaged `i32` linear memory offsets. Lone permits `p[i]` strictly on `ptr<T>` for zero-cost performance in systems intrinsics, but enforces dereference rules (`*p = val`, `p[i] = val`).
-3. **Future Consideration (The Zig-style Typestate)**: A potential evolution is splitting `ptr<T>` (single-element pointer) from `ptr<[]T>` (raw buffer pointer), ensuring that an innocent single reference address cannot be indexed as if it were an array without an explicit cast.
+3. **Future Consideration (The Zig-style Typestate Hierarchy)**: A potential evolution is splitting pointers into a 3-tier cardinality typestate:
+   - `ptr<T>`: Single-element pointer (indexing strictly forbidden).
+   - `ptr<[N]T>`: Sized array pointer (compile-time checked for constant indices, 1-instruction `ge_u N` dynamic check).
+   - `ptr<[]T>`: Unsized raw buffer pointer (unbounded raw access).
+   Ensures that an innocent single reference address cannot be indexed as an array without an explicit cast.
 
 ---
 
