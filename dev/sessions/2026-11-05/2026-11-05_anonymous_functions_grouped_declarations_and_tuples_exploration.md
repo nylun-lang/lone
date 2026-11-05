@@ -19,11 +19,11 @@ Explored and formulated three complementary language extensions requested during
 ## 2. Key Design Points Formulated
 
 1. **Grouped Declarations (Bracket Syntax `[...]`)**:
-   - Parameters: `fn draw_rect([x, y, w, h]: int) void` or `fn handle([host, port]: (str, int))`
-   - Struct Fields: `pub type Transform = struct { [pos_x, pos_y, pos_z]: f32 = 0.0, [a, b]: (int, int), ro [id, ver]: i64 }`
+   - Universal Rule: Every identifier in `[id1, ..., idN]` receives the exact declared `Type`.
+   - Parameters: `fn draw_rect([x, y, w, h]: int) void` or `fn draw_line([point_a, point_b]: (int, int))`
+   - Struct Fields: `pub type Transform = struct { [pos_x, pos_y, pos_z]: f32 = 0.0, [point_a, point_b]: (int, int), ro [id, ver]: i64 }`
    - Variables: `var [top, bottom, left, right]: int = 0`
-   - Eliminates ambiguity with tuple values `(...)`.
-   - Supports broadcast typing (`[a, b]: int`) and pairwise tuple typing (`[a, b]: (int, int)`).
+   - Eliminates ambiguity with tuple values `(...)`. `[point_a, point_b]: (int, int)` cleanly declares two distinct tuple parameters.
 2. **Anonymous Functions & Closures**:
    - Non-escaping closures: Borrow stack variables directly on current frame (zero heap allocations).
    - Escaping closures: Forbidden from capturing stack `ref<T>` (must capture by value or use explicit `#alloc` heap Cell).

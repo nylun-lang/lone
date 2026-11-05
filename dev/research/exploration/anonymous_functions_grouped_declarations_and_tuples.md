@@ -16,10 +16,11 @@
 This exploration develops three cohesive, ergonomic language extensions that build directly on Lone's memory model and recent soundness audits:
 
 1. **Grouped Declarations (`[id1, id2, ..., idN]: Type [= default]`)**:
-   A uniform bracket syntax allowing developers to declare $N \ge 2$ identifiers sharing a single type or pairwise tuple types, modifiers, and default values across:
-   - Function parameter lists: `fn draw([x, y, w, h]: int) void` or `fn bind([host, port]: (str, int))`
-   - Struct field definitions: `struct { [w, x, y, z]: f32 = 0.0 }` or `struct { [a, b]: (int, int) }`
+   A uniform bracket syntax allowing developers to declare $N \ge 2$ identifiers sharing the exact same type, modifiers, and default values across:
+   - Function parameter lists: `fn draw([x, y, w, h]: int) void` or `fn draw_line([point_a, point_b]: (int, int))`
+   - Struct field definitions: `struct { [w, x, y, z]: f32 = 0.0 }` or `struct { [pos, target]: (f32, f32) }`
    - Local variable bindings: `var [r, g, b, a]: u8 = 255`
+   - *Core Invariant*: Every identifier in `[id1, ..., idN]` receives the exact declared `Type`. Writing `[point_a, point_b]: (int, int)` cleanly declares two distinct tuple parameters, each of type `(int, int)`.
    - *Design Invariant*: Uses square brackets `[...]` to prevent any syntactic or visual ambiguity with tuple expressions `(a, b)` and parenthesized types.
 2. **First-Class Anonymous Functions (`let f = fn(...) { ... }`)**:
    Expression-position function literals with formal closure capture rules (borrowing stack data for non-escaping helpers, value-capture for escaping closures) adhering to **Edge Case 21**.
@@ -37,23 +38,23 @@ In many languages, declaring multiple variables or fields of the same type requi
 - If parenthesized syntax `(a, b): int` were used, it would directly collide with tuple patterns and parenthesized expressions.
 
 By adopting **square brackets `[id1, id2, ..., idN]`** for grouped identifier packs:
-- `(...)` is reserved exclusively for **tuples** and expression precedence.
-- `[...]` is reserved for **identifier packs**, list literals, and indexing.
+- `(...)` is reserved exclusively for **tuples** (values, types, and destructuring patterns).
+- `[...]` is reserved for **grouped identifier packs**, list literals, and indexing.
 - The parser enjoys deterministic LL(1) parsing without backtracking.
 
 ### 2.2 Lone Grouped Syntax Specification
-A grouped declaration wraps $N \ge 2$ identifiers in square brackets, followed by their type and optional shared default initializer:
+A grouped declaration wraps $N \ge 2$ identifiers in square brackets, followed by their common type and optional shared default initializer:
 
 $$\mathbf{[modifiers]\;\; [id_1, id_2, \dots, id_N]\;:\; Type\;\; [=\; default]}$$
 
-Lone supports two modes of typing for identifier packs:
-1. **Broadcast Single Type**:
-   `[w, x, y, z]: int = 0` $\implies$ All four fields receive type `int` and default `0`.
-2. **Pairwise / Tuple-Matched Type**:
-   `struct { [a, b]: (int, int) }` or `struct { [host, port]: (str, int) }`
-   The tuple type `(T1, T2, ..., TN)` matches the arity of the identifier pack, assigning corresponding types sequentially (`host: str`, `port: int`).
+#### The Single Universal Rule:
+**Every identifier in the pack receives the declared `Type`.**
 
-Every identifier in the pack is expanded into an independent field, parameter, or variable binding possessing the specified modifiers and individual types.
+There are no confusing special cases. Whatever type is written on the right of the colon is assigned to all identifiers in the bracket:
+- `[w, x, y, z]: int` $\implies$ `w: int`, `x: int`, `y: int`, `z: int`.
+- `[point_a, point_b]: (int, int)` $\implies$ `point_a: (int, int)` and `point_b: (int, int)` (two parameters/fields, both tuples!).
+- `[start_vec, end_vec]: (f32, f32, f32)` $\implies$ both are 3D vector tuples.
+- `[name, fallback]: str = "guest"` $\implies$ both are `str` initialized to `"guest"`.
 
 ---
 
@@ -61,17 +62,19 @@ Every identifier in the pack is expanded into an independent field, parameter, o
 
 #### 1. Function Parameter Lists
 ```lone
--- Declares four distinct parameters 'x', 'y', 'w', 'h' of type 'int':
+-- Declares four distinct parameters 'x', 'y', 'w', 'h', each of type 'int':
 fn draw_rect([x, y, w, h]: int, color: str) void {
     #print("Drawing at: ")
     println_int(x)
 }
 
--- Pairwise tuple-typed parameters:
-fn configure_socket([host, port]: (str, int)) void {
-    #print("Connecting to: ")
-    #print(host)
-    println_int(port)
+-- Declares two distinct parameters 'point_a' and 'point_b', both of type '(int, int)':
+fn draw_line([point_a, point_b]: (int, int)) void {
+    -- point_a is (int, int)
+    -- point_b is (int, int)
+    let (x1, y1) = point_a
+    let (x2, y2) = point_b
+    ...
 }
 ```
 
@@ -80,13 +83,13 @@ fn configure_socket([host, port]: (str, int)) void {
 pub type Transform = struct {
     [pos_x, pos_y, pos_z]: f32 = 0.0,
     [scale_x, scale_y, scale_z]: f32 = 1.0,
-    [min_bound, max_bound]: (i32, i32),  -- Pairwise typing!
+    [min_corner, max_corner]: (i32, i32),  -- Both fields are (i32, i32) tuples!
     ro [created_at, updated_at]: i64,
-    _ [secret_a, secret_b]: str,         -- Grouped private fields!
+    _ [secret_a, secret_b]: str,          -- Grouped private fields!
 }
 ```
 * **Modifier Uniformity**: Modifiers (`ro`, `_`, `pub`) apply uniformly to every identifier in the pack.
-* **Layout Invariant**: Fields are laid out sequentially in linear memory in the order written (`pos_x` at offset 0, `pos_y` at offset 4, `pos_z` at offset 8).
+* **Layout Invariant**: Fields are laid out sequentially in linear memory in the order written.
 
 #### 3. Local Variable Declarations
 ```lone
@@ -94,8 +97,8 @@ pub fn main() void {
     -- Declares four local integers, all initialized to 0:
     var [top, bottom, left, right]: int = 0
     
-    -- Pairwise typed declaration:
-    let [host, port]: (str, int) = ("localhost", 8080)
+    -- Declares two 2D points, both initialized to (0, 0):
+    var [point_a, point_b]: (int, int) = (0, 0)
 }
 ```
 * Evaluates the initializer expression and assigns it to each variable independently.
