@@ -187,6 +187,77 @@ safe_slice[0] = 1 -- OK
 
 ---
 
+### 4.4 Safe Unsized Views: `ref<[]T>` ≡ `[]T` (Fat References)
+
+**Rule: a reference to an unsized type is fat; a raw pointer is always thin.**
+
+- `ref<T>` and `ref<[N]T>` have sizes known at compile time, so they are **thin** (1 × `i32`).
+- `ref<[]T>` has no length in its type, so the length travels with it: `{ ptr: i32, len: i32 }`. It is the slice header itself, not a pointer to a header.
+- `[]T` is sugar for `ref<[]T>`, and `[]ro T` / `ref<ro []T>` is the read-only slice.
+- `ptr<[]T>` stays thin and length-less (like Zig's `[*]T`). It is the deliberate escape hatch where the programmer owns the length.
+
+| | Sized (length in type) | Unsized |
+| :--- | :--- | :--- |
+| **Safe (`ref`)** | `ref<[N]T>`: checked, thin | `ref<[]T>` ≡ `[]T`: checked against `len`, fat |
+| **Unsafe (`ptr`)** | `ptr<[N]T>`: checked, thin | `ptr<[]T>`: **unchecked**, thin |
+
+Consequences:
+1. `ref<T>` indexing stays rejected (`type/invalid-index`). `ref<[N]T>` and `ref<[]T>` become indexable with bounds checks. This is a small **amendment to `RFC-20261105-reference_and_pointer_semantics`**.
+2. **Decay** `ref<[N]T>` → `ref<[]T>` is implicit and attaches `len = N`. The reverse requires a runtime length check and an explicit cast.
+3. `#slice(p: ptr<[]T>, len)` is the only place an unverified length enters the safe world. That is where the trust boundary lies.
+4. Slices of stack arrays that escape their frame follow the existing automatic escape-promotion rules for `ref`.
+
+---
+
+### 4.5 Parameter Passing Semantics
+
+**Definitions.**
+- **By value**: the callee receives its own copy of the argument's bytes. Mutating the parameter never affects the caller's variable.
+- **By reference**: the callee receives an address. Writes through it are visible to the caller.
+
+**Lone rule: every argument is passed by value. Sharing is always explicit, by passing a `ref` or `ptr`.**
+
+```lone
+fn a(x: int)          -- 4 bytes copied; caller's variable untouched
+fn b(p: Point)        -- semantically a copy; see 4.5.1 for what the compiler does today
+fn c(p: ref<Point>)   -- address copied; intended: writes visible to caller (see 4.5.1)
+fn d(xs: []int)       -- 8-byte header {ptr,len} copied; ELEMENTS are shared
+```
+
+`d` looks like a value but behaves like a reference to its elements, because the copied header contains a pointer. This matches Go slices, Zig `[]T` and Rust `&mut [T]`. `xs[i] = v` mutates the caller's array unless the parameter is `[]ro T`.
+
+```lone
+fn sum(xs: []int) int { ... }
+
+var arr: [6]int = [1, 2, 3, 4, 5, 6]
+sum(&arr)   -- &arr is a thin ref<[6]int>; the compiler attaches len = 6 to form the slice header
+```
+
+**Prior art.**
+
+| Language | Default | Notes |
+| :--- | :--- | :--- |
+| C | By value | Arrays decay to a pointer; structs copied whole |
+| Go | By value | Slices, maps and channels are small headers copied by value over shared data |
+| Rust | Move/copy by value | `&T`/`&mut T` explicit; `&[T]` is a fat reference |
+| Zig | By value | `[]T` is a `{ptr,len}` struct copied by value |
+| Python/JS | By object reference | The reference is copied; the object is shared |
+
+#### 4.5.1 Current implementation status (struct parameters)
+
+Findings from the `pkg2` compiler as of v0.6.0:
+
+1. **Lowering**: `toWasmType` maps every non-primitive type (structs, tuples, enums) to a single `i32` **address**. A struct argument is passed as an address and **no copy is made at the call site**.
+2. **Parameters are immutable bindings**: mutating a by-value parameter, e.g. `p.x = 99` inside `fn bump(p: Point)`, is rejected by the analyzer (`type/immutable-reassignment`). Even field writes through a `ref<Point>` parameter (`r.x = 5`) are currently rejected for the same reason.
+3. **Consequence**: the "callee mutates its copy" hazard cannot currently be written, so by-value semantics are preserved *by construction* rather than by copying. The remaining risk is aliasing: if a callee receives both `p: Point` and a `ref` to the same struct and can write through the `ref`, the by-value parameter would observe the write. A probe using `*r = Point::{...}` returned the old value, but that only replaces the slot's handle and does not mutate the shared memory, so it does **not** prove copy semantics.
+
+Open questions to resolve before acceptance:
+1. Should field writes through `ref<T>` parameters be permitted? If yes, aggregate by-value parameters need a caller-side copy (datastack temporary, consistent with the SRET convention for returns), or the aliasing case must be rejected statically.
+2. If no copy is made, the spec should state that aggregate parameters are immutable views, and that `ref<T>` is required to mutate.
+3. Add a regression test for the aliasing case once (1) is decided.
+
+---
+
 ## 5. Formal Grammar & Type System Rules
 
 ### 5.1 Type Grammar
