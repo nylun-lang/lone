@@ -219,8 +219,8 @@ Consequences:
 
 ```lone
 fn a(x: int)          -- 4 bytes copied; caller's variable untouched
-fn b(p: Point)        -- semantically a copy; see 4.5.1 for what the compiler does today
-fn c(p: ref<Point>)   -- address copied; intended: writes visible to caller (see 4.5.1)
+fn b(p: Point)        -- semantically a copy (see 4.5.1 and 4.5.3)
+fn c(p: ref<Point>)   -- address copied; writes visible to caller (see 4.5.2)
 fn d(xs: []int)       -- 8-byte header {ptr,len} copied; ELEMENTS are shared
 ```
 
@@ -251,10 +251,50 @@ Findings from the `pkg2` compiler as of v0.6.0:
 2. **Parameters are immutable bindings**: mutating a by-value parameter, e.g. `p.x = 99` inside `fn bump(p: Point)`, is rejected by the analyzer (`type/immutable-reassignment`). Even field writes through a `ref<Point>` parameter (`r.x = 5`) are currently rejected for the same reason.
 3. **Consequence**: the "callee mutates its copy" hazard cannot currently be written, so by-value semantics are preserved *by construction* rather than by copying. The remaining risk is aliasing: if a callee receives both `p: Point` and a `ref` to the same struct and can write through the `ref`, the by-value parameter would observe the write. A probe using `*r = Point::{...}` returned the old value, but that only replaces the slot's handle and does not mutate the shared memory, so it does **not** prove copy semantics.
 
-Open questions to resolve before acceptance:
-1. Should field writes through `ref<T>` parameters be permitted? If yes, aggregate by-value parameters need a caller-side copy (datastack temporary, consistent with the SRET convention for returns), or the aliasing case must be rejected statically.
-2. If no copy is made, the spec should state that aggregate parameters are immutable views, and that `ref<T>` is required to mutate.
-3. Add a regression test for the aliasing case once (1) is decided.
+#### 4.5.2 Decision: field writes through `ref<T>` are permitted
+
+A `ref<T>` that cannot mutate its target is of limited use, so writes through references are part of the language:
+
+```lone
+fn move_right(p: ref<Point>) void {
+    p.x = p.x + 1        -- field write through ref: allowed
+    *p = Point::{ .x: 0 } -- whole-value store: allowed
+}
+
+fn read_only(p: ref<ro Point>) void {
+    -- p.x = 1           -- ERROR: type/immutable-field-write (target is ro)
+}
+```
+
+Rules:
+1. Writing `r.f = v` or `*r = v` requires `r: ref<T>` (not `ref<ro T>`), and `T`'s field `f` must not be declared `ro`.
+2. Taking `&x` yields `ref<T>` only if `x` is a `var`; `&x` on a `let` yields `ref<ro T>` (unchanged from the accepted reference RFC).
+3. A by-value parameter (`p: Point`) remains an immutable binding: `p.x = 1` is still rejected. Only `ref` parameters may mutate.
+
+#### 4.5.3 Consequence: by-value aggregate arguments must be copied
+
+Once writes through `ref` exist, passing an aggregate as an address with no copy becomes observable:
+
+```lone
+fn f(p: Point, r: ref<Point>) int {
+    r.x = 5
+    return p.x      -- must return the ORIGINAL x, because p is a by-value copy
+}
+var a = Point::{ .x: 1 }
+f(a, &a)            -- required result: 1
+```
+
+Required lowering:
+1. **Lvalue argument** (a variable, field or dereference): the caller copies the aggregate into a datastack temporary and passes that temporary's address. This is the same mechanism as the SRET convention used for returns.
+2. **Rvalue argument** (a fresh temporary such as `Point::(1)` or a call result): no copy is needed, because no other name can reach it. It is moved.
+3. **Copy elision** (optimization, not semantics): the copy may be skipped when the callee has no `ref`/`ptr` parameter and no captured reference that could alias the argument, since then nothing can observe the difference.
+4. Primitives, `ref`, `ptr` and slice headers are already value-sized and need no special handling.
+
+Tests required before acceptance:
+1. The `f(a, &a)` aliasing program above returns `1` under wasmtime.
+2. `move_right(&a)` mutates `a`.
+3. `p.x = 1` on a by-value parameter and on a `ref<ro Point>` is rejected with `type/immutable-field-write`.
+4. Rvalue arguments emit no copy (assert on emitted WAT).
 
 ---
 
