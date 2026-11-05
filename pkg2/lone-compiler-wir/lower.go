@@ -1471,12 +1471,41 @@ func (l *lowerer) lowerExpr(expr loneanalyzer.TExpr, alloc *LocalAllocator) []Wa
 	case *loneanalyzer.TTupleExpr:
 		return l.lowerTupleExpr(e, alloc)
 
+	case *loneanalyzer.TStructConstructExpr:
+		return l.lowerStructConstructExpr(e, alloc)
+
 	case *loneanalyzer.TAnonFnExpr:
 		return []WasmInst{InstConstI32{Value: 0}}
 
 	default:
 		return nil
 	}
+}
+
+func (l *lowerer) lowerStructConstructExpr(e *loneanalyzer.TStructConstructExpr, alloc *LocalAllocator) []WasmInst {
+	var insts []WasmInst
+	ptrLocal := alloc.AllocTemp(TypeI32)
+	defer alloc.FreeTemp(ptrLocal, TypeI32)
+
+	totalSize := e.StructType.TotalSize
+	if totalSize <= 0 {
+		totalSize = 4
+	}
+
+	insts = append(insts, InstConstI32{Value: int32(totalSize)})
+	insts = append(insts, InstCall{Target: "$__lone_rt_alloc"})
+	insts = append(insts, InstLocalSet{Name: ptrLocal})
+
+	for fName, fVal := range e.Fields {
+		if fInfo, ok := e.StructType.Field(fName); ok {
+			insts = append(insts, InstLocalGet{Name: ptrLocal})
+			insts = append(insts, l.lowerExpr(fVal, alloc)...)
+			insts = append(insts, InstStore{Op: storeOpForType(fInfo.Type), Offset: fInfo.Offset})
+		}
+	}
+
+	insts = append(insts, InstLocalGet{Name: ptrLocal})
+	return insts
 }
 
 func (l *lowerer) lowerTupleExpr(e *loneanalyzer.TTupleExpr, alloc *LocalAllocator) []WasmInst {

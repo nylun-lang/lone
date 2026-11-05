@@ -20,6 +20,7 @@ const (
 	TypeKindOptional
 	TypeKindEnum
 	TypeKindTuple
+	TypeKindInterface
 )
 
 func (k TypeKind) String() string {
@@ -46,6 +47,8 @@ func (k TypeKind) String() string {
 		return "Enum"
 	case TypeKindTuple:
 		return "Tuple"
+	case TypeKindInterface:
+		return "Interface"
 	default:
 		return "Unknown"
 	}
@@ -367,6 +370,32 @@ func (m *MaterializedTraitType) Equals(other Type) bool {
 }
 func (m *MaterializedTraitType) AssignableTo(target Type) bool {
 	return m.Equals(target)
+}
+
+// =====================
+// INTERFACE
+// =====================
+
+type InterfaceType struct {
+	Name     string
+	Fields   []StructFieldInfo
+	FieldMap map[string]StructFieldInfo
+}
+
+func (i *InterfaceType) Kind() TypeKind { return TypeKindInterface }
+func (i *InterfaceType) String() string { return i.Name }
+func (i *InterfaceType) Equals(other Type) bool {
+	if oi, ok := other.(*InterfaceType); ok {
+		return i.Name == oi.Name
+	}
+	return false
+}
+func (i *InterfaceType) AssignableTo(target Type) bool {
+	return i.Equals(target)
+}
+func (i *InterfaceType) Field(name string) (StructFieldInfo, bool) {
+	f, ok := i.FieldMap[name]
+	return f, ok
 }
 
 // =====================

@@ -319,5 +319,53 @@ fn main() int {
 	}
 }
 
+func TestInterfaceConstraintMonomorphization(t *testing.T) {
+	code := `
+type IfcVector = interface {
+    x: int,
+    y: int,
+}
+
+type Point3D = struct {
+    x: int,
+    y: int,
+    z: int,
+    _secret: int,
+
+    pub fn __init__(x: int, y: int, z: int) Point3D {
+        return Point3D::{ .x: x, .y: y, .z: z, ._secret: 999 }
+    }
+}
+
+fn dot_product<T where { T satisfies IfcVector }>(p: T) int {
+    return p.x * 10 + p.y
+}
+
+fn main() int {
+    let p = Point3D::(7, 8, 9)
+    return dot_product(p)
+}
+`
+	wat := compileSourceToWat(t, code)
+
+	tmpDir := t.TempDir()
+	watPath := filepath.Join(tmpDir, "ifc_mono.wat")
+	if err := os.WriteFile(watPath, []byte(wat), 0644); err != nil {
+		t.Fatalf("failed to write temp wat: %v", err)
+	}
+
+	cmd := exec.Command("wasmtime", "--invoke", "main", watPath)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("wasmtime failed: %v, output: %s\nwat:\n%s", err, string(out), wat)
+	}
+
+	got := strings.TrimSpace(string(out))
+	if !strings.HasSuffix(got, "78") {
+		t.Fatalf("unexpected wasmtime output:\ngot:  %q\nwant suffix: 78", got)
+	}
+}
+
+
 
 

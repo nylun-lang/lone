@@ -47,6 +47,7 @@ const (
 	TokenStruct
 	TokenEnum
 	TokenTrait
+	TokenInterface
 	TokenImpl
 	TokenOn
 	TokenWhere
@@ -137,6 +138,7 @@ var tokenNames = map[TokenKind]string{
 	TokenStruct:     "struct",
 	TokenEnum:       "enum",
 	TokenTrait:      "trait",
+	TokenInterface:  "interface",
 	TokenImpl:       "impl",
 	TokenOn:         "on",
 	TokenWhere:      "where",
@@ -234,7 +236,8 @@ var Keywords = map[string]TokenKind{
 	"type":     TokenType,
 	"struct":   TokenStruct,
 	"enum":     TokenEnum,
-	"trait":    TokenTrait,
+	"trait":     TokenTrait,
+	"interface": TokenInterface,
 	"impl":     TokenImpl,
 	"on":       TokenOn,
 	"where":    TokenWhere,

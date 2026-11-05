@@ -798,6 +798,198 @@ fn test_bad_capture() void {
 	}
 }
 
+func TestInterfaceNamingConventions(t *testing.T) {
+	codeBad1 := `
+type Point = interface {
+    x: int,
+    y: int,
+}
+`
+	analyzer := NewAnalyzer()
+	_, diags, err := analyzer.AnalyzeSource([]byte(codeBad1))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	hasNamingErr := false
+	for _, d := range diags {
+		if d.Rule == "naming/interface" {
+			hasNamingErr = true
+		}
+	}
+	if !hasNamingErr {
+		t.Errorf("expected naming/interface diagnostic for Point, got: %v", diags)
+	}
+
+	codeBad2 := `
+type IfcFake = struct {
+    x: int,
+}
+`
+	_, diags2, err := analyzer.AnalyzeSource([]byte(codeBad2))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	hasNonIfcErr := false
+	for _, d := range diags2 {
+		if d.Rule == "naming/interface" {
+			hasNonIfcErr = true
+		}
+	}
+	if !hasNonIfcErr {
+		t.Errorf("expected naming/interface diagnostic for non-interface struct, got: %v", diags2)
+	}
+}
+
+func TestInterfaceEmbeddingAndCollisions(t *testing.T) {
+	codeValid := `
+type IfcIdentifiable = interface {
+    id: int,
+}
+type IfcNamed = interface {
+    name: str,
+}
+type IfcUser = interface {
+    IfcIdentifiable,
+    IfcNamed,
+    ro created_at: i64,
+}
+`
+	analyzer := NewAnalyzer()
+	_, diags, err := analyzer.AnalyzeSource([]byte(codeValid))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, d := range diags {
+		if d.Severity == SeverityError {
+			t.Errorf("unexpected error in valid interface embedding: %v", d)
+		}
+	}
+
+	codeCollision := `
+type IfcA = interface {
+    id: int,
+}
+type IfcB = interface {
+    id: str,
+}
+type IfcConflict = interface {
+    IfcA,
+    IfcB,
+}
+`
+	_, diags2, err := analyzer.AnalyzeSource([]byte(codeCollision))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	hasCollision := false
+	for _, d := range diags2 {
+		if d.Rule == "type/interface-embedding-collision" {
+			hasCollision = true
+		}
+	}
+	if !hasCollision {
+		t.Errorf("expected type/interface-embedding-collision, got: %v", diags2)
+	}
+}
+
+func TestInterfacePrivateFieldProhibited(t *testing.T) {
+	code := `
+type IfcSecret = interface {
+    _token: str,
+}
+`
+	analyzer := NewAnalyzer()
+	_, diags, err := analyzer.AnalyzeSource([]byte(code))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	hasPrivErr := false
+	for _, d := range diags {
+		if d.Rule == "type/interface-private-field" {
+			hasPrivErr = true
+		}
+	}
+	if !hasPrivErr {
+		t.Errorf("expected type/interface-private-field, got: %v", diags)
+	}
+}
+
+func TestInterfaceDuckTypingAndSatisfaction(t *testing.T) {
+	code := `
+type IfcPoint = interface {
+    x: int,
+    ro y: int,
+}
+
+type Point2D = struct {
+    x: int,
+    y: int,
+    extra: str,
+    _hidden: int,
+}
+
+type MissingPoint = struct {
+    x: int,
+}
+
+type BadMutPoint = struct {
+    ro x: int,
+    y: int,
+}
+
+type EnumPoint = enum {
+    Origin,
+}
+
+fn inspect_point<T where { T satisfies IfcPoint }>(p: T) int {
+    return p.x + p.y
+}
+
+fn test_satisfaction() void {
+    let p = Point2D::{ .x: 1, .y: 2, .extra: "ok", ._hidden: 99 }
+    let s = inspect_point(p)
+
+    let bad1 = MissingPoint::{ .x: 5 }
+    let s_bad1 = inspect_point(bad1)
+
+    let bad2 = BadMutPoint::{ .x: 5, .y: 6 }
+    let s_bad2 = inspect_point(bad2)
+
+    let bad3 = EnumPoint::Origin
+    let s_bad3 = inspect_point(bad3)
+}
+`
+	analyzer := NewAnalyzer()
+	_, diags, err := analyzer.AnalyzeSource([]byte(code))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var hasMissingField, hasMutMismatch, hasEnumRejected bool
+	for _, d := range diags {
+		if d.Rule == "type/interface-missing-field" {
+			hasMissingField = true
+		}
+		if d.Rule == "type/field-mutability-mismatch" {
+			hasMutMismatch = true
+		}
+		if d.Rule == "type/interface-enum-rejected" {
+			hasEnumRejected = true
+		}
+	}
+
+	if !hasMissingField {
+		t.Errorf("expected type/interface-missing-field, got: %v", diags)
+	}
+	if !hasMutMismatch {
+		t.Errorf("expected type/field-mutability-mismatch, got: %v", diags)
+	}
+	if !hasEnumRejected {
+		t.Errorf("expected type/interface-enum-rejected, got: %v", diags)
+	}
+}
+
+
 
 
 

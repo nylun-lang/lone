@@ -813,6 +813,107 @@ func (p *Parser) parseTypeDec(isPub bool) (loneast.TYPE_DEC, error) {
 		}, nil
 	}
 
+	// Interface definition: type IfcName = interface { ... }
+	if p.peek().Kind == lonelexer.TokenInterface {
+		p.advance()
+		lbrace, err := p.expect(lonelexer.TokenLBrace)
+		if err != nil {
+			return loneast.TYPE_DEC{}, err
+		}
+		_ = lbrace
+
+		var fields []loneast.StructField
+		var embedded []string
+
+		for p.peek().Kind != lonelexer.TokenRBrace && !p.isAtEnd() {
+			isRo := false
+			if p.peek().Kind == lonelexer.TokenRo {
+				p.advance()
+				isRo = true
+			}
+
+			// Grouped fields: [x, y]: int
+			if p.peek().Kind == lonelexer.TokenLBracket {
+				lbrack := p.advance()
+				var names []lonelexer.Token
+				for {
+					name, err := p.expect(lonelexer.TokenIdent)
+					if err != nil {
+						return loneast.TYPE_DEC{}, err
+					}
+					names = append(names, name)
+					if p.peek().Kind == lonelexer.TokenComma {
+						p.advance()
+						if p.peek().Kind == lonelexer.TokenRBracket {
+							break
+						}
+					} else {
+						break
+					}
+				}
+				if _, err := p.expect(lonelexer.TokenRBracket); err != nil {
+					return loneast.TYPE_DEC{}, err
+				}
+				if _, err := p.expect(lonelexer.TokenColon); err != nil {
+					return loneast.TYPE_DEC{}, err
+				}
+				fType, err := p.parseTypeRef()
+				if err != nil {
+					return loneast.TYPE_DEC{}, err
+				}
+				for _, nameTok := range names {
+					fields = append(fields, loneast.StructField{
+						Name:       nameTok.Text,
+						Type:       fType,
+						IsReadOnly: isRo,
+						Span_:      lonelexer.Span{Start: lbrack.Start, End: fType.NodeSpan().End},
+					})
+				}
+			} else {
+				idTok, err := p.expect(lonelexer.TokenIdent)
+				if err != nil {
+					return loneast.TYPE_DEC{}, err
+				}
+
+				if p.peek().Kind != lonelexer.TokenColon {
+					embedded = append(embedded, idTok.Text)
+				} else {
+					p.advance() // consume ':'
+					fType, err := p.parseTypeRef()
+					if err != nil {
+						return loneast.TYPE_DEC{}, err
+					}
+					fields = append(fields, loneast.StructField{
+						Name:       idTok.Text,
+						Type:       fType,
+						IsReadOnly: isRo,
+						Span_:      lonelexer.Span{Start: idTok.Start, End: fType.NodeSpan().End},
+					})
+				}
+			}
+
+			if p.peek().Kind == lonelexer.TokenComma {
+				p.advance()
+			}
+		}
+
+		rbrace, err := p.expect(lonelexer.TokenRBrace)
+		if err != nil {
+			return loneast.TYPE_DEC{}, err
+		}
+
+		return loneast.TYPE_DEC{
+			Name:        nameTok.Text,
+			IsPublic:    isPub,
+			TypeParams:  typeParams,
+			Constraints: constraints,
+			Kind:        loneast.TYPE_DEC_INTERFACE,
+			Fields:      fields,
+			Embedded:    embedded,
+			Span_:       lonelexer.Span{Start: typeTok.Start, End: rbrace.End},
+		}, nil
+	}
+
 	// Trait definition: type TrName = trait { ... }
 	if p.peek().Kind == lonelexer.TokenTrait {
 		p.advance()

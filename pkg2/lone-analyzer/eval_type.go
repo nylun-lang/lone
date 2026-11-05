@@ -29,6 +29,7 @@ type TypeEvaluator struct {
 	diags           []Diagnostic
 	structs         map[string]*StructType
 	traits          map[string]*TraitType
+	interfaces      map[string]*InterfaceType
 	enums           map[string]*EnumType
 	traitImpls      map[string]map[string]*loneast.IMPL_DEC
 	genericTypes    map[string]*GenericTypeTemplate
@@ -47,6 +48,7 @@ func NewTypeEvaluator() *TypeEvaluator {
 		stack:             NewScopeStack(),
 		structs:           make(map[string]*StructType),
 		traits:            make(map[string]*TraitType),
+		interfaces:        make(map[string]*InterfaceType),
 		enums:             make(map[string]*EnumType),
 		traitImpls:        make(map[string]map[string]*loneast.IMPL_DEC),
 		genericTypes:      make(map[string]*GenericTypeTemplate),
@@ -249,6 +251,75 @@ func (te *TypeEvaluator) hoistTypeDec(t *loneast.TYPE_DEC) {
 			te.addDiag(SeverityError, t.Span_, "convention/non-trait-naming",
 				fmt.Sprintf("non-trait type %q must not begin with 'Tr' prefix reserved for traits", t.Name))
 		}
+	}
+
+	// Validate Interface Naming Convention: Ifc + PascalCase
+	if t.Kind == loneast.TYPE_DEC_INTERFACE {
+		if !isIfcNaming(t.Name) {
+			te.addDiag(SeverityError, t.Span_, "naming/interface",
+				fmt.Sprintf("interface %q must begin with 'Ifc' followed by an uppercase letter (e.g. 'Ifc%s')", t.Name, t.Name))
+		}
+	} else {
+		// Non-interface types must NOT start with Ifc + uppercase
+		if isIfcNaming(t.Name) {
+			te.addDiag(SeverityError, t.Span_, "naming/interface",
+				fmt.Sprintf("non-interface type %q must not begin with 'Ifc' prefix reserved for interfaces", t.Name))
+		}
+	}
+
+	if t.Kind == loneast.TYPE_DEC_INTERFACE {
+		ifc := &InterfaceType{
+			Name:     t.Name,
+			FieldMap: make(map[string]StructFieldInfo),
+		}
+
+		// Expand embedded interfaces
+		for _, embName := range t.Embedded {
+			embIfc, ok := te.interfaces[embName]
+			if !ok {
+				te.addDiag(SeverityError, t.Span_, "type/undefined-interface",
+					fmt.Sprintf("undefined interface %q embedded in %q", embName, t.Name))
+				continue
+			}
+			for _, ef := range embIfc.Fields {
+				if existing, exists := ifc.FieldMap[ef.Name]; exists {
+					if !existing.Type.Equals(ef.Type) || existing.IsReadOnly != ef.IsReadOnly {
+						te.addDiag(SeverityError, t.Span_, "type/interface-embedding-collision",
+							fmt.Sprintf("embedded interfaces declare conflicting definitions for field %q", ef.Name))
+					}
+				} else {
+					ifc.Fields = append(ifc.Fields, ef)
+					ifc.FieldMap[ef.Name] = ef
+				}
+			}
+		}
+
+		for _, f := range t.Fields {
+			if strings.HasPrefix(f.Name, "_") {
+				te.addDiag(SeverityError, f.Span_, "type/interface-private-field",
+					fmt.Sprintf("interface %q cannot declare private field %q", t.Name, f.Name))
+				continue
+			}
+			fType := te.resolveType(f.Type)
+			fInfo := StructFieldInfo{
+				Name:       f.Name,
+				Type:       fType,
+				IsReadOnly: f.IsReadOnly,
+			}
+			if existing, exists := ifc.FieldMap[f.Name]; exists {
+				if !existing.Type.Equals(fType) || existing.IsReadOnly != f.IsReadOnly {
+					te.addDiag(SeverityError, f.Span_, "type/interface-embedding-collision",
+						fmt.Sprintf("field %q conflicts with embedded interface definition", f.Name))
+				}
+			} else {
+				ifc.Fields = append(ifc.Fields, fInfo)
+				ifc.FieldMap[f.Name] = fInfo
+			}
+		}
+
+		te.interfaces[t.Name] = ifc
+		_ = te.stack.Define(&Symbol{Name: t.Name, Kind: SymbolType, Type: ifc, Node: t})
+		return
 	}
 
 	if t.Kind == loneast.TYPE_DEC_STRUCT {
@@ -2055,15 +2126,26 @@ func (te *TypeEvaluator) evalPostfixExpr(p loneast.PostFixExpr) TExpr {
 				}
 			}
 
-			var resType Type = TypeAny
 			if targetStruct != nil {
-				resType = targetStruct
-			}
-			curr = &TLiteralExpr{
-				Kind:  loneast.LiteralInt,
-				Value: suff.Data,
-				Typ:   resType,
-				Span_: suff.Span_,
+				fieldExprs := make(map[string]TExpr)
+				if objLit, ok := suff.Data.(loneast.ObjectLiteral); ok {
+					for _, f := range objLit.Fields {
+						fieldExprs[f.Name] = te.EvalExpr(f.Expr)
+					}
+				}
+				curr = &TStructConstructExpr{
+					StructType: targetStruct,
+					Fields:     fieldExprs,
+					Typ:        targetStruct,
+					Span_:      loneast.Span{Start: curr.Span().Start, End: suff.Span_.End},
+				}
+			} else {
+				curr = &TLiteralExpr{
+					Kind:  loneast.LiteralInt,
+					Value: suff.Data,
+					Typ:   TypeAny,
+					Span_: suff.Span_,
+				}
 			}
 
 		case loneast.SuffixConstructorCall:
@@ -2432,16 +2514,22 @@ func (te *TypeEvaluator) instantiateGenericType(tmpl *GenericTypeTemplate, args 
 			}
 
 		case loneast.ConstraintSatisfies:
-			traitName := ""
+			targetName := ""
 			if tb, ok := c.Target.Value.(*loneast.TypeBase); ok {
-				traitName = tb.Name
+				targetName = tb.Name
 			} else {
-				traitName = te.resolveType(c.Target).String()
+				targetName = te.resolveType(c.Target).String()
 			}
-			if te.traitImpls[traitName] == nil || te.traitImpls[traitName][actualType.String()] == nil {
-				te.addDiag(SeverityError, c.Span_, "type/constraint-violation",
-					fmt.Sprintf("type parameter %q bound to %q does not satisfy trait %q", c.TypeParam, actualType.String(), traitName))
-				return TypeUnknown
+			if ifc, isIfc := te.interfaces[targetName]; isIfc {
+				if !te.TypeSatisfiesInterface(actualType, ifc, c.Span_) {
+					return TypeUnknown
+				}
+			} else {
+				if te.traitImpls[targetName] == nil || te.traitImpls[targetName][actualType.String()] == nil {
+					te.addDiag(SeverityError, c.Span_, "type/constraint-violation",
+						fmt.Sprintf("type parameter %q bound to %q does not satisfy trait %q", c.TypeParam, actualType.String(), targetName))
+					return TypeUnknown
+				}
 			}
 		}
 	}
@@ -2683,16 +2771,22 @@ func (te *TypeEvaluator) monomorphizeFn(tmpl *GenericFnTemplate, args []TExpr) *
 			}
 
 		case loneast.ConstraintSatisfies:
-			traitName := ""
+			targetName := ""
 			if tb, ok := c.Target.Value.(*loneast.TypeBase); ok {
-				traitName = tb.Name
+				targetName = tb.Name
 			} else {
-				traitName = te.resolveType(c.Target).String()
+				targetName = te.resolveType(c.Target).String()
 			}
-			if te.traitImpls[traitName] == nil || te.traitImpls[traitName][actualType.String()] == nil {
-				te.addDiag(SeverityError, c.Span_, "type/constraint-violation",
-					fmt.Sprintf("type parameter %q bound to %q does not satisfy trait %q", c.TypeParam, actualType.String(), traitName))
-				return nil
+			if ifc, isIfc := te.interfaces[targetName]; isIfc {
+				if !te.TypeSatisfiesInterface(actualType, ifc, c.Span_) {
+					return nil
+				}
+			} else {
+				if te.traitImpls[targetName] == nil || te.traitImpls[targetName][actualType.String()] == nil {
+					te.addDiag(SeverityError, c.Span_, "type/constraint-violation",
+						fmt.Sprintf("type parameter %q bound to %q does not satisfy trait %q", c.TypeParam, actualType.String(), targetName))
+					return nil
+				}
 			}
 		}
 	}
@@ -2859,6 +2953,9 @@ func (te *TypeEvaluator) resolveBaseType(tr loneast.TYPE_REF) Type {
 			if tr, ok := te.traits[tb.Name]; ok {
 				return tr
 			}
+			if ifc, ok := te.interfaces[tb.Name]; ok {
+				return ifc
+			}
 			// Generic template with default arguments (e.g. Result with 0 args)
 			if tmpl, ok := te.genericTypes[tb.Name]; ok {
 				return te.instantiateGenericType(tmpl, tb.Args)
@@ -2875,3 +2972,46 @@ func isTrNaming(name string) bool {
 	}
 	return false
 }
+
+func isIfcNaming(name string) bool {
+	if len(name) >= 4 && name[:3] == "Ifc" && unicode.IsUpper(rune(name[3])) {
+		return true
+	}
+	return false
+}
+
+func (te *TypeEvaluator) TypeSatisfiesInterface(target Type, ifc *InterfaceType, span loneast.Span) bool {
+	if _, isEnum := target.(*EnumType); isEnum {
+		te.addDiag(SeverityError, span, "type/interface-enum-rejected",
+			fmt.Sprintf("enum %q cannot satisfy interface %q", target.String(), ifc.Name))
+		return false
+	}
+
+	st, isStruct := target.(*StructType)
+	if !isStruct {
+		te.addDiag(SeverityError, span, "type/interface-not-satisfied",
+			fmt.Sprintf("type %q cannot satisfy interface %q", target.String(), ifc.Name))
+		return false
+	}
+
+	for _, req := range ifc.Fields {
+		actual, exists := st.Field(req.Name)
+		if !exists {
+			te.addDiag(SeverityError, span, "type/interface-missing-field",
+				fmt.Sprintf("type %q does not satisfy interface %q: missing required field %q", st.Name, ifc.Name, req.Name))
+			return false
+		}
+		if !actual.Type.AssignableTo(req.Type) {
+			te.addDiag(SeverityError, span, "type/interface-field-type-mismatch",
+				fmt.Sprintf("field %q on %q has type %q, but interface %q requires %q", req.Name, st.Name, actual.Type.String(), ifc.Name, req.Type.String()))
+			return false
+		}
+		if !req.IsReadOnly && actual.IsReadOnly {
+			te.addDiag(SeverityError, span, "type/field-mutability-mismatch",
+				fmt.Sprintf("field %q on %q is read-only, but interface %q requires a mutable field", req.Name, st.Name, ifc.Name))
+			return false
+		}
+	}
+	return true
+}
+

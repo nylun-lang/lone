@@ -365,6 +365,18 @@ func (t *TTupleExpr) ExprType() Type     { return t.Typ }
 func (t *TTupleExpr) tnode()             {}
 func (t *TTupleExpr) texpr()             {}
 
+type TStructConstructExpr struct {
+	StructType *StructType
+	Fields     map[string]TExpr
+	Typ        Type
+	Span_      loneast.Span
+}
+
+func (s *TStructConstructExpr) Span() loneast.Span { return s.Span_ }
+func (s *TStructConstructExpr) ExprType() Type     { return s.Typ }
+func (s *TStructConstructExpr) tnode()             {}
+func (s *TStructConstructExpr) texpr()             {}
+
 type TAnonFnExpr struct {
 	Name       string
 	Params     []*TFnParam

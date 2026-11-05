@@ -112,6 +112,7 @@ const (
 	TYPE_DEC_STRUCT
 	TYPE_DEC_TRAIT
 	TYPE_DEC_ENUM
+	TYPE_DEC_INTERFACE
 )
 
 // EnumVariant represents a variant within an enum declaration.
@@ -133,6 +134,7 @@ type TYPE_DEC struct {
 	Kind        TypeDecKind
 	AliasType  *TYPE_REF
 	Fields     []StructField
+	Embedded   []string
 	Variants   []EnumVariant
 	Methods    []FN_DEC
 	TraitSigs  []TraitMethodSig
