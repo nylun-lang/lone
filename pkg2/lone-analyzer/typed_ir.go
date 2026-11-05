@@ -353,3 +353,30 @@ func (t *TTraitMatExpr) Span() loneast.Span { return t.Span_ }
 func (t *TTraitMatExpr) ExprType() Type    { return t.Typ }
 func (t *TTraitMatExpr) tnode()            {}
 func (t *TTraitMatExpr) texpr()            {}
+
+type TTupleExpr struct {
+	Elements []TExpr
+	Typ      Type
+	Span_    loneast.Span
+}
+
+func (t *TTupleExpr) Span() loneast.Span { return t.Span_ }
+func (t *TTupleExpr) ExprType() Type     { return t.Typ }
+func (t *TTupleExpr) tnode()             {}
+func (t *TTupleExpr) texpr()             {}
+
+type TAnonFnExpr struct {
+	Name       string
+	Params     []*TFnParam
+	ReturnType Type
+	Body       *TBlock
+	Captures   []*Symbol
+	Typ        Type
+	Span_      loneast.Span
+}
+
+func (a *TAnonFnExpr) Span() loneast.Span { return a.Span_ }
+func (a *TAnonFnExpr) ExprType() Type     { return a.Typ }
+func (a *TAnonFnExpr) tnode()             {}
+func (a *TAnonFnExpr) texpr()             {}
+

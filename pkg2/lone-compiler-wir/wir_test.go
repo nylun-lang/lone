@@ -275,4 +275,49 @@ fn main() int {
 	}
 }
 
+func TestGroupedTuplesAndAnonFnLowering(t *testing.T) {
+	code := `
+fn add([x, y]: int) int {
+    return x + y
+}
+
+fn main() int {
+    var [a, b]: int = 10
+    let sum1 = add(a, b)
+
+    let pair = (5, 15)
+    let (u, v) = pair
+    let sum2 = u + v
+
+    let p0 = pair.0
+    let p1 = pair.1
+
+    let double = fn(n: int) int {
+        return n * 2
+    }
+    let res = double(sum1 + sum2 + p0 + p1)
+    return res
+}
+`
+	wat := compileSourceToWat(t, code)
+
+	tmpDir := t.TempDir()
+	watPath := filepath.Join(tmpDir, "grouped_tuples.wat")
+	if err := os.WriteFile(watPath, []byte(wat), 0644); err != nil {
+		t.Fatalf("failed to write temp wat: %v", err)
+	}
+
+	cmd := exec.Command("wasmtime", "--invoke", "main", watPath)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("wasmtime failed: %v, output: %s\nwat:\n%s", err, string(out), wat)
+	}
+
+	got := strings.TrimSpace(string(out))
+	if !strings.HasSuffix(got, "120") {
+		t.Fatalf("unexpected wasmtime output:\ngot:  %q\nwant suffix: 120", got)
+	}
+}
+
+
 

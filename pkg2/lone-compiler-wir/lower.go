@@ -2,6 +2,7 @@ package lonewir
 
 import (
 	"fmt"
+	"strings"
 
 	loneanalyzer "lone/pkg2/lone-analyzer"
 	loneast "lone/pkg2/lone-parser-ast"
@@ -51,6 +52,7 @@ type lowerer struct {
 	usesPrint    bool
 	usesStrlen   bool
 	varSlots     map[string]varSlotInfo
+	anonFnMap    map[string]string
 	frameSize    int
 }
 
@@ -71,6 +73,7 @@ func LowerProgram(prog *loneanalyzer.TProgram, opts LowerOptions) (*WasmModule, 
 		nextOffset:   64, // [0..64) reserved for WASI iovec / runtime scratchpad
 		labelStack:   make(map[string]string),
 		varSlots:     make(map[string]varSlotInfo),
+		anonFnMap:    make(map[string]string),
 	}
 	l.mod.MemoryPages = opts.MemoryPages
 	l.mod.MemoryExport = opts.MemoryExport
@@ -879,6 +882,44 @@ func (l *lowerer) lowerBlock(b loneanalyzer.TBlock, alloc *LocalAllocator) []Was
 func (l *lowerer) lowerStmt(stmt loneanalyzer.TStmt, alloc *LocalAllocator) []WasmInst {
 	switch s := stmt.(type) {
 	case *loneanalyzer.TVarDec:
+		if anon, ok := s.Value.(*loneanalyzer.TAnonFnExpr); ok {
+			l.anonFnMap[s.Name] = anon.Name
+		}
+
+		// Tuple pattern destructuring: let (a, b) = pair
+		if s.TargetVal != nil && len(s.Bindings) > 0 && s.Variant == nil {
+			var insts []WasmInst
+			tupType, isTuple := s.TargetVal.ExprType().(*loneanalyzer.TupleType)
+			targetLocal := alloc.AllocTemp(TypeI32)
+			defer alloc.FreeTemp(targetLocal, TypeI32)
+
+			insts = append(insts, l.lowerExpr(s.TargetVal, alloc)...)
+			insts = append(insts, InstLocalSet{Name: targetLocal})
+
+			for i, b := range s.Bindings {
+				bLocal := alloc.AllocVar(b.Name, toWasmType(b.Type))
+				offset := 0
+				if isTuple && i < len(tupType.Offsets) {
+					offset = tupType.Offsets[i]
+				}
+				insts = append(insts, InstLocalGet{Name: targetLocal})
+				insts = append(insts, InstLoad{Op: loadOpForType(b.Type), Offset: offset})
+				insts = append(insts, InstLocalSet{Name: bLocal})
+			}
+			return insts
+		}
+
+		// Grouped bindings: var [top, bottom, left, right]: int = 0
+		if len(s.Bindings) > 0 && s.Variant == nil && s.TargetVal == nil {
+			var insts []WasmInst
+			for _, b := range s.Bindings {
+				bLocal := alloc.AllocVar(b.Name, toWasmType(b.Type))
+				insts = append(insts, l.lowerExpr(s.Value, alloc)...)
+				insts = append(insts, InstLocalSet{Name: bLocal})
+			}
+			return insts
+		}
+
 		if slot, isSlot := l.varSlots[s.Name]; isSlot {
 			var insts []WasmInst
 			insts = append(insts, InstGlobalGet{Name: "$__stack_pointer"})
@@ -1427,15 +1468,55 @@ func (l *lowerer) lowerExpr(expr loneanalyzer.TExpr, alloc *LocalAllocator) []Wa
 		insts = append(insts, InstLoad{Op: loadOpForType(e.Typ), Offset: 0})
 		return insts
 
+	case *loneanalyzer.TTupleExpr:
+		return l.lowerTupleExpr(e, alloc)
+
+	case *loneanalyzer.TAnonFnExpr:
+		return []WasmInst{InstConstI32{Value: 0}}
+
 	default:
 		return nil
 	}
+}
+
+func (l *lowerer) lowerTupleExpr(e *loneanalyzer.TTupleExpr, alloc *LocalAllocator) []WasmInst {
+	var insts []WasmInst
+	ptrLocal := alloc.AllocTemp(TypeI32)
+	defer alloc.FreeTemp(ptrLocal, TypeI32)
+
+	totalSize := loneanalyzer.TypeSize(e.Typ)
+	if totalSize <= 0 {
+		totalSize = 4
+	}
+
+	insts = append(insts, InstConstI32{Value: int32(totalSize)})
+	insts = append(insts, InstCall{Target: "$__lone_rt_alloc"})
+	insts = append(insts, InstLocalSet{Name: ptrLocal})
+
+	tupType, _ := e.Typ.(*loneanalyzer.TupleType)
+	for i, elem := range e.Elements {
+		offset := 0
+		if tupType != nil && i < len(tupType.Offsets) {
+			offset = tupType.Offsets[i]
+		}
+		insts = append(insts, InstLocalGet{Name: ptrLocal})
+		insts = append(insts, l.lowerExpr(elem, alloc)...)
+		insts = append(insts, InstStore{Op: storeOpForType(elem.ExprType()), Offset: offset})
+	}
+
+	insts = append(insts, InstLocalGet{Name: ptrLocal})
+	return insts
 }
 
 func (l *lowerer) lowerCallExpr(e *loneanalyzer.TCallExpr, alloc *LocalAllocator) []WasmInst {
 	calleeName := ""
 	if ref, ok := e.Callee.(*loneanalyzer.TVarRefExpr); ok {
 		calleeName = ref.Name
+		if target, ok := l.anonFnMap[calleeName]; ok {
+			calleeName = strings.TrimPrefix(target, "$")
+		}
+	} else if anon, ok := e.Callee.(*loneanalyzer.TAnonFnExpr); ok {
+		calleeName = strings.TrimPrefix(anon.Name, "$")
 	} else if mem, ok := e.Callee.(*loneanalyzer.TMemberAccessExpr); ok {
 		calleeName = mem.Field
 	}

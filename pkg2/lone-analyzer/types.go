@@ -19,6 +19,7 @@ const (
 	TypeKindTrait
 	TypeKindOptional
 	TypeKindEnum
+	TypeKindTuple
 )
 
 func (k TypeKind) String() string {
@@ -43,6 +44,8 @@ func (k TypeKind) String() string {
 		return "Optional"
 	case TypeKindEnum:
 		return "Enum"
+	case TypeKindTuple:
+		return "Tuple"
 	default:
 		return "Unknown"
 	}
@@ -495,6 +498,82 @@ func (f *FnType) AssignableTo(target Type) bool {
 }
 
 // =====================
+// TUPLE
+// =====================
+
+type TupleType struct {
+	Elements []Type
+	Offsets  []int
+	Size     int
+}
+
+func NewTupleType(elements []Type) *TupleType {
+	offsets := make([]int, len(elements))
+	offset := 0
+	maxAlign := 4
+	for i, elem := range elements {
+		sz := TypeSize(elem)
+		if sz <= 0 {
+			sz = 4
+		}
+		al := TypeAlign(elem)
+		if al <= 0 {
+			al = 4
+		}
+		if al > maxAlign {
+			maxAlign = al
+		}
+		offset = (offset + al - 1) & ^(al - 1)
+		offsets[i] = offset
+		offset += sz
+	}
+	totalSize := (offset + maxAlign - 1) & ^(maxAlign - 1)
+	return &TupleType{
+		Elements: elements,
+		Offsets:  offsets,
+		Size:     totalSize,
+	}
+}
+
+func (t *TupleType) Kind() TypeKind { return TypeKindTuple }
+func (t *TupleType) String() string {
+	var parts []string
+	for _, elem := range t.Elements {
+		parts = append(parts, elem.String())
+	}
+	if len(parts) == 1 {
+		return "(" + parts[0] + ",)"
+	}
+	return "(" + strings.Join(parts, ", ") + ")"
+}
+
+func (t *TupleType) Equals(other Type) bool {
+	ot, ok := other.(*TupleType)
+	if !ok || len(t.Elements) != len(ot.Elements) {
+		return false
+	}
+	for i, elem := range t.Elements {
+		if !elem.Equals(ot.Elements[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+func (t *TupleType) AssignableTo(target Type) bool {
+	ot, ok := target.(*TupleType)
+	if !ok || len(t.Elements) != len(ot.Elements) {
+		return false
+	}
+	for i, elem := range t.Elements {
+		if !elem.AssignableTo(ot.Elements[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+// =====================
 // SIZES & ALIGNMENTS
 // =====================
 
@@ -528,6 +607,8 @@ func TypeSize(t Type) int {
 		return v.TotalSize
 	case *EnumType:
 		return v.TotalSize
+	case *TupleType:
+		return v.Size
 	case *ListType:
 		if v.Fixed {
 			return v.Size * TypeSize(v.Elem)
@@ -562,6 +643,15 @@ func TypeAlign(t Type) int {
 		return v.TotalAlign
 	case *EnumType:
 		return v.TotalAlign
+	case *TupleType:
+		max := 4
+		for _, e := range v.Elements {
+			al := TypeAlign(e)
+			if al > max {
+				max = al
+			}
+		}
+		return max
 	default:
 		return 4
 	}

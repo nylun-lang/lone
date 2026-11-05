@@ -191,15 +191,172 @@ func (p *Parser) parsePrefix() (loneast.Expr, error) {
 			Span_: tok.Span(),
 		}, nil
 
-	case lonelexer.TokenLParen:
-		inner, err := p.ParseExpr(PrecNone)
-		if err != nil {
+	case lonelexer.TokenFn:
+		// Anonymous function: fn([params]) [RetType] { body }
+		var typeParams []loneast.TypeParam
+		var constraints []loneast.GenericConstraint
+		if p.peek().Kind == lonelexer.TokenLt {
+			tps, cs, err := p.parseTypeParamsAndConstraints()
+			if err != nil {
+				return nil, err
+			}
+			typeParams = tps
+			constraints = cs
+		}
+
+		if _, err := p.expect(lonelexer.TokenLParen); err != nil {
 			return nil, err
 		}
+
+		var params []loneast.FnParam
+		if p.peek().Kind != lonelexer.TokenRParen {
+			for {
+				if p.peek().Kind == lonelexer.TokenSelf {
+					selfTok := p.advance()
+					params = append(params, loneast.FnParam{
+						Name: "self",
+						Type: loneast.TYPE_REF{
+							Kind:  loneast.TYPE_BASE,
+							Value: &loneast.TypeBase{Name: "Self"},
+							Span_: selfTok.Span(),
+						},
+						Span_: selfTok.Span(),
+					})
+				} else if p.peek().Kind == lonelexer.TokenLBracket {
+					lbrack := p.advance()
+					var names []string
+					for {
+						idTok, err := p.expect(lonelexer.TokenIdent)
+						if err != nil {
+							return nil, err
+						}
+						names = append(names, idTok.Text)
+						if p.peek().Kind == lonelexer.TokenComma {
+							p.advance()
+							if p.peek().Kind == lonelexer.TokenRBracket {
+								break
+							}
+						} else {
+							break
+						}
+					}
+					if _, err := p.expect(lonelexer.TokenRBracket); err != nil {
+						return nil, err
+					}
+					if _, err := p.expect(lonelexer.TokenColon); err != nil {
+						return nil, err
+					}
+					pType, err := p.parseTypeRef()
+					if err != nil {
+						return nil, err
+					}
+					for _, n := range names {
+						params = append(params, loneast.FnParam{
+							Name:  n,
+							Names: names,
+							Type:  pType,
+							Span_: lonelexer.Span{Start: lbrack.Start, End: pType.NodeSpan().End},
+						})
+					}
+				} else {
+					pName, err := p.expect(lonelexer.TokenIdent)
+					if err != nil {
+						return nil, err
+					}
+					if _, err := p.expect(lonelexer.TokenColon); err != nil {
+						return nil, err
+					}
+					pType, err := p.parseTypeRef()
+					if err != nil {
+						return nil, err
+					}
+					params = append(params, loneast.FnParam{
+						Name:  pName.Text,
+						Type:  pType,
+						Span_: lonelexer.Span{Start: pName.Start, End: pType.NodeSpan().End},
+					})
+				}
+
+				if p.peek().Kind == lonelexer.TokenComma {
+					p.advance()
+					if p.peek().Kind == lonelexer.TokenRParen {
+						break
+					}
+				} else {
+					break
+				}
+			}
+		}
+
 		if _, err := p.expect(lonelexer.TokenRParen); err != nil {
 			return nil, err
 		}
-		return inner, nil
+
+		var retType *loneast.TYPE_REF
+		if isTypeStart(p.peek().Kind) {
+			rt, err := p.parseTypeRef()
+			if err != nil {
+				return nil, err
+			}
+			retType = &rt
+		}
+
+		body, err := p.parseBlock()
+		if err != nil {
+			return nil, err
+		}
+
+		return loneast.AnonFnExpr{
+			TypeParams:  typeParams,
+			Constraints: constraints,
+			Params:      params,
+			ReturnType:  retType,
+			Body:        body,
+			Span_:       lonelexer.Span{Start: tok.Start, End: body.NodeSpan().End},
+		}, nil
+
+	case lonelexer.TokenLParen:
+		if p.peek().Kind == lonelexer.TokenRParen {
+			rp := p.advance()
+			return loneast.TupleExpr{
+				Elements: nil,
+				Span_:    lonelexer.Span{Start: tok.Start, End: rp.End},
+			}, nil
+		}
+		first, err := p.ParseExpr(PrecNone)
+		if err != nil {
+			return nil, err
+		}
+		if p.peek().Kind == lonelexer.TokenComma {
+			p.advance() // consume ','
+			elements := []loneast.Expr{first}
+			for p.peek().Kind != lonelexer.TokenRParen && !p.isAtEnd() {
+				elem, err := p.ParseExpr(PrecNone)
+				if err != nil {
+					return nil, err
+				}
+				elements = append(elements, elem)
+				if p.peek().Kind == lonelexer.TokenComma {
+					p.advance()
+				} else {
+					break
+				}
+			}
+			rp, err := p.expect(lonelexer.TokenRParen)
+			if err != nil {
+				return nil, err
+			}
+			return loneast.TupleExpr{
+				Elements: elements,
+				Span_:    lonelexer.Span{Start: tok.Start, End: rp.End},
+			}, nil
+		}
+		rp, err := p.expect(lonelexer.TokenRParen)
+		if err != nil {
+			return nil, err
+		}
+		_ = rp
+		return first, nil
 
 	case lonelexer.TokenLBracket:
 		// List literal: [1, 2, 3] or []
@@ -284,11 +441,21 @@ func (p *Parser) parseInfix(left loneast.Expr) (loneast.Expr, error) {
 	// Postfix member access: left.name
 	case lonelexer.TokenDot:
 		p.advance()
-		ident, err := p.expect(lonelexer.TokenIdent)
-		if err != nil {
-			return nil, err
+		var memberName string
+		var endPos lonelexer.Position
+		if p.peek().Kind == lonelexer.TokenInt {
+			intTok := p.advance()
+			memberName = intTok.Text
+			endPos = intTok.End
+		} else {
+			ident, err := p.expect(lonelexer.TokenIdent)
+			if err != nil {
+				return nil, err
+			}
+			memberName = ident.Text
+			endPos = ident.End
 		}
-		return appendSuffix(left, loneast.SuffixMemberAccess{Name: ident.Text, Span_: ident.Span()}, ident.End), nil
+		return appendSuffix(left, loneast.SuffixMemberAccess{Name: memberName, Span_: lonelexer.Span{Start: tok.Start, End: endPos}}, endPos), nil
 
 	// Postfix namespace access: left:name
 	case lonelexer.TokenColon:
@@ -691,6 +858,37 @@ func (p *Parser) parseMatchPattern() (loneast.MatchPattern, error) {
 			Variant:  variantName,
 			Bindings: bindings,
 			Span_:    lonelexer.Span{Start: id1.Start, End: p.previous().End},
+		}, nil
+	}
+
+	// Tuple pattern: (p1, p2, ...) or ()
+	if tok.Kind == lonelexer.TokenLParen {
+		lp := p.advance()
+		var elements []loneast.MatchPattern
+		if p.peek().Kind != lonelexer.TokenRParen {
+			for {
+				elem, err := p.parseMatchPattern()
+				if err != nil {
+					return nil, err
+				}
+				elements = append(elements, elem)
+				if p.peek().Kind == lonelexer.TokenComma {
+					p.advance()
+					if p.peek().Kind == lonelexer.TokenRParen {
+						break
+					}
+				} else {
+					break
+				}
+			}
+		}
+		rp, err := p.expect(lonelexer.TokenRParen)
+		if err != nil {
+			return nil, err
+		}
+		return loneast.TuplePattern{
+			Elements: elements,
+			Span_:    lonelexer.Span{Start: lp.Start, End: rp.End},
 		}, nil
 	}
 

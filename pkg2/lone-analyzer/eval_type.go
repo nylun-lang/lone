@@ -3,6 +3,7 @@ package loneanalyzer
 import (
 	"fmt"
 	loneast "lone/pkg2/lone-parser-ast"
+	"strconv"
 	"strings"
 	"unicode"
 )
@@ -428,6 +429,18 @@ func (te *TypeEvaluator) hoistFn(f *loneast.FN_DEC) {
 
 func (te *TypeEvaluator) hoistVar(b *loneast.BIND_DEC) {
 	varType := te.resolveType(b.Type)
+	if len(b.Names) > 0 {
+		for _, name := range b.Names {
+			_ = te.stack.Define(&Symbol{
+				Name:      name,
+				Kind:      SymbolVar,
+				Type:      varType,
+				IsMutable: b.IsMutable,
+				Node:      b,
+			})
+		}
+		return
+	}
 	_ = te.stack.Define(&Symbol{
 		Name:      b.Name,
 		Kind:      SymbolVar,
@@ -766,6 +779,44 @@ func (te *TypeEvaluator) analyzeVarDec(b *loneast.BIND_DEC) *TVarDec {
 					}
 				}
 			}
+		} else if tp, ok := b.Pattern.(loneast.TuplePattern); ok {
+			tupType, isTuple := tVal.ExprType().(*TupleType)
+			if !isTuple {
+				te.addDiag(SeverityError, b.Pattern.NodeSpan(), "type/invalid-pattern",
+					fmt.Sprintf("cannot destructure non-tuple type %q", tVal.ExprType().String()))
+			} else {
+				if len(tp.Elements) != len(tupType.Elements) {
+					te.addDiag(SeverityError, b.Pattern.NodeSpan(), "type/tuple-arity-mismatch",
+						fmt.Sprintf("tuple has %d elements, but pattern binds %d variables",
+							len(tupType.Elements), len(tp.Elements)))
+				} else {
+					for i, elemPat := range tp.Elements {
+						elemType := tupType.Elements[i]
+						bName := ""
+						if vp, ok := elemPat.(loneast.VariantPattern); ok {
+							bName = vp.Variant
+						} else if _, ok := elemPat.(loneast.WildcardPattern); ok {
+							bName = "_"
+						}
+						if bName != "" && bName != "_" {
+							sym := &Symbol{
+								Name:      bName,
+								Kind:      SymbolVar,
+								Type:      elemType,
+								IsMutable: b.IsMutable,
+							}
+							_ = te.stack.Define(sym)
+							bindings = append(bindings, &TVarDec{
+								Name:      bName,
+								IsMutable: b.IsMutable,
+								Type:      elemType,
+								Value:     nil,
+								Span_:     elemPat.NodeSpan(),
+							})
+						}
+					}
+				}
+			}
 		}
 
 		return &TVarDec{
@@ -796,6 +847,46 @@ func (te *TypeEvaluator) analyzeVarDec(b *loneast.BIND_DEC) *TVarDec {
 			te.addDiag(SeverityError, b.Span_, "type/mismatch",
 				fmt.Sprintf("cannot assign value of type %q to binding %q of type %q",
 					tVal.ExprType().String(), b.Name, declaredType.String()))
+		}
+	}
+
+	if len(b.Names) > 0 {
+		var bindings []*TVarDec
+		for _, name := range b.Names {
+			if existing := te.stack.LookupLocal(name); existing != nil {
+				existing.Type = resolvedType
+				existing.IsMutable = b.IsMutable
+			} else {
+				sym := &Symbol{
+					Name:      name,
+					Kind:      SymbolVar,
+					Type:      resolvedType,
+					IsMutable: b.IsMutable,
+					Node:      b,
+				}
+				_ = te.stack.Define(sym)
+			}
+			tVar := &TVarDec{
+				Name:         name,
+				IsMutable:    b.IsMutable,
+				AddressTaken: false,
+				Type:         resolvedType,
+				Value:        tVal,
+				Span_:        b.Span_,
+			}
+			if sym := te.stack.LookupLocal(name); sym != nil {
+				sym.Node = tVar
+				tVar.AddressTaken = sym.AddressTaken
+			}
+			bindings = append(bindings, tVar)
+		}
+		return &TVarDec{
+			Name:      b.Names[0],
+			Bindings:  bindings,
+			IsMutable: b.IsMutable,
+			Type:      resolvedType,
+			Value:     tVal,
+			Span_:     b.Span_,
 		}
 	}
 
@@ -1355,8 +1446,149 @@ func (te *TypeEvaluator) EvalExpr(e loneast.Expr) TExpr {
 	case *loneast.TryExpr:
 		return te.evalTryExpr(*expr)
 
+	case loneast.TupleExpr:
+		return te.evalTupleExpr(expr)
+	case *loneast.TupleExpr:
+		return te.evalTupleExpr(*expr)
+
+	case loneast.AnonFnExpr:
+		return te.evalAnonFnExpr(expr)
+	case *loneast.AnonFnExpr:
+		return te.evalAnonFnExpr(*expr)
+
 	default:
 		return nil
+	}
+}
+
+func (te *TypeEvaluator) evalTupleExpr(t loneast.TupleExpr) TExpr {
+	var elements []TExpr
+	var elementTypes []Type
+	for _, elem := range t.Elements {
+		telem := te.EvalExpr(elem)
+		if telem != nil {
+			elements = append(elements, telem)
+			elementTypes = append(elementTypes, telem.ExprType())
+		} else {
+			elementTypes = append(elementTypes, TypeUnknown)
+		}
+	}
+	tupType := NewTupleType(elementTypes)
+	return &TTupleExpr{
+		Elements: elements,
+		Typ:      tupType,
+		Span_:    t.Span_,
+	}
+}
+
+func (te *TypeEvaluator) evalAnonFnExpr(a loneast.AnonFnExpr) TExpr {
+	te.stack.Push(ScopeFunction)
+	defer te.stack.Pop()
+
+	var fnParams []FnParamInfo
+	var tParams []*TFnParam
+	for _, p := range a.Params {
+		pType := te.resolveType(p.Type)
+		fnParams = append(fnParams, FnParamInfo{Name: p.Name, Type: pType})
+		sym := &Symbol{Name: p.Name, Kind: SymbolVar, Type: pType, IsMutable: false}
+		_ = te.stack.Define(sym)
+		tParams = append(tParams, &TFnParam{Name: p.Name, Type: pType, Span_: p.Span_})
+	}
+
+	retType := Type(TypeVoid)
+	if a.ReturnType != nil {
+		retType = te.resolveType(*a.ReturnType)
+	}
+
+	body := te.analyzeBlock(&a.Body, retType)
+	te.checkClosureCaptures(&body, a.Span_)
+
+	fnType := &FnType{Params: fnParams, Return: retType}
+	anonName := fmt.Sprintf("anon_fn_%d", len(te.extraDecls)+1)
+	anonExpr := &TAnonFnExpr{
+		Name:       anonName,
+		Params:     tParams,
+		ReturnType: retType,
+		Body:       &body,
+		Typ:        fnType,
+		Span_:      a.Span_,
+	}
+
+	// Register generated function in extraDecls
+	fnDec := &TFnDec{
+		Name:       anonName,
+		Params:     make([]TFnParam, len(tParams)),
+		ReturnType: retType,
+		Body:       body,
+		Span_:      a.Span_,
+	}
+	for i, tp := range tParams {
+		fnDec.Params[i] = *tp
+	}
+	te.extraDecls = append(te.extraDecls, fnDec)
+
+	return anonExpr
+}
+
+func (te *TypeEvaluator) checkClosureCaptures(block *TBlock, closureSpan loneast.Span) {
+	for _, stmt := range block.Stmts {
+		te.walkStmtForClosureCaptures(stmt, closureSpan)
+	}
+}
+
+func (te *TypeEvaluator) walkStmtForClosureCaptures(stmt TStmt, closureSpan loneast.Span) {
+	if stmt == nil {
+		return
+	}
+	switch s := stmt.(type) {
+	case *TVarDec:
+		if s.Value != nil {
+			te.walkExprForClosureCaptures(s.Value, closureSpan)
+		}
+	case *TAssignStmt:
+		te.walkExprForClosureCaptures(s.Target, closureSpan)
+		te.walkExprForClosureCaptures(s.Value, closureSpan)
+	case *TReturnStmt:
+		if s.Value != nil {
+			te.walkExprForClosureCaptures(s.Value, closureSpan)
+		}
+	case *TDropStmt:
+		te.walkExprForClosureCaptures(s.Expr, closureSpan)
+	case TExpr:
+		te.walkExprForClosureCaptures(s, closureSpan)
+	}
+}
+
+func (te *TypeEvaluator) walkExprForClosureCaptures(expr TExpr, closureSpan loneast.Span) {
+	if expr == nil {
+		return
+	}
+	switch e := expr.(type) {
+	case *TUnaryExpr:
+		if e.Op == loneast.UNARY_OP_REF || e.Op == loneast.UNARY_OP_RAW_REF {
+			if vref, ok := e.Expr.(*TVarRefExpr); ok {
+				sym := te.stack.Lookup(vref.Name)
+				if sym != nil && te.stack.LookupLocal(vref.Name) == nil {
+					te.addDiag(SeverityError, e.Span_, "closure/escaping-reference-capture",
+						fmt.Sprintf("closure captures local stack variable %q by reference; escaping closures must capture by value or use #alloc", vref.Name))
+				}
+			}
+		}
+		te.walkExprForClosureCaptures(e.Expr, closureSpan)
+	case *TBinaryExpr:
+		te.walkExprForClosureCaptures(e.Left, closureSpan)
+		te.walkExprForClosureCaptures(e.Right, closureSpan)
+	case *TCallExpr:
+		te.walkExprForClosureCaptures(e.Callee, closureSpan)
+		for _, arg := range e.Args {
+			te.walkExprForClosureCaptures(arg, closureSpan)
+		}
+	case *TMemberAccessExpr:
+		te.walkExprForClosureCaptures(e.Base, closureSpan)
+	case *TTupleExpr:
+		for _, elem := range e.Elements {
+			te.walkExprForClosureCaptures(elem, closureSpan)
+		}
 	}
 }
 
@@ -1613,6 +1845,24 @@ func (te *TypeEvaluator) evalPostfixExpr(p loneast.PostFixExpr) TExpr {
 	for _, s := range p.Suffix {
 		switch suff := s.(type) {
 		case loneast.SuffixMemberAccess:
+			if tup, ok := curr.ExprType().(*TupleType); ok {
+				idx, err := strconv.Atoi(suff.Name)
+				if err != nil || idx < 0 || idx >= len(tup.Elements) {
+					te.addDiag(SeverityError, suff.Span_, "type/tuple-index-out-of-bounds",
+						fmt.Sprintf("tuple index %s is out of bounds for tuple %s", suff.Name, tup.String()))
+					curr = &TMemberAccessExpr{Base: curr, Field: suff.Name, Typ: TypeUnknown, Span_: suff.Span_}
+				} else {
+					curr = &TMemberAccessExpr{
+						Base:   curr,
+						Field:  suff.Name,
+						Offset: tup.Offsets[idx],
+						Typ:    tup.Elements[idx],
+						Span_:  suff.Span_,
+					}
+				}
+				break
+			}
+
 			var targetStruct *StructType
 			if st, ok := curr.ExprType().(*StructType); ok {
 				targetStruct = st
@@ -2556,6 +2806,14 @@ func (te *TypeEvaluator) resolveBaseType(tr loneast.TYPE_REF) Type {
 				retType = te.resolveType(*tf.ReturnType)
 			}
 			return &FnType{Params: params, Return: retType}
+		}
+	case loneast.TYPE_TUPLE:
+		if tt, ok := tr.Value.(*loneast.TypeTuple); ok {
+			var elemTypes []Type
+			for _, elemTr := range tt.Types {
+				elemTypes = append(elemTypes, te.resolveType(elemTr))
+			}
+			return NewTupleType(elemTypes)
 		}
 	case loneast.TYPE_BASE:
 		if tb, ok := tr.Value.(*loneast.TypeBase); ok {

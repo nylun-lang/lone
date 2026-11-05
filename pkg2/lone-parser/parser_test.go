@@ -625,3 +625,79 @@ fn main() void {
 	}
 }
 
+func TestParseGroupedDeclarationsTuplesAndAnonFn(t *testing.T) {
+	code := `
+fn draw_rect([x, y, w, h]: int, [point_a, point_b]: (int, int), color: str) void {
+    var [top, bottom, left, right]: int = 0
+    let pair: (int, str) = (42, "hello")
+    let (num, msg) = pair
+    let val0 = pair.0
+    let val1 = pair.1
+
+    let sq = fn(x: int) int {
+        return x * x
+    }
+}
+`
+	decls, err := Parse([]byte(code))
+	if err != nil {
+		t.Fatalf("unexpected parse error: %v", err)
+	}
+
+	if len(decls) != 1 {
+		t.Fatalf("expected 1 fn decl, got %d", len(decls))
+	}
+
+	fn := decls[0].(loneast.FN_DEC)
+	// Parameters: [x, y, w, h] (4) + [point_a, point_b] (2) + color (1) = 7 params
+	if len(fn.Params) != 7 {
+		t.Fatalf("expected 7 expanded params, got %d", len(fn.Params))
+	}
+	if fn.Params[0].Name != "x" || fn.Params[3].Name != "h" {
+		t.Errorf("unexpected params: %+v", fn.Params)
+	}
+	if fn.Params[4].Type.Kind != loneast.TYPE_TUPLE {
+		t.Errorf("expected tuple type for point_a, got %v", fn.Params[4].Type.Kind)
+	}
+
+	stmts := fn.Body.Stmts
+	// Stmt 0: var [top, bottom, left, right]: int = 0
+	b0 := stmts[0].(loneast.BIND_DEC)
+	if len(b0.Names) != 4 || b0.Names[0] != "top" || b0.Names[3] != "right" {
+		t.Errorf("expected 4 grouped names, got %+v", b0.Names)
+	}
+
+	// Stmt 1: let pair = (42, "hello")
+	b1 := stmts[1].(loneast.BIND_DEC)
+	tupExpr, ok := b1.Value.(loneast.TupleExpr)
+	if !ok || len(tupExpr.Elements) != 2 {
+		t.Fatalf("expected TupleExpr with 2 elements, got %#v", b1.Value)
+	}
+
+	// Stmt 2: let (num, msg) = pair
+	b2 := stmts[2].(loneast.BIND_DEC)
+	tupPat, ok := b2.Pattern.(loneast.TuplePattern)
+	if !ok || len(tupPat.Elements) != 2 {
+		t.Fatalf("expected TuplePattern with 2 elements, got %#v", b2.Pattern)
+	}
+
+	// Stmt 3 & 4: pair.0 and pair.1
+	b3 := stmts[3].(loneast.BIND_DEC)
+	pf3 := b3.Value.(loneast.PostFixExpr)
+	mem3 := pf3.Suffix[0].(loneast.SuffixMemberAccess)
+	if mem3.Name != "0" {
+		t.Errorf("expected member name '0', got %q", mem3.Name)
+	}
+
+	// Stmt 5: let sq = fn(x: int) int { ... }
+	b5 := stmts[5].(loneast.BIND_DEC)
+	anonFn, ok := b5.Value.(loneast.AnonFnExpr)
+	if !ok {
+		t.Fatalf("expected AnonFnExpr, got %#v", b5.Value)
+	}
+	if len(anonFn.Params) != 1 || anonFn.Params[0].Name != "x" {
+		t.Errorf("expected param 'x', got %+v", anonFn.Params)
+	}
+}
+
+

@@ -685,5 +685,119 @@ fn test_indexing(p: ptr<i32>, r: ref<i32>) void {
 	}
 }
 
+func TestGroupedDeclarations(t *testing.T) {
+	code := `
+fn add_points([p1, p2]: (int, int)) int {
+    let (x1, y1) = p1
+    let (x2, y2) = p2
+    return x1 + y1 + x2 + y2
+}
+
+fn test_grouped_locals() int {
+    var [top, bottom, left, right]: int = 0
+    top = 10
+    bottom = 20
+    left = 30
+    right = 40
+    return top + bottom + left + right
+}
+`
+	analyzer := NewAnalyzer()
+	_, diags, err := analyzer.AnalyzeSource([]byte(code))
+	if err != nil {
+		t.Fatalf("unexpected parse error: %v", err)
+	}
+
+	for _, d := range diags {
+		if d.Severity == SeverityError {
+			t.Errorf("unexpected error diagnostic: %v", d)
+		}
+	}
+}
+
+func TestTuplesAndDestructuring(t *testing.T) {
+	code := `
+fn test_tuples() void {
+    let pair = (10, 20)
+    let a = pair.0
+    let b = pair.1
+    let bad_idx = pair.2
+
+    let (x, y) = pair
+    let (u, v, w) = pair
+}
+`
+	analyzer := NewAnalyzer()
+	_, diags, err := analyzer.AnalyzeSource([]byte(code))
+	if err != nil {
+		t.Fatalf("unexpected parse error: %v", err)
+	}
+
+	var hasOobErr, hasArityErr bool
+	for _, d := range diags {
+		if d.Rule == "type/tuple-index-out-of-bounds" {
+			hasOobErr = true
+		}
+		if d.Rule == "type/tuple-arity-mismatch" {
+			hasArityErr = true
+		}
+	}
+
+	if !hasOobErr {
+		t.Errorf("expected type/tuple-index-out-of-bounds, got: %v", diags)
+	}
+	if !hasArityErr {
+		t.Errorf("expected type/tuple-arity-mismatch, got: %v", diags)
+	}
+}
+
+func TestAnonymousFunctionsAndEscapingCapture(t *testing.T) {
+	validCode := `
+fn test_valid_anon() int {
+    let square = fn(x: int) int {
+        return x * x
+    }
+    return square(5)
+}
+`
+	analyzer := NewAnalyzer()
+	_, diags, err := analyzer.AnalyzeSource([]byte(validCode))
+	if err != nil {
+		t.Fatalf("unexpected parse error: %v", err)
+	}
+	for _, d := range diags {
+		if d.Severity == SeverityError {
+			t.Errorf("unexpected error diagnostic in valid anon fn: %v", d)
+		}
+	}
+
+	badCaptureCode := `
+fn test_bad_capture() void {
+    var local_val = 42
+    let bad_fn = fn() void {
+        let r = &local_val
+    }
+}
+`
+	analyzer2 := NewAnalyzer()
+	_, diags2, err := analyzer2.AnalyzeSource([]byte(badCaptureCode))
+	if err != nil {
+		t.Fatalf("unexpected parse error: %v", err)
+	}
+
+	hasCaptureErr := false
+	for _, d := range diags2 {
+		if d.Rule == "closure/escaping-reference-capture" {
+			hasCaptureErr = true
+			break
+		}
+	}
+
+	if !hasCaptureErr {
+		t.Errorf("expected closure/escaping-reference-capture diagnostic, got: %v", diags2)
+	}
+}
+
+
 
 

@@ -25,6 +25,8 @@ const (
 	ExprMatch
 	ExprMust
 	ExprTry
+	ExprTuple
+	ExprAnonFn
 )
 
 type Expr interface {
@@ -376,12 +378,21 @@ const (
 	PatternWildcard PatternKind = iota // _
 	PatternVariant                     // Shape::Circle(r) or Circle(r) or Shape::Point
 	PatternLiteral                     // 1, "foo", true
+	PatternTuple                       // (a, b)
 )
 
 type MatchPattern interface {
 	Node
 	IsPattern() PatternKind
 }
+
+type TuplePattern struct {
+	Elements []MatchPattern
+	Span_    Span
+}
+
+func (TuplePattern) IsPattern() PatternKind { return PatternTuple }
+func (t TuplePattern) NodeSpan() Span       { return t.Span_ }
 
 type WildcardPattern struct {
 	Span_ Span
@@ -440,3 +451,24 @@ type TryExpr struct {
 
 func (TryExpr) IsExpr() ExprKind { return ExprTry }
 func (t TryExpr) NodeSpan() Span { return t.Span_ }
+
+type TupleExpr struct {
+	Elements []Expr
+	Span_    Span
+}
+
+func (TupleExpr) IsExpr() ExprKind { return ExprTuple }
+func (t TupleExpr) NodeSpan() Span { return t.Span_ }
+
+type AnonFnExpr struct {
+	TypeParams  []TypeParam
+	Constraints []GenericConstraint
+	Params      []FnParam
+	ReturnType  *TYPE_REF
+	Body        Block
+	Span_       Span
+}
+
+func (AnonFnExpr) IsExpr() ExprKind { return ExprAnonFn }
+func (a AnonFnExpr) NodeSpan() Span { return a.Span_ }
+

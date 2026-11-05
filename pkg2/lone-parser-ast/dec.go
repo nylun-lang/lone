@@ -24,7 +24,8 @@ func (w WasmDirective) NodeSpan() Span { return w.Span_ }
 // BIND_DEC represents variable and constant bindings (let and var).
 type BIND_DEC struct {
 	Name      string
-	Pattern   MatchPattern // non-nil for destructuring: let Shape::Circle(r) = s
+	Names     []string     // non-empty for grouped declarations: let [a, b]: int = 0
+	Pattern   MatchPattern // non-nil for destructuring: let Shape::Circle(r) = s or let (a, b) = pair
 	IsPublic  bool
 	IsMutable bool // true for 'var' (mutable), false for 'let' (immutable)
 	Value     Expr
@@ -37,6 +38,7 @@ func (b BIND_DEC) NodeSpan() Span { return b.Span_ }
 // FnParam represents a typed function parameter.
 type FnParam struct {
 	Name  string
+	Names []string // non-empty for grouped parameters: [x, y, w, h]: int
 	Type  TYPE_REF
 	Span_ Span
 }
@@ -168,6 +170,7 @@ const (
 	TYPE_BASE TypeRefKind = iota
 	TYPE_LIST
 	TYPE_FN
+	TYPE_TUPLE
 )
 
 type TypeConstrain struct {
@@ -179,11 +182,15 @@ type TypeConstrain struct {
 type TYPE_REF struct {
 	Kind      TypeRefKind
 	Constrain TypeConstrain
-	Value     any // *TypeBase, *TypeList, *TypeFn
+	Value     any // *TypeBase, *TypeList, *TypeFn, *TypeTuple
 	Span_     Span
 }
 
 func (t TYPE_REF) NodeSpan() Span { return t.Span_ }
+
+type TypeTuple struct {
+	Types []TYPE_REF
+}
 
 type TypeBase struct {
 	Name    string
