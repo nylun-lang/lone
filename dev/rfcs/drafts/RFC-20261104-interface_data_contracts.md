@@ -194,9 +194,22 @@ fn scale_point<T where { T satisfies IfcMutablePoint }>(p: ref<T>, factor: int) 
    - Zero heap allocation.
    - Direct linear memory load/store operations.
 
-### 6.2 Object Literal Stack Allocation & Escape Prevention
-- Anonymous object literals `{ .x: 10, .y: 20 }` allocated inline are placed on the Page 0 datastack frame of the caller.
-- Because datastack frames rewind upon function return, escape analysis strictly forbids returning a reference to a datastack-allocated object literal (`borrow/stack-use-after-free`). Object literals intended to outlive their frame must be allocated via heap `#alloc`.
+### 6.2 Unified Memory Placement, Datastack SRET, & Escape Promotion
+Lone unifies zero-cost stack performance with automatic safety for interface and struct memory:
+
+1. **Caller-Allocated Datastack SRET (Return by Value)**:
+   - Returning concrete structs or interface-satisfying records by value (`fn f() Point` or `fn f() { .x: int, .y: int }`) uses caller-allocated datastack storage (SRET).
+   - The caller reserves the required bytes on its own Page 0 datastack frame and passes an implicit `sret_ptr` pointer to the callee.
+   - The callee writes field values directly into the caller's frame.
+   - *Cost*: Zero heap allocation, zero GC overhead, and zero leaks; memory is reclaimed instantly when the caller's stack pointer rewinds.
+2. **Local Non-Escaping References (`&local`)**:
+   - Inline anonymous object literals `{ .x: 10, .y: 20 }` and local structs whose references do not escape reside directly on the local function's Page 0 datastack frame with zero allocation overhead.
+3. **Automatic Escape Promotion to Managed Store (`ref<T>`)**:
+   - When a managed reference escapes its defining function scope (e.g. `return &Point::{ .x: 10, .y: 20 }` or returning `ref<IfcPoint>`), the compiler's escape analyzer automatically promotes the allocation to the **Managed Store** (dynamic heap via `$__lone_rt_alloc` / `#alloc` in Page 1+).
+   - **Deterministic Drop**: The compiler inserts automatic reference drop cleanup (`$__lone_rt_free` / `#free`) when the last reference falls out of scope.
+   - The inlined free-list allocator immediately coalesces the freed block with adjacent memory—providing full safety without a stop-the-world garbage collector.
+4. **Unmanaged Raw Pointers (`ptr<T>`)**:
+   - Unmanaged raw pointers obtained via `&raw` bypass managed tracking. Attempting to return or escape an unmanaged raw pointer referencing a stack-local slot triggers compile-time diagnostic `borrow/stack-use-after-free`.
 
 ---
 

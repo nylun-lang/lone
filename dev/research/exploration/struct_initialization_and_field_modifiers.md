@@ -29,7 +29,7 @@ $$\mathbf{[ro]}\;\; \text{name}\mathbf{:}\;\; \text{Type}\;\; \mathbf{[=\; defau
 ### 2.1 Visibility: The Leading Underscore (`_`)
 Lone avoids repetitive `pub` keywords on individual fields:
 - **Public Field**: Any field whose identifier does **not** begin with `_` (e.g. `id`, `username`, `x`, `y`). Accessible across modules if the enclosing struct is `pub`.
-- **Private/Hidden Field**: Any field whose identifier begins with `_` (e.g. `_socket_fd`, `_token_hash`, `_ref_count`). Accessible only within the declaring file/module.
+- **Private/Hidden Field**: Any field whose identifier begins with `_` (e.g. `_socket_fd`, `_token_hash`, `_ref_count`). Accessible strictly within methods and associated functions declared on `T` itself (Struct-Private scope, mirroring JavaScript `#field`).
 
 ### 2.2 Immutability: The `ro` Modifier
 - **Mutable (Default)**: If the struct instance is declared with `var`, the field can be read and reassigned (`s.field = new_val`). If declared with `let`, all fields are immutable.

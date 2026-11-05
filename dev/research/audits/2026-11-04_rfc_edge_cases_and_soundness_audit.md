@@ -26,9 +26,9 @@ Across 10 investigated edge cases, the underlying architecture proves exceptiona
 - **Question**: If `ro` fields can only be set in `__init__`, how can structs provide alternative named constructors (e.g. `TcpSocket::connect(...)` or `from_fd(...)`)?
 - **Analysis**: If factory methods could never set `ro` fields, constructors would be restricted to a single signature, forcing clumsy wrapping.
 - **Resolution**:
-  - The encapsulation boundary is **lexical file scope**.
-  - Any associated function declared in the **same source file** as the struct can instantiate it using raw aggregate syntax `Self::{ ... }`, setting private fields (`_*`) and `ro` fields during the aggregate expression.
-  - Outside callers in other files are strictly restricted to `Type::(...)` (dispatching to `__init__`) or public factory methods.
+  - The encapsulation boundary is **associated struct scope (Option A)**.
+  - Any associated function or constructor declared on the struct `T` itself (such as `pub fn connect(...) Self` or `__init__`) can instantiate it using raw aggregate syntax `Self::{ ... }`, setting private fields (`_*`) and `ro` fields during the aggregate expression.
+  - Outside callers in non-associated code or other files are strictly restricted to `Type::(...)` (dispatching to `__init__`) or public factory methods.
   - *Invariant*: Once the `Self::{ ... }` aggregate expression finishes evaluating, its `ro` fields are permanently frozen.
 
 ### Edge Case 2: Reassignment of `ro` Fields Inside `__init__`
@@ -46,10 +46,13 @@ Across 10 investigated edge cases, the underlying architecture proves exceptiona
   - *Rationale*: Guarantees that passing `&s` to a helper function within `__init__` never encounters a mutating `ro` field.
 
 ### Edge Case 3: Scope of Privacy (`_`)
-- **Question**: Does `_field` mean private to the file or private to the package/module?
-- **Resolution**: **File-Scoped.**
-  - Lone uses flat, explicit imports. To avoid mysterious cross-file state access within a directory, fields starting with `_` are private strictly to their declaring `.lone` file.
-  - Code in adjacent files in the same project directory must respect the public API of the struct.
+- **Question**: Does `_field` mean private to the file, private to the package, or private to the struct itself?
+- **Resolution**: **Struct-Private Scope (Option A - mirroring JavaScript `#field`).**
+  - Fields prefixed with `_` are strictly private to the declaring struct `T` itself.
+  - Access to `_field` is permitted **only** within methods and associated functions declared on `T` (via `self._field` or `Self::__init__`).
+  - Standalone functions—even within the exact same `.lone` source file—**cannot** access `instance._field`.
+  - External code and non-associated functions attempting to read or write `instance._field` receive compile-time diagnostic `type/private-field-access`.
+  - This provides strict, uncompromising encapsulation without accidental state leaks across functions in the same module.
 
 ### Edge Case 4: Zero-Field Structs (`type Unit = struct {}`)
 - **Resolution**:
@@ -97,11 +100,26 @@ Across 10 investigated edge cases, the underlying architecture proves exceptiona
   - Enums are tagged unions with discriminant tags at offset 0. Monomorphized direct memory loads without discriminant checks would cause memory unsafety.
   - Enums can only be inspected via exhaustive `match` expressions. Only nominal structs and object literals can satisfy interfaces.
 
-### Edge Case 10: Object Literals and Datastack Escapes
-- **Question**: When an anonymous object literal `{ .x: 10, .y: 20 }` satisfies an interface, where does it live and can it escape?
-- **Resolution**:
-  - Stack allocation: Object literals live in the caller's Page 0 datastack frame.
-  - Escape analysis: Returning `ref<IfcPoint>` pointing to a stack-allocated object literal triggers `borrow/stack-use-after-free`.
+### Edge Case 10: Object Literals, Reference Escapes, and Memory Placement
+- **Question**: When an anonymous object literal `{ .x: 10, .y: 20 }` or local struct satisfies an interface, where does it live and what happens if a reference to it escapes? Can the language "cheat" using caller stack offsets or automatic heap promotion?
+- **Analysis**:
+  - In WebAssembly, Page 0 is a downward-growing datastack that rewinds upon function return. Returning a raw pointer to a callee stack frame causes a dangling pointer / use-after-free bug.
+  - However, modern systems languages employ two complementary, leak-free memory mechanisms:
+    1. **Caller-Allocated Datastack Storage (SRET / "Goose" strategy)** for values.
+    2. **Automatic Escape Promotion to Managed Store** for escaping managed references (`ref<T>`).
+- **Resolution: Unified Memory Strategy**:
+  1. **Value Return (Caller Datastack SRET)**:
+     - When a function returns a concrete struct or interface-satisfying object by value (`fn f() Point` or `fn f() { .x: int, .y: int }`), the caller allocates the space directly on its own datastack frame before calling the callee.
+     - The caller passes a hidden `sret_ptr` pointer to the callee, which writes fields directly into the caller's frame.
+     - *Cost*: Zero heap allocation, zero GC/ref-counting overhead, zero memory leaks. Memory is instantly reclaimed when the caller's frame rewinds.
+  2. **Non-Escaping Local References (`&local`)**:
+     - When `&obj` does not escape the local scope (e.g. passed downwards to `render_point(&pt)`), it resides safely on the local function's Page 0 datastack frame. Zero allocation overhead.
+  3. **Escaping Managed References (`ref<T>` Promotion)**:
+     - When the compiler's escape analyzer detects that a reference escapes the declaring function (e.g. `return &Point::{ .x: 10, .y: 20 }` or storing into a long-lived struct field), it automatically promotes the allocation to the **Managed Store** (dynamic heap via `$__lone_rt_alloc` / `#alloc` in Page 1+).
+     - **Deterministic Reclamation**: The compiler inserts automatic reference drop cleanup (`$__lone_rt_free` / `#free`). Memory is immediately coalesced by the free-list allocator with bi-directional coalescing.
+     - *No stop-the-world GC*: Completely deterministic, zero pause times.
+  4. **Unmanaged Raw Pointers (`ptr<T>`)**:
+     - Raw pointers obtained via `&raw` bypass the managed reference safety model. If a raw pointer to a stack-local frame is returned or escapes, the static analyzer flags `borrow/stack-use-after-free`.
 
 ---
 
