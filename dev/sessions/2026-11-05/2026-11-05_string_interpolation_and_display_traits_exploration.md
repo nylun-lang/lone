@@ -15,8 +15,9 @@ Explored the user's proposal to formalize **String Interpolation** by treating i
 
 ## 2. Key Design Points Formulated
 
-1. **Syntax (`"Hello ${name}"`)**:
-   - Double-quoted strings with `${expr}` interpolation markers, preventing brace collisions with struct literals `{ ... }`.
+1. **Explicit Format String Syntax (`f"Hello ${name}"`)**:
+   - Double-quoted strings prefixed with `f` and containing `${expr}` interpolation markers.
+   - Prevents brace collisions with struct literals `{ ... }` and ensures normal strings `"Price: $100"` require zero escaping.
 2. **Dual Desugaring Modes**:
    - **Direct Output (`println("Hello ${name}")`)**: Desugars directly into consecutive primitive writes (`#print("Hello ")`, `print(name)`). **Zero heap allocations**.
    - **Value Construction (`let s: str = "...")`)**: Desugars to a buffer construction (`StringBuilder`) returning a heap `str`.

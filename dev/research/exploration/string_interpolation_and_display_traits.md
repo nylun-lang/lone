@@ -16,8 +16,8 @@
 In Lone v0.5.0-beta, formatting values requires manual sequencing of standalone functions (`print("x: ")`, `print_int(x)`, `println("")`).
 
 This exploration formulates a cohesive design for **String Interpolation** grounded in Lone's core principles:
-1. **Ergonomic Template Syntax (`"Hello, ${name}! You scored ${score}."`)**:
-   Unambiguous `${expr}` syntax inside double-quoted strings.
+1. **Explicit Format String Syntax (`f"Hello, ${name}! You scored ${score}."`)**:
+   Explicit `f` prefix distinguishes formatted strings from normal string literals, upholding **IL1 (Explicit over implicit)** and ensuring normal strings `"Price: $100"` never require escaping for `$`.
 2. **Dual Desugaring Modes**:
    - **Direct Output / Streaming (Zero Allocation)**: When passed directly to `print`, `println`, or any stream writer, interpolation desugars into consecutive, in-place writes without allocating intermediate strings on the heap.
    - **Value Construction**: When assigned to a `str` variable, it desugars into an efficient buffer construction.
@@ -26,28 +26,31 @@ This exploration formulates a cohesive design for **String Interpolation** groun
 
 ---
 
-## 2. Syntax: The `${expr}` Interpolation Standard
+## 2. Syntax: The `f"${expr}"` Formatted String Standard
 
 ### 2.1 Lexical Form
-Interpolated strings use standard double quotes with the `${...}` escape sequence:
+Interpolated strings explicitly use the **`f` prefix** preceding the opening double quote:
 
-$$\mathbf{"\dots\$\{expression\}\dots"}$$
+$$\mathbf{f"\dots\$\{expression\}\dots"}$$
 
 ```lone
 let name: str = "Alice"
 let score: int = 95
 
--- Simple variable interpolation:
-println("Player: ${name}, Score: ${score}")
+-- Explicit format string literal:
+println(f"Player: ${name}, Score: ${score}")
 
 -- Complex expression interpolation:
-println("Next level in: ${100 - score} points")
+println(f"Next level in: ${100 - score} points")
+
+-- Regular string literals remain 100% literal with zero escaping needed:
+println("The ticket costs $50 per person.") -- Plain string, no interpolation!
 ```
 
-### 2.2 Why `${expr}` over `{expr}` or `\(expr)`
-- **No Collision with Braces**: Lone uses `{ ... }` extensively for struct literals, object records, match expressions, and blocks. Requiring `{` to be escaped as `{{` inside strings causes friction.
-- **Instant Lexer Recognition**: The `$` sign followed immediately by `{` provides unambiguous $O(1)$ lookahead for the lexer.
-- **Familiarity**: Matches JavaScript/TypeScript, Dart, and Kotlin template strings.
+### 2.2 Why `f"..."` is Superior for Systems Languages
+- **IL1 (Explicit over implicit)**: Normal strings are never accidentally scanned or altered. The developer explicitly opts in to interpolation with `f"..."`.
+- **Zero Dollar Escaping in Normal Strings**: Code containing shell variables, prices, regexes, or documentation (`$PATH`, `$100`, `$__stack_pointer`) can use normal `"..."` without escaping `$` as `\$`.
+- **Deterministic Lexer Performance**: The lexer immediately knows at character `'f'` followed by `'"'` to enter the format string tokenization mode. Standard strings bypass this logic entirely for maximum scanning speed.
 
 ---
 
@@ -215,17 +218,19 @@ Attempting to interpolate a type `T` that does not implement `TrDisplay` fails a
 ## 6. Compiler Pipeline & Lexer Architecture (`pkg2`)
 
 ### 6.1 Lexer State Machine (`pkg2/lone-lexer`)
-When the lexer encounters `"`:
-1. Reads regular string characters until `$` or `"`.
-2. If `$` is followed by `{`:
+When the lexer encounters `f"`:
+1. Emits `TokenFStringStart`.
+2. Reads characters until `${` or `"`.
+3. If `${` is encountered:
    - Emits `TokenStringPart` with the text chunk.
    - Pushes `LexerModeInterpolation` onto the lexer state stack.
    - Emits `TokenInterpolateStart` (`${`).
-3. Resumes normal expression lexing for the expression inside the braces.
-4. When matching closing `}` in `LexerModeInterpolation`:
+4. Resumes normal expression lexing for the expression inside the braces.
+5. When matching closing `}` in `LexerModeInterpolation`:
    - Pops the interpolation mode.
-   - Resumes scanning the string until the next `${` or closing `"`.
-5. Emits `TokenStringEnd`.
+   - Resumes scanning the format string until the next `${` or closing `"`.
+6. When closing `"` is encountered, emits `TokenFStringEnd`.
+7. Regular strings beginning with `"` alone are scanned as traditional flat literals (`TokenString`), completely skipping interpolation overhead.
 
 ### 6.2 Parser AST Representation (`pkg2/lone-parser-ast`)
 An interpolated string is represented as a dedicated AST node:
@@ -242,8 +247,9 @@ type InterpolatedStringExpr struct {
 
 | Language | Interpolation Syntax | Underlying Mechanism | Allocates Heap? |
 | :--- | :--- | :--- | :---: |
-| **Lone (Proposed)** | `"Hello ${name}"` | Desugars to `print` streaming or `StringBuilder` via `TrDisplay` | **No** (in print) / Yes (in `let s`) |
+| **Lone (Proposed)** | `f"Hello ${name}"` | Desugars to `print` streaming or `StringBuilder` via `TrDisplay` | **No** (in print) / Yes (in `let s`) |
 | **Rust** | `println!("Hello {name}")` | `std::fmt::Display` via `write!` macro | No (zero allocation) |
 | **Go** | `fmt.Sprintf("Hello %v", name)` | Reflection / interface dynamic dispatch | Yes (allocates every call) |
+| **Python** | `f"Hello {name}"` | String formatting opcode | Yes |
 | **JavaScript** | `` `Hello ${name}` `` | Evaluates to new heap string | Yes |
 | **Zig** | `std.fmt.allocPrint(alloc, "Hello {s}", .{name})` | Explicit allocator + writer format | Explicit |
