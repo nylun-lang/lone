@@ -2,12 +2,12 @@
 
 **Date**: 2026-11-05  
 **Scope**: Language Design, Syntax Grammar, Closure Semantics & Type System  
-**Status**: Completed & Approved (Formalized into RFC)  
+**Status**: Completed & Approved (Formalized into Accepted RFC)  
 **Location**: `dev/research/exploration/anonymous_functions_grouped_declarations_and_tuples.md`  
-**RFC**: [`RFC-20261105-grouped_declarations_anonymous_functions_and_tuples`](../rfcs/drafts/RFC-20261105-grouped_declarations_anonymous_functions_and_tuples.md)  
+**RFC**: [`RFC-20261105-grouped_declarations_anonymous_functions_and_tuples`](../rfcs/accepted/RFC-20261105-grouped_declarations_anonymous_functions_and_tuples.md)  
 **Related**:
 - `dev/SPEC.md`
-- `dev/rfcs/drafts/RFC-20261105-reference_and_pointer_semantics.md`
+- `dev/rfcs/accepted/RFC-20261105-reference_and_pointer_semantics.md`
 - `dev/research/audits/2026-11-05_ref_ptr_and_closure_soundness_audit.md` (Edge Case 21)
 
 ---

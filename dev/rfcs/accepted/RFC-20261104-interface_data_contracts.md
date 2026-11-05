@@ -3,10 +3,15 @@
 - **RFC**: `RFC-20261104-interface_data_contracts`
 - **Title**: Formal Data Contracts via Interface Types (`Ifc*`)
 - **Author**: Human & AI Pair
-- **Status**: Draft
+- **Status**: Accepted
 - **Created**: 2026-11-04
+- **Accepted**: 2026-11-05
 - **Target Version**: v0.6.0
-- **Related RFCs**: [`RFC-20261104-struct_initialization_and_field_modifiers`](./RFC-20261104-struct_initialization_and_field_modifiers.md)
+- **Related RFCs**:
+  - [`RFC-20261104-struct_initialization_and_field_modifiers`](./RFC-20261104-struct_initialization_and_field_modifiers.md)
+  - [`RFC-20261105-reference_and_pointer_semantics`](./RFC-20261105-reference_and_pointer_semantics.md)
+  - [`RFC-20261105-grouped_declarations_anonymous_functions_and_tuples`](./RFC-20261105-grouped_declarations_anonymous_functions_and_tuples.md)
+  - [`RFC-20261105-string_interpolation_and_display_traits`](./RFC-20261105-string_interpolation_and_display_traits.md)
 - **Applies to**: `pkg2/lone-parser`, `pkg2/lone-analyzer`, `pkg2/lone-compiler-wir`, `dev/SPEC.md`
 
 ---

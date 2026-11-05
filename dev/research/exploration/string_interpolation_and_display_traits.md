@@ -2,12 +2,12 @@
 
 **Date**: 2026-11-05  
 **Scope**: Language Syntax, Lexer Architecture, Trait Design & Zero-Allocation Formatting  
-**Status**: Completed & Approved (Formalized into RFC)  
+**Status**: Completed & Approved (Formalized into Accepted RFC)  
 **Location**: `dev/research/exploration/string_interpolation_and_display_traits.md`  
-**RFC**: [`RFC-20261105-string_interpolation_and_display_traits`](../rfcs/drafts/RFC-20261105-string_interpolation_and_display_traits.md)  
+**RFC**: [`RFC-20261105-string_interpolation_and_display_traits`](../rfcs/accepted/RFC-20261105-string_interpolation_and_display_traits.md)  
 **Related**:
 - `dev/SPEC.md` (Sections 5.7, 5.9, 11.3)
-- `dev/rfcs/drafts/RFC-20261104-interface_data_contracts.md`
+- `dev/rfcs/accepted/RFC-20261104-interface_data_contracts.md`
 - `dev/research/exploration/anonymous_functions_grouped_declarations_and_tuples.md`
 
 ---

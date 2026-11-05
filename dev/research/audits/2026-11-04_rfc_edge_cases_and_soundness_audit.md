@@ -127,5 +127,5 @@ Across 10 investigated edge cases, the underlying architecture proves exceptiona
 
 Both designs are formally sound, robust, and free of hidden runtime costs.
 The resolutions above are incorporated into:
-1. `dev/rfcs/drafts/RFC-20261104-interface_data_contracts.md`
-2. `dev/rfcs/drafts/RFC-20261104-struct_initialization_and_field_modifiers.md`
+1. `dev/rfcs/accepted/RFC-20261104-interface_data_contracts.md`
+2. `dev/rfcs/accepted/RFC-20261104-struct_initialization_and_field_modifiers.md`

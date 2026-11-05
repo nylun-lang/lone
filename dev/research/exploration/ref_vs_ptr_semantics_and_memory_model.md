@@ -2,13 +2,13 @@
 
 **Date**: 2026-11-05  
 **Scope**: Language Design, Memory Architecture, Syntax & Compiler Codegen  
-**Status**: Completed & Approved (Formalized into RFC)  
+**Status**: Completed & Approved (Formalized into Accepted RFC)  
 **Location**: `dev/research/exploration/ref_vs_ptr_semantics_and_memory_model.md`  
-**RFC**: [`RFC-20261105-reference_and_pointer_semantics`](../rfcs/drafts/RFC-20261105-reference_and_pointer_semantics.md)  
+**RFC**: [`RFC-20261105-reference_and_pointer_semantics`](../rfcs/accepted/RFC-20261105-reference_and_pointer_semantics.md)  
 **Related**:
 - `dev/SPEC.md` (Sections 4.3, 7.3, 8.1, 10.1)
-- `dev/rfcs/drafts/RFC-20261104-interface_data_contracts.md`
-- `dev/rfcs/drafts/RFC-20261104-struct_initialization_and_field_modifiers.md`
+- `dev/rfcs/accepted/RFC-20261104-interface_data_contracts.md`
+- `dev/rfcs/accepted/RFC-20261104-struct_initialization_and_field_modifiers.md`
 - `dev/research/audits/2026-11-04_rfc_edge_cases_and_soundness_audit.md`
 
 ---
