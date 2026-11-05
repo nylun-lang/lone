@@ -15,11 +15,12 @@
 
 This exploration develops three cohesive, ergonomic language extensions that build directly on Lone's memory model and recent soundness audits:
 
-1. **Grouped Declarations (`(id1, id2, ..., idN): Type [= default]`)**:
-   A uniform syntax allowing developers to declare $N \ge 2$ identifiers sharing the exact same type, modifiers, and default values across:
-   - Function parameter lists: `fn draw((x, y, w, h): int) void`
-   - Struct field definitions: `struct { (w, x, y, z): f32 = 0.0 }`
-   - Local variable bindings: `var (r, g, b, a): u8 = 255`
+1. **Grouped Declarations (`[id1, id2, ..., idN]: Type [= default]`)**:
+   A uniform bracket syntax allowing developers to declare $N \ge 2$ identifiers sharing a single type or pairwise tuple types, modifiers, and default values across:
+   - Function parameter lists: `fn draw([x, y, w, h]: int) void` or `fn bind([host, port]: (str, int))`
+   - Struct field definitions: `struct { [w, x, y, z]: f32 = 0.0 }` or `struct { [a, b]: (int, int) }`
+   - Local variable bindings: `var [r, g, b, a]: u8 = 255`
+   - *Design Invariant*: Uses square brackets `[...]` to prevent any syntactic or visual ambiguity with tuple expressions `(a, b)` and parenthesized types.
 2. **First-Class Anonymous Functions (`let f = fn(...) { ... }`)**:
    Expression-position function literals with formal closure capture rules (borrowing stack data for non-escaping helpers, value-capture for escaping closures) adhering to **Edge Case 21**.
 3. **Lightweight Tuples & Destructuring (`let (a, b) = pair`)**:
@@ -27,19 +28,32 @@ This exploration develops three cohesive, ergonomic language extensions that bui
 
 ---
 
-## 2. Grouped Declarations (`(id1, id2, ..., idN): Type`)
+## 2. Grouped Declarations (`[id1, id2, ..., idN]: Type`)
 
-### 2.1 The Problem in Existing Systems
+### 2.1 The Problem in Existing Systems & Disambiguation with Tuples
 In many languages, declaring multiple variables or fields of the same type requires either:
 - Repetitive boilerplate: `x: int, y: int, z: int, w: int`
 - Ambiguous comma-separated syntax: Go's `x, y, z int` can become visually noisy and difficult to parse when mixed with multi-return types or complex expressions.
+- If parenthesized syntax `(a, b): int` were used, it would directly collide with tuple patterns and parenthesized expressions.
+
+By adopting **square brackets `[id1, id2, ..., idN]`** for grouped identifier packs:
+- `(...)` is reserved exclusively for **tuples** and expression precedence.
+- `[...]` is reserved for **identifier packs**, list literals, and indexing.
+- The parser enjoys deterministic LL(1) parsing without backtracking.
 
 ### 2.2 Lone Grouped Syntax Specification
-A grouped declaration wraps $N \ge 2$ identifiers in parentheses, followed by their common type and optional shared default initializer:
+A grouped declaration wraps $N \ge 2$ identifiers in square brackets, followed by their type and optional shared default initializer:
 
-$$\mathbf{[modifiers]\;\; (id_1, id_2, \dots, id_N)\;:\; Type\;\; [=\; default]}$$
+$$\mathbf{[modifiers]\;\; [id_1, id_2, \dots, id_N]\;:\; Type\;\; [=\; default]}$$
 
-Every identifier in the group is expanded into an independent field, parameter, or variable binding possessing the specified type and modifiers.
+Lone supports two modes of typing for identifier packs:
+1. **Broadcast Single Type**:
+   `[w, x, y, z]: int = 0` $\implies$ All four fields receive type `int` and default `0`.
+2. **Pairwise / Tuple-Matched Type**:
+   `struct { [a, b]: (int, int) }` or `struct { [host, port]: (str, int) }`
+   The tuple type `(T1, T2, ..., TN)` matches the arity of the identifier pack, assigning corresponding types sequentially (`host: str`, `port: int`).
+
+Every identifier in the pack is expanded into an independent field, parameter, or variable binding possessing the specified modifiers and individual types.
 
 ---
 
@@ -48,25 +62,27 @@ Every identifier in the group is expanded into an independent field, parameter, 
 #### 1. Function Parameter Lists
 ```lone
 -- Declares four distinct parameters 'x', 'y', 'w', 'h' of type 'int':
-fn draw_rect((x, y, w, h): int, color: str) void {
+fn draw_rect([x, y, w, h]: int, color: str) void {
     #print("Drawing at: ")
     println_int(x)
 }
 
--- Multiple groups in a single signature:
-fn transform_vector((src_x, src_y, src_z): f32, (dst_x, dst_y, dst_z): f32) void {
-    ...
+-- Pairwise tuple-typed parameters:
+fn configure_socket([host, port]: (str, int)) void {
+    #print("Connecting to: ")
+    #print(host)
+    println_int(port)
 }
 ```
-* **Grammar Invariant**: Parenthesized identifier lists `(a, b): T` eliminate any ambiguity with subsequent parameters. The parser treats `(a, b)` as an identifier pack.
 
 #### 2. Struct Field Definitions
 ```lone
 pub type Transform = struct {
-    (pos_x, pos_y, pos_z): f32 = 0.0,
-    (scale_x, scale_y, scale_z): f32 = 1.0,
-    ro (created_at, updated_at): i64,
-    _ (secret_a, secret_b): str,  -- Grouped private fields!
+    [pos_x, pos_y, pos_z]: f32 = 0.0,
+    [scale_x, scale_y, scale_z]: f32 = 1.0,
+    [min_bound, max_bound]: (i32, i32),  -- Pairwise typing!
+    ro [created_at, updated_at]: i64,
+    _ [secret_a, secret_b]: str,         -- Grouped private fields!
 }
 ```
 * **Modifier Uniformity**: Modifiers (`ro`, `_`, `pub`) apply uniformly to every identifier in the pack.
@@ -76,10 +92,10 @@ pub type Transform = struct {
 ```lone
 pub fn main() void {
     -- Declares four local integers, all initialized to 0:
-    var (top, bottom, left, right): int = 0
+    var [top, bottom, left, right]: int = 0
     
-    -- Declares two immutable strings:
-    let (host, fallback): str = "localhost"
+    -- Pairwise typed declaration:
+    let [host, port]: (str, int) = ("localhost", 8080)
 }
 ```
 * Evaluates the initializer expression and assigns it to each variable independently.
@@ -231,8 +247,9 @@ Under the hood, a tuple `(T1, T2, ..., TN)` is lowered identically to an anonymo
          return p.parseFnExpr()
      ```
 3. **Grouped Identifier Packs**:
-   - In parameter parsing: if `peek() == TokenLParen` and `peekN(1) == TokenIdent`, parse comma-separated identifier list up to `TokenRParen`, followed by `expect(TokenColon)` and `parseTypeRef()`.
-   - In struct fields: if `peek() == TokenLParen`, parse identifier pack `(w, x, y, z): Type`.
+   - In parameter parsing: if `peek() == TokenLBracket`, parse comma-separated identifier list up to `TokenRBracket`, followed by `expect(TokenColon)` and `parseTypeRef()`.
+   - In struct fields: if `peek() == TokenLBracket`, parse identifier pack `[w, x, y, z]: Type` or `[a, b]: (int, int)`.
+   - Zero lookahead ambiguity: `[` signals an identifier pack; `(` signals a tuple or parenthesized expression.
 
 ---
 
@@ -240,8 +257,8 @@ Under the hood, a tuple `(T1, T2, ..., TN)` is lowered identically to an anonymo
 
 | Feature | Lone Proposal | Go | Rust | Zig |
 | :--- | :--- | :--- | :--- | :--- |
-| **Grouped Params** | `fn((w, x, y, z): int)` | `w, x, y, z int` | Not supported | Not supported |
-| **Grouped Fields** | `struct { (w, x, y, z): int }` | Not supported | Not supported | Not supported |
+| **Grouped Params** | `fn([w, x, y, z]: int)` | `w, x, y, z int` | Not supported | Not supported |
+| **Grouped Fields** | `struct { [a, b]: (int, int) }` | Not supported | Not supported | Not supported |
 | **Anonymous Fn** | `fn(x: int) int { ... }` | `func(x int) int { ... }` | `\|x\| x * x` | Not supported (no closures) |
 | **Closure Escapes**| Error on stack ref capture | Promotes silently to heap | Checked by lifetimes | Explicit context struct |
 | **Tuples** | `(int, str)` | Multi-return only | `(i32, &str)` | Anonymous struct `struct { i32, []u8 }` |
