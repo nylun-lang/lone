@@ -187,6 +187,16 @@ Lone coordinates indirect memory across its two-tier WebAssembly linear memory l
    - If static analysis detects `&raw local_var` escaping the declaring function scope, the compiler raises a compile-time error: `borrow/stack-use-after-free`.
    - Raw pointers intended to outlive a stack frame must be explicitly allocated via `#alloc`.
 
+### 5.3 Inner Closure Captures & Lifetime Invariants
+When an inner closure or local function accesses variables from its enclosing scope:
+1. **Non-Escaping Closures (Safe Stack Borrowing)**:
+   - When an inner closure does not escape the current function (e.g. passed synchronously to `items.for_each(fn)`), capturing local stack variables by reference is **permitted with zero heap allocation**.
+   - The enclosing datastack frame remains valid for the duration of the call.
+2. **Escaping Closures (Forbidden Reference Capture)**:
+   - When an inner closure escapes its defining scope (returned from the function or stored in a persistent struct), **capturing local stack variables by reference (`ref<T>`) is strictly forbidden** (`closure/escaping-reference-capture`).
+   - *Rationale*: Prevents captured objects from living "rent-free" on the Managed Store when closures are uncalled, and eliminates asynchronous data race hazards.
+   - Developers must either capture by value (copy/move) or explicitly allocate shared state on the Managed Store.
+
 ---
 
 ## 6. WebAssembly Compilation & Codegen Pipeline
@@ -234,6 +244,7 @@ In WebAssembly, local variables declared with `local $var` exist only in virtual
 | `type/invalid-cast` | Attempting `ptr<T> as ref<T>` or cast between incompatible types. | Error |
 | `type/call-arg-type` | Passing `ref<T>` where `ptr<T>` expected (or vice versa). | Error |
 | `borrow/stack-use-after-free` | Returning `&raw stack_var` escaping function frame. | Error |
+| `closure/escaping-reference-capture` | Escaping inner closure captures local stack variable by reference. | Error |
 
 ---
 
