@@ -1075,8 +1075,104 @@ fn main() void {
 	}
 }
 
+func TestStructFieldWriteThroughRef(t *testing.T) {
+	code := `
+type Point = struct {
+    ro id: int,
+    x: int,
+    y: int,
+}
 
+fn move_point(p: ref<Point>) void {
+    p.x = p.x + 10
+    p.y = p.y + 20
+}
 
+fn main() void {
+    var pt = Point::{ .id: 1, .x: 0, .y: 0 }
+    move_point(&pt)
+}
+`
+	analyzer := NewAnalyzer()
+	_, diags, err := analyzer.AnalyzeSource([]byte(code))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(diags) > 0 {
+		t.Fatalf("expected 0 diagnostics for field write through mutable ref, got: %v", diags)
+	}
+}
 
+func TestStructFieldWriteReadOnlyRejections(t *testing.T) {
+	code := `
+type Point = struct {
+    ro id: int,
+    x: int,
+}
+
+fn test_ro_ref(r: ref<ro Point>) void {
+    r.x = 42
+}
+
+fn test_ro_field(r: ref<Point>) void {
+    r.id = 99
+}
+`
+	analyzer := NewAnalyzer()
+	_, diags, err := analyzer.AnalyzeSource([]byte(code))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	hasRefWriteErr := false
+	hasFieldWriteErr := false
+	for _, d := range diags {
+		if d.Rule == "type/immutable-reference-write" {
+			hasRefWriteErr = true
+		}
+		if d.Rule == "type/immutable-field-write" {
+			hasFieldWriteErr = true
+		}
+	}
+
+	if !hasRefWriteErr {
+		t.Errorf("expected type/immutable-reference-write diagnostic for ref<ro Point>, got: %v", diags)
+	}
+	if !hasFieldWriteErr {
+		t.Errorf("expected type/immutable-field-write diagnostic for ro field through ref, got: %v", diags)
+	}
+}
+
+func TestStructByValueParameterImmutability(t *testing.T) {
+	code := `
+type Point = struct {
+    x: int,
+}
+
+fn mutate_param(p: Point) void {
+    p.x = 100
+}
+`
+	analyzer := NewAnalyzer()
+	_, diags, err := analyzer.AnalyzeSource([]byte(code))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	hasReassignErr := false
+	for _, d := range diags {
+		if d.Rule == "type/immutable-reassignment" {
+			hasReassignErr = true
+			if !strings.Contains(d.Message, `cannot mutate field "x" on immutable binding "p"`) {
+				t.Errorf("unexpected message: %s", d.Message)
+			}
+			break
+		}
+	}
+
+	if !hasReassignErr {
+		t.Fatalf("expected type/immutable-reassignment diagnostic, got: %v", diags)
+	}
+}
 
 

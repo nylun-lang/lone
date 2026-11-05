@@ -426,8 +426,118 @@ fn main() void {
 	}
 }
 
+func TestRefStructFieldMutationExecution(t *testing.T) {
+	code := `
+type Point = struct {
+    x: int,
+    y: int,
+}
 
+fn move_point(p: ref<Point>) void {
+    p.x = p.x + 5
+    p.y = p.y + 10
+}
 
+fn main() int {
+    var pt = Point::{ .x: 1, .y: 2 }
+    move_point(&pt)
+    return pt.x * 100 + pt.y
+}
+`
+	wat := compileSourceToWat(t, code)
 
+	tmpDir := t.TempDir()
+	watPath := filepath.Join(tmpDir, "ref_struct_field.wat")
+	if err := os.WriteFile(watPath, []byte(wat), 0644); err != nil {
+		t.Fatalf("failed to write temp wat: %v", err)
+	}
+
+	cmd := exec.Command("wasmtime", "--invoke", "main", watPath)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("wasmtime failed: %v, output: %s\nwat:\n%s", err, string(out), wat)
+	}
+
+	got := strings.TrimSpace(string(out))
+	if !strings.HasSuffix(got, "612") {
+		t.Fatalf("unexpected wasmtime output:\ngot:  %q\nwant suffix: 612", got)
+	}
+}
+
+func TestPassByValueStructIsolationExecution(t *testing.T) {
+	code := `
+type Point = struct {
+    x: int,
+    y: int,
+}
+
+fn mutate_alias(val: Point, r: ref<Point>) int {
+    r.x = 999
+    r.y = 888
+    return val.x * 10 + val.y
+}
+
+fn main() int {
+    var a = Point::{ .x: 1, .y: 2 }
+    let res = mutate_alias(a, &a)
+    return res * 1000 + a.x
+}
+`
+	wat := compileSourceToWat(t, code)
+
+	tmpDir := t.TempDir()
+	watPath := filepath.Join(tmpDir, "struct_pass_val.wat")
+	if err := os.WriteFile(watPath, []byte(wat), 0644); err != nil {
+		t.Fatalf("failed to write temp wat: %v", err)
+	}
+
+	cmd := exec.Command("wasmtime", "--invoke", "main", watPath)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("wasmtime failed: %v, output: %s\nwat:\n%s", err, string(out), wat)
+	}
+
+	got := strings.TrimSpace(string(out))
+	if !strings.HasSuffix(got, "12999") {
+		t.Fatalf("unexpected wasmtime output:\ngot:  %q\nwant suffix: 12999", got)
+	}
+}
+
+func TestRefStructMemcpyAssignmentExecution(t *testing.T) {
+	code := `
+type Point = struct {
+    x: int,
+    y: int,
+}
+
+fn reset(p: ref<Point>) void {
+    *p = Point::{ .x: 42, .y: 84 }
+}
+
+fn main() int {
+    var pt = Point::{ .x: 1, .y: 2 }
+    reset(&pt)
+    return pt.x * 100 + pt.y
+}
+`
+	wat := compileSourceToWat(t, code)
+
+	tmpDir := t.TempDir()
+	watPath := filepath.Join(tmpDir, "ref_struct_memcpy.wat")
+	if err := os.WriteFile(watPath, []byte(wat), 0644); err != nil {
+		t.Fatalf("failed to write temp wat: %v", err)
+	}
+
+	cmd := exec.Command("wasmtime", "--invoke", "main", watPath)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("wasmtime failed: %v, output: %s\nwat:\n%s", err, string(out), wat)
+	}
+
+	got := strings.TrimSpace(string(out))
+	if !strings.HasSuffix(got, "4284") {
+		t.Fatalf("unexpected wasmtime output:\ngot:  %q\nwant suffix: 4284", got)
+	}
+}
 
 

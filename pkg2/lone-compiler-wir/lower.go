@@ -1069,6 +1069,24 @@ func (l *lowerer) lowerStmt(stmt loneanalyzer.TStmt, alloc *LocalAllocator) []Wa
 			return insts
 		}
 		if mem, ok := s.Target.(*loneanalyzer.TMemberAccessExpr); ok {
+			if st, ok := mem.Typ.(*loneanalyzer.StructType); ok {
+				sz := st.TotalSize
+				if sz <= 0 {
+					sz = 4
+				}
+				var insts []WasmInst
+				// dst: mem.Base + mem.Offset
+				insts = append(insts, l.lowerExpr(mem.Base, alloc)...)
+				if mem.Offset > 0 {
+					insts = append(insts, InstConstI32{Value: int32(mem.Offset)})
+					insts = append(insts, InstBinaryOp{Op: "i32.add"})
+				}
+				// src: s.Value
+				insts = append(insts, l.lowerExpr(s.Value, alloc)...)
+				insts = append(insts, InstConstI32{Value: int32(sz)})
+				insts = append(insts, InstCall{Target: "$__lone_rt_memcpy"})
+				return insts
+			}
 			var insts []WasmInst
 			insts = append(insts, l.lowerExpr(mem.Base, alloc)...)
 			insts = append(insts, l.lowerExpr(s.Value, alloc)...)
@@ -1076,6 +1094,18 @@ func (l *lowerer) lowerStmt(stmt loneanalyzer.TStmt, alloc *LocalAllocator) []Wa
 			return insts
 		}
 		if un, ok := s.Target.(*loneanalyzer.TUnaryExpr); ok && un.Op == loneast.UNARY_OP_DEREF {
+			if st, ok := s.Value.ExprType().(*loneanalyzer.StructType); ok {
+				sz := st.TotalSize
+				if sz <= 0 {
+					sz = 4
+				}
+				var insts []WasmInst
+				insts = append(insts, l.lowerExpr(un.Expr, alloc)...) // dst
+				insts = append(insts, l.lowerExpr(s.Value, alloc)...) // src
+				insts = append(insts, InstConstI32{Value: int32(sz)})
+				insts = append(insts, InstCall{Target: "$__lone_rt_memcpy"})
+				return insts
+			}
 			var insts []WasmInst
 			insts = append(insts, l.lowerExpr(un.Expr, alloc)...)
 			insts = append(insts, l.lowerExpr(s.Value, alloc)...)
@@ -1476,6 +1506,9 @@ func (l *lowerer) lowerExpr(expr loneanalyzer.TExpr, alloc *LocalAllocator) []Wa
 			insts = append(insts, InstLoad{Op: loadOpForType(e.Typ), Offset: 0})
 		case loneast.UNARY_OP_REF, loneast.UNARY_OP_RAW_REF:
 			if vref, ok := e.Expr.(*loneanalyzer.TVarRefExpr); ok {
+				if _, isStruct := vref.Typ.(*loneanalyzer.StructType); isStruct {
+					return l.lowerExpr(vref, alloc)
+				}
 				if slot, isSlot := l.varSlots[vref.Name]; isSlot {
 					return []WasmInst{
 						InstGlobalGet{Name: "$__stack_pointer"},
@@ -1483,6 +1516,15 @@ func (l *lowerer) lowerExpr(expr loneanalyzer.TExpr, alloc *LocalAllocator) []Wa
 						InstBinaryOp{Op: "i32.add"},
 					}
 				}
+			}
+			if mem, ok := e.Expr.(*loneanalyzer.TMemberAccessExpr); ok {
+				var minsts []WasmInst
+				minsts = append(minsts, l.lowerExpr(mem.Base, alloc)...)
+				if mem.Offset > 0 {
+					minsts = append(minsts, InstConstI32{Value: int32(mem.Offset)})
+					minsts = append(minsts, InstBinaryOp{Op: "i32.add"})
+				}
+				return minsts
 			}
 			insts = append(insts, l.lowerExpr(e.Expr, alloc)...)
 		default:
@@ -1804,6 +1846,38 @@ func (l *lowerer) lowerCallExpr(e *loneanalyzer.TCallExpr, alloc *LocalAllocator
 	// User function call
 	var insts []WasmInst
 	for _, arg := range e.Args {
+		if st, ok := arg.ExprType().(*loneanalyzer.StructType); ok {
+			isLValue := false
+			switch a := arg.(type) {
+			case *loneanalyzer.TVarRefExpr, *loneanalyzer.TMemberAccessExpr:
+				isLValue = true
+			case *loneanalyzer.TUnaryExpr:
+				if a.Op == loneast.UNARY_OP_DEREF {
+					isLValue = true
+				}
+			}
+
+			if isLValue {
+				sz := st.TotalSize
+				if sz <= 0 {
+					sz = 4
+				}
+				copyLocal := alloc.AllocTemp(TypeI32)
+				defer alloc.FreeTemp(copyLocal, TypeI32)
+				insts = append(insts,
+					InstConstI32{Value: int32(sz)},
+					InstCall{Target: "$__lone_rt_alloc"},
+					InstLocalTee{Name: copyLocal},
+				)
+				insts = append(insts, l.lowerExpr(arg, alloc)...) // src
+				insts = append(insts,
+					InstConstI32{Value: int32(sz)},
+					InstCall{Target: "$__lone_rt_memcpy"},
+					InstLocalGet{Name: copyLocal},
+				)
+				continue
+			}
+		}
 		insts = append(insts, l.lowerExpr(arg, alloc)...)
 	}
 	insts = append(insts, InstCall{Target: "$" + calleeName})

@@ -1221,19 +1221,48 @@ func (te *TypeEvaluator) analyzeAssignStmt(a *loneast.AssignStmt) *TAssignStmt {
 
 	// Check if target is a member access (struct field) and whether it is read-only or on an immutable binding
 	if mem, ok := tTarget.(*TMemberAccessExpr); ok {
+		var targetStruct *StructType
+		var isReadOnlyRef bool
 		if st, ok := mem.Base.ExprType().(*StructType); ok {
-			if fInfo, exists := st.Field(mem.Field); exists {
+			targetStruct = st
+		} else if refT, ok := mem.Base.ExprType().(*RefType); ok {
+			if st, ok := refT.Elem.(*StructType); ok {
+				targetStruct = st
+			}
+			if refT.ReadOnly {
+				isReadOnlyRef = true
+			}
+		} else if ptrT, ok := mem.Base.ExprType().(*PtrType); ok {
+			if st, ok := ptrT.Elem.(*StructType); ok {
+				targetStruct = st
+			}
+			if ptrT.ReadOnly {
+				isReadOnlyRef = true
+			}
+		}
+
+		if isReadOnlyRef {
+			te.addDiag(SeverityError, a.Span_, "type/immutable-reference-write",
+				fmt.Sprintf("cannot write through read-only reference %q", mem.Base.ExprType().String()))
+		}
+
+		if targetStruct != nil {
+			if fInfo, exists := targetStruct.Field(mem.Field); exists {
 				if fInfo.IsReadOnly {
 					te.addDiag(SeverityError, a.Span_, "type/immutable-field-write",
-						fmt.Sprintf("cannot assign to read-only field %q on struct %q; 'ro' fields are immutable after construction", mem.Field, st.Name))
+						fmt.Sprintf("cannot assign to read-only field %q on struct %q; 'ro' fields are immutable after construction", mem.Field, targetStruct.Name))
 				}
 			}
 		}
-		if vref, ok := mem.Base.(*TVarRefExpr); ok {
-			sym := te.stack.Lookup(vref.Name)
-			if sym != nil && !sym.IsMutable {
-				te.addDiag(SeverityError, a.Span_, "type/immutable-reassignment",
-					fmt.Sprintf("cannot mutate field %q on immutable binding %q declared with 'let'", mem.Field, sym.Name))
+
+		// Only direct struct values on immutable bindings prevent field writes
+		if _, isDirectStruct := mem.Base.ExprType().(*StructType); isDirectStruct {
+			if vref, ok := mem.Base.(*TVarRefExpr); ok {
+				sym := te.stack.Lookup(vref.Name)
+				if sym != nil && !sym.IsMutable {
+					te.addDiag(SeverityError, a.Span_, "type/immutable-reassignment",
+						fmt.Sprintf("cannot mutate field %q on immutable binding %q", mem.Field, sym.Name))
+				}
 			}
 		}
 	}
@@ -2009,6 +2038,14 @@ func (te *TypeEvaluator) evalPostfixExpr(p loneast.PostFixExpr) TExpr {
 			var targetStruct *StructType
 			if st, ok := curr.ExprType().(*StructType); ok {
 				targetStruct = st
+			} else if refT, ok := curr.ExprType().(*RefType); ok {
+				if st, ok := refT.Elem.(*StructType); ok {
+					targetStruct = st
+				}
+			} else if ptrT, ok := curr.ExprType().(*PtrType); ok {
+				if st, ok := ptrT.Elem.(*StructType); ok {
+					targetStruct = st
+				}
 			} else if vref, ok := curr.(*TVarRefExpr); ok {
 				if st, ok := te.structs[vref.Name]; ok {
 					targetStruct = st
@@ -2986,12 +3023,14 @@ func (te *TypeEvaluator) resolveBaseType(tr loneast.TYPE_REF) Type {
 			// Handle pointer ptr<T>
 			if tb.Name == "ptr" && len(tb.Args) > 0 {
 				inner := te.resolveType(tb.Args[0])
-				return &PtrType{Elem: inner, ReadOnly: tr.Constrain.ReadOnly}
+				isRo := tr.Constrain.ReadOnly || tb.Args[0].Constrain.ReadOnly
+				return &PtrType{Elem: inner, ReadOnly: isRo}
 			}
 			// Handle reference ref<T>
 			if tb.Name == "ref" && len(tb.Args) > 0 {
 				inner := te.resolveType(tb.Args[0])
-				return &RefType{Elem: inner, ReadOnly: tr.Constrain.ReadOnly}
+				isRo := tr.Constrain.ReadOnly || tb.Args[0].Constrain.ReadOnly
+				return &RefType{Elem: inner, ReadOnly: isRo}
 			}
 			// Handle infer
 			if tb.Name == "infer" {
