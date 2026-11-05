@@ -1118,8 +1118,38 @@ func (l *lowerer) lowerStmt(stmt loneanalyzer.TStmt, alloc *LocalAllocator) []Wa
 				elemSz = 4
 			}
 			var insts []WasmInst
-			insts = append(insts, l.lowerExpr(idx.Base, alloc)...)
-			insts = append(insts, l.lowerExpr(idx.Index, alloc)...)
+
+			fixedSize := 0
+			if pt, ok := idx.Base.ExprType().(*loneanalyzer.PtrType); ok {
+				if lt, ok := pt.Elem.(*loneanalyzer.ListType); ok && lt.Fixed {
+					fixedSize = lt.Size
+				}
+			} else if rt, ok := idx.Base.ExprType().(*loneanalyzer.RefType); ok {
+				if lt, ok := rt.Elem.(*loneanalyzer.ListType); ok && lt.Fixed {
+					fixedSize = lt.Size
+				}
+			} else if lt, ok := idx.Base.ExprType().(*loneanalyzer.ListType); ok && lt.Fixed {
+				fixedSize = lt.Size
+			}
+
+			_, isLit := idx.Index.(*loneanalyzer.TLiteralExpr)
+			if fixedSize > 0 && !isLit {
+				idxLocal := alloc.AllocTemp(TypeI32)
+				defer alloc.FreeTemp(idxLocal, TypeI32)
+				insts = append(insts, l.lowerExpr(idx.Index, alloc)...)
+				insts = append(insts,
+					InstLocalTee{Name: idxLocal},
+					InstConstI32{Value: int32(fixedSize)},
+					InstBinaryOp{Op: "i32.ge_u"},
+					InstIf{Then: []WasmInst{InstUnreachable{}}},
+				)
+				insts = append(insts, l.lowerExpr(idx.Base, alloc)...)
+				insts = append(insts, InstLocalGet{Name: idxLocal})
+			} else {
+				insts = append(insts, l.lowerExpr(idx.Base, alloc)...)
+				insts = append(insts, l.lowerExpr(idx.Index, alloc)...)
+			}
+
 			if elemSz > 1 {
 				insts = append(insts, InstConstI32{Value: elemSz})
 				insts = append(insts, InstBinaryOp{Op: "i32.mul"})
@@ -1428,6 +1458,35 @@ func (l *lowerer) lowerLoopStmt(s *loneanalyzer.TLoopStmt, alloc *LocalAllocator
 func (l *lowerer) lowerExpr(expr loneanalyzer.TExpr, alloc *LocalAllocator) []WasmInst {
 	switch e := expr.(type) {
 	case *loneanalyzer.TLiteralExpr:
+		if lt, ok := e.Typ.(*loneanalyzer.ListType); ok {
+			var insts []WasmInst
+			ptrLocal := alloc.AllocTemp(TypeI32)
+			defer alloc.FreeTemp(ptrLocal, TypeI32)
+
+			elemSz := loneanalyzer.TypeSize(lt.Elem)
+			if elemSz <= 0 {
+				elemSz = 4
+			}
+			totalSize := lt.Size * elemSz
+			if totalSize <= 0 {
+				totalSize = 4
+			}
+
+			insts = append(insts, InstConstI32{Value: int32(totalSize)})
+			insts = append(insts, InstCall{Target: "$__lone_rt_alloc"})
+			insts = append(insts, InstLocalSet{Name: ptrLocal})
+
+			if elems, ok := e.Value.([]loneanalyzer.TExpr); ok {
+				for i, elem := range elems {
+					offset := i * elemSz
+					insts = append(insts, InstLocalGet{Name: ptrLocal})
+					insts = append(insts, l.lowerExpr(elem, alloc)...)
+					insts = append(insts, InstStore{Op: storeOpForType(elem.ExprType()), Offset: offset})
+				}
+			}
+			insts = append(insts, InstLocalGet{Name: ptrLocal})
+			return insts
+		}
 		switch e.Kind {
 		case loneast.LiteralInt:
 			if v, ok := e.Value.(int64); ok {
@@ -1509,6 +1568,9 @@ func (l *lowerer) lowerExpr(expr loneanalyzer.TExpr, alloc *LocalAllocator) []Wa
 				if _, isStruct := vref.Typ.(*loneanalyzer.StructType); isStruct {
 					return l.lowerExpr(vref, alloc)
 				}
+				if _, isList := vref.Typ.(*loneanalyzer.ListType); isList {
+					return l.lowerExpr(vref, alloc)
+				}
 				if slot, isSlot := l.varSlots[vref.Name]; isSlot {
 					return []WasmInst{
 						InstGlobalGet{Name: "$__stack_pointer"},
@@ -1516,6 +1578,21 @@ func (l *lowerer) lowerExpr(expr loneanalyzer.TExpr, alloc *LocalAllocator) []Wa
 						InstBinaryOp{Op: "i32.add"},
 					}
 				}
+			}
+			if idx, ok := e.Expr.(*loneanalyzer.TIndexExpr); ok {
+				elemSz := int32(loneanalyzer.TypeSize(idx.Typ))
+				if elemSz <= 0 {
+					elemSz = 4
+				}
+				var minsts []WasmInst
+				minsts = append(minsts, l.lowerExpr(idx.Base, alloc)...)
+				minsts = append(minsts, l.lowerExpr(idx.Index, alloc)...)
+				if elemSz > 1 {
+					minsts = append(minsts, InstConstI32{Value: elemSz})
+					minsts = append(minsts, InstBinaryOp{Op: "i32.mul"})
+				}
+				minsts = append(minsts, InstBinaryOp{Op: "i32.add"})
+				return minsts
 			}
 			if mem, ok := e.Expr.(*loneanalyzer.TMemberAccessExpr); ok {
 				var minsts []WasmInst
@@ -1605,8 +1682,38 @@ func (l *lowerer) lowerExpr(expr loneanalyzer.TExpr, alloc *LocalAllocator) []Wa
 			elemSz = 4
 		}
 		var insts []WasmInst
-		insts = append(insts, l.lowerExpr(e.Base, alloc)...)
-		insts = append(insts, l.lowerExpr(e.Index, alloc)...)
+
+		fixedSize := 0
+		if pt, ok := e.Base.ExprType().(*loneanalyzer.PtrType); ok {
+			if lt, ok := pt.Elem.(*loneanalyzer.ListType); ok && lt.Fixed {
+				fixedSize = lt.Size
+			}
+		} else if rt, ok := e.Base.ExprType().(*loneanalyzer.RefType); ok {
+			if lt, ok := rt.Elem.(*loneanalyzer.ListType); ok && lt.Fixed {
+				fixedSize = lt.Size
+			}
+		} else if lt, ok := e.Base.ExprType().(*loneanalyzer.ListType); ok && lt.Fixed {
+			fixedSize = lt.Size
+		}
+
+		_, isLit := e.Index.(*loneanalyzer.TLiteralExpr)
+		if fixedSize > 0 && !isLit {
+			idxLocal := alloc.AllocTemp(TypeI32)
+			defer alloc.FreeTemp(idxLocal, TypeI32)
+			insts = append(insts, l.lowerExpr(e.Index, alloc)...)
+			insts = append(insts,
+				InstLocalTee{Name: idxLocal},
+				InstConstI32{Value: int32(fixedSize)},
+				InstBinaryOp{Op: "i32.ge_u"},
+				InstIf{Then: []WasmInst{InstUnreachable{}}},
+			)
+			insts = append(insts, l.lowerExpr(e.Base, alloc)...)
+			insts = append(insts, InstLocalGet{Name: idxLocal})
+		} else {
+			insts = append(insts, l.lowerExpr(e.Base, alloc)...)
+			insts = append(insts, l.lowerExpr(e.Index, alloc)...)
+		}
+
 		if elemSz > 1 {
 			insts = append(insts, InstConstI32{Value: elemSz})
 			insts = append(insts, InstBinaryOp{Op: "i32.mul"})

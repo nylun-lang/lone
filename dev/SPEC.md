@@ -164,19 +164,26 @@ var b: comptime ro str = "constant"
 var c: comptime ro ?[]i32 = none
 ```
 
-### 4.3 Reference & Pointer Types: `ref<T>` vs. `ptr<T>`
+### 4.3 Reference & Pointer Hierarchy: `ref<T>` vs. `ptr<T>`
 
-In accordance with **IL1 (Explicit over implicit)**, Lone makes a strict distinction between managed references and unmanaged raw memory addresses:
+In accordance with **IL1 (Explicit over implicit)** and the accepted pointer hierarchy ([`RFC-20261105-unsafe_pointer_indexing_and_buffer_semantics`](./rfcs/accepted/RFC-20261105-unsafe_pointer_indexing_and_buffer_semantics.md)), Lone strictly separates single-item pointers, sized array pointers, unsized buffer pointers, and managed references:
 
-| Type | Name | Semantics | Creation Syntax | Indexing (`[i]`) | Target Memory |
-| :---: | :--- | :--- | :---: | :---: | :--- |
-| `ref<T>` | **Managed Reference** | Safe reference tracked by escape analyzer. | `&x` | **Rejected** (`type/invalid-index`) | Datastack frame or promoted to Managed Store. |
-| `ptr<T>` | **Raw Memory Address** | Unsafe raw byte offset in Wasm memory (`i32`). Zero overhead. | `&raw x` | **Allowed** (`p[i]`) | WebAssembly linear memory. |
+| Type | Kind | Nullable | Indexing (`[i]`) | Bounds Safety | Target Memory |
+| :---: | :--- | :---: | :---: | :--- | :--- |
+| `ref<T>` | **Managed Reference** | No | **Rejected** (`type/invalid-index`) | N/A (single item) | Datastack frame or Managed Store. |
+| `ref<[N]T>` | **Sized Array Reference** | No | **Allowed** | Checked ($i < N$, 1-inst dynamic) | Datastack frame or Managed Store. |
+| `ref<[]T>` (`[]T`) | **Fat Slice Reference** | No | **Allowed** | Checked ($i < \text{len}$) | 12-byte slice header. |
+| `ptr<T>` | **Scalar Pointer** | Yes | **Rejected** (`type/single-pointer-indexing-rejected`) | N/A (must use `*p`) | Linear memory (`i32`). |
+| `ptr<[N]T>` | **Sized Buffer Pointer** | Yes | **Allowed** | Checked ($i < N$, 1-inst dynamic) | Linear memory (`i32`). |
+| `ptr<[]T>` | **Unsized Buffer Pointer**| Yes | **Allowed** | Unchecked (raw systems escape) | Linear memory (`i32`). |
 
-#### Dereference & Assignment Rules:
-- **Deref Stores**: Modifying the target of a reference or pointer requires explicit dereference syntax `*r = val` or `*p = val`.
-- **Indexing**: Pointer buffers allow array-style indexing `p[i] = val`. Managed references forbid indexing (`r[i]` produces `type/invalid-index`).
-- **Immutability Enforcement**: Neither `ref<ro T>` nor `ptr<ro T>` can be stored into via dereference (`*r = val` produces `type/immutable-target-write`).
+#### Dereference, Indexing & Mutation Rules:
+- **Single-Item Pointers**: `ptr<T>` points to an isolated scalar. Indexing `p[i]` is statically rejected (`type/single-pointer-indexing-rejected`). Dereferencing `*p = val` is permitted (rejected on `ptr<ro T>`).
+- **Sized Buffers (`ptr<[N]T>`, `ref<[N]T>`)**: Indexing `p[i]` is verified at compile-time for constant indices ($i \ge N$ triggers `type/index-out-of-bounds`) and verified at runtime with a single unsigned instruction (`i32.ge_u N`) that cleanly traps on out-of-bounds access. Sized pointers safely decay into unsized buffer pointers `ptr<[]T>`.
+- **Unsized Buffers (`ptr<[]T>`)**: Array indexing `buf[i]` executes with zero runtime overhead without bounds checks.
+- **Fat References (`ref<[]T> ≡ []T`)**: Structurally equivalent to the 12-byte slice header `{ ptr, len, cap }`.
+- **Field Writes Through References**: Mutating fields through references (`r.x = val` where `r: ref<Point>`) is supported. Mutating through `ref<ro Point>` emits `type/immutable-reference-write`, and mutating fields declared `ro` emits `type/immutable-field-write`.
+- **Pass-By-Value Aggregate Copies**: Function arguments are passed strictly by value. When an lvalue struct argument is passed by value to a function that may alias it via a reference parameter (e.g. `f(a, &a)`), the compiler emits a caller-side memory copy to preserve the original struct value within the callee.
 
 ```lone
 var val: i32 = 42
@@ -185,10 +192,14 @@ var val: i32 = 42
 var r: ref<i32> = &val
 *r = 99 -- Updates val to 99
 
--- Raw linear memory address
+-- Scalar linear memory address: indexing rejected!
 var p: ptr<i32> = &raw val
 *p = 100 -- Updates val to 100
-p[0] = 101 -- Indexing allowed on pointers
+-- p[0] = 101 -- ERROR: type/single-pointer-indexing-rejected
+
+-- Buffer pointer: indexing allowed!
+var buf: ptr<[]i32> = &raw val as ptr<[]i32>
+buf[0] = 101 -- OK on buffer pointer
 ```
 
 ### 4.4 List & Array Types (`TypeList`)
@@ -584,7 +595,7 @@ Postfix operators chain onto any primary expression from left to right:
 | `::name` | Associated function / type access | `Vec2::new` |
 | `::(...)` | **Canonical Constructor Call**: Dispatches to `Type::__init__(...)` | `Point3D::(1, 2, 3)` |
 | `(args...)` | Function / method call | `calc(1, 2)` |
-| `[i]` | Pointer buffer indexing (valid on `ptr<T>`, error on `ref<T>`) | `p[0]` |
+| `[i]` | Buffer indexing (valid on `ptr<[N]T>`, `ptr<[]T>`, `ref<[N]T>`, `ref<[]T>`, `[]T`; rejected on scalar `ptr<T>` and `ref<T>`) | `p[0]` |
 | `::{ ... }` | Raw aggregate construct (requires all fields to be public) | `Vec2::{ .x: 1, .y: 2 }` |
 | `::|Type|` | **Trait Materialization**: Binds a trait contract to a concrete type | `WriterTrait::|Stdout|` |
 

@@ -3,8 +3,9 @@
 - **RFC**: `RFC-20261105-unsafe_pointer_indexing_and_buffer_semantics`
 - **Title**: Unsafe Pointer Indexing, Typestate Buffer Separation, and Memory Safety
 - **Author**: Human & AI Pair
-- **Status**: Draft
+- **Status**: Accepted
 - **Created**: 2026-11-05
+- **Accepted**: 2026-11-05
 - **Target Version**: v0.6.1 / v0.7.0
 - **Related RFCs**:
   - [`RFC-20261105-reference_and_pointer_semantics`](../accepted/RFC-20261105-reference_and_pointer_semantics.md)

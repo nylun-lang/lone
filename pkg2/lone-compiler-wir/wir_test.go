@@ -244,7 +244,7 @@ fn main() int {
     var r = &x
     *r = 42
 
-    var p = &raw x
+    var p = &raw x as ptr<[]int>
     p[0] = *r + 5
     return *p
 }
@@ -539,5 +539,127 @@ fn main() int {
 		t.Fatalf("unexpected wasmtime output:\ngot:  %q\nwant suffix: 4284", got)
 	}
 }
+
+func TestSizedBufferPointerExecutionAndDynamicTrap(t *testing.T) {
+	// 1. In-bounds dynamic access
+	codeOk := `
+fn get_elem(p: ptr<[4]int>, idx: int) int {
+    return p[idx]
+}
+
+fn main() int {
+    var arr: [4]int = [10, 20, 30, 40]
+    let p: ptr<[4]int> = &raw arr
+    return get_elem(p, 2)
+}
+`
+	watOk := compileSourceToWat(t, codeOk)
+
+	tmpDir := t.TempDir()
+	watPathOk := filepath.Join(tmpDir, "sized_ptr_ok.wat")
+	if err := os.WriteFile(watPathOk, []byte(watOk), 0644); err != nil {
+		t.Fatalf("failed to write temp wat: %v", err)
+	}
+
+	cmdOk := exec.Command("wasmtime", "--invoke", "main", watPathOk)
+	outOk, err := cmdOk.CombinedOutput()
+	if err != nil {
+		t.Fatalf("wasmtime failed: %v, output: %s\nwat:\n%s", err, string(outOk), watOk)
+	}
+	gotOk := strings.TrimSpace(string(outOk))
+	if !strings.HasSuffix(gotOk, "30") {
+		t.Fatalf("unexpected wasmtime output for in-bounds access:\ngot: %q\nwant suffix: 30", gotOk)
+	}
+
+	// 2. Out-of-bounds dynamic access must trap (unreachable)
+	codeTrap := `
+fn get_elem(p: ptr<[4]int>, idx: int) int {
+    return p[idx]
+}
+
+fn main() int {
+    var arr: [4]int = [10, 20, 30, 40]
+    let p: ptr<[4]int> = &raw arr
+    return get_elem(p, 4) -- OOB: size is 4, valid is [0..3]
+}
+`
+	watTrap := compileSourceToWat(t, codeTrap)
+	watPathTrap := filepath.Join(tmpDir, "sized_ptr_trap.wat")
+	if err := os.WriteFile(watPathTrap, []byte(watTrap), 0644); err != nil {
+		t.Fatalf("failed to write temp wat: %v", err)
+	}
+
+	cmdTrap := exec.Command("wasmtime", "--invoke", "main", watPathTrap)
+	outTrap, err := cmdTrap.CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected wasmtime to trap on OOB index access, but succeeded with output: %s", string(outTrap))
+	}
+	if !strings.Contains(string(outTrap), "unreachable") && !strings.Contains(string(outTrap), "trap") {
+		t.Logf("wasmtime output on trap: %s", string(outTrap))
+	}
+}
+
+func TestUnsizedBufferPointerExecution(t *testing.T) {
+	code := `
+fn main() int {
+    let mem = #alloc(64) as ptr<[]int>
+    mem[0] = 111
+    mem[1] = 222
+    mem[5] = 555
+    return mem[0] + mem[1] + mem[5]
+}
+`
+	wat := compileSourceToWat(t, code)
+
+	tmpDir := t.TempDir()
+	watPath := filepath.Join(tmpDir, "unsized_ptr.wat")
+	if err := os.WriteFile(watPath, []byte(wat), 0644); err != nil {
+		t.Fatalf("failed to write temp wat: %v", err)
+	}
+
+	cmd := exec.Command("wasmtime", "--invoke", "main", watPath)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("wasmtime failed: %v, output: %s\nwat:\n%s", err, string(out), wat)
+	}
+
+	got := strings.TrimSpace(string(out))
+	if !strings.HasSuffix(got, "888") {
+		t.Fatalf("unexpected wasmtime output:\ngot: %q\nwant suffix: 888", got)
+	}
+}
+
+func TestSizedPointerDecayExecution(t *testing.T) {
+	code := `
+fn sum3(buf: ptr<[]int>) int {
+    return buf[0] + buf[1] + buf[2]
+}
+
+fn main() int {
+    var arr: [3]int = [100, 200, 300]
+    let p: ptr<[3]int> = &raw arr
+    return sum3(p)
+}
+`
+	wat := compileSourceToWat(t, code)
+
+	tmpDir := t.TempDir()
+	watPath := filepath.Join(tmpDir, "sized_ptr_decay.wat")
+	if err := os.WriteFile(watPath, []byte(wat), 0644); err != nil {
+		t.Fatalf("failed to write temp wat: %v", err)
+	}
+
+	cmd := exec.Command("wasmtime", "--invoke", "main", watPath)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("wasmtime failed: %v, output: %s\nwat:\n%s", err, string(out), wat)
+	}
+
+	got := strings.TrimSpace(string(out))
+	if !strings.HasSuffix(got, "600") {
+		t.Fatalf("unexpected wasmtime output:\ngot: %q\nwant suffix: 600", got)
+	}
+}
+
 
 

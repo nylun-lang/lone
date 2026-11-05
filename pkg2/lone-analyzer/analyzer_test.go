@@ -1175,4 +1175,158 @@ fn mutate_param(p: Point) void {
 	}
 }
 
+func TestSinglePointerIndexingRejected(t *testing.T) {
+	code := `
+fn test_single_ptr(p: ptr<int>) void {
+    let val = p[0]
+}
+`
+	analyzer := NewAnalyzer()
+	_, diags, err := analyzer.AnalyzeSource([]byte(code))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	hasSinglePtrErr := false
+	for _, d := range diags {
+		if d.Rule == "type/single-pointer-indexing-rejected" {
+			hasSinglePtrErr = true
+			if !strings.Contains(d.Message, `cannot index single-item pointer "ptr<i32>"`) {
+				t.Errorf("unexpected message: %s", d.Message)
+			}
+			break
+		}
+	}
+	if !hasSinglePtrErr {
+		t.Fatalf("expected type/single-pointer-indexing-rejected diagnostic, got: %v", diags)
+	}
+}
+
+func TestSizedPointerConstantBoundsCheck(t *testing.T) {
+	code := `
+fn test_sized_ptr(p: ptr<[6]int>) void {
+    let ok0 = p[0]
+    let ok5 = p[5]
+    let bad6 = p[6]
+}
+`
+	analyzer := NewAnalyzer()
+	_, diags, err := analyzer.AnalyzeSource([]byte(code))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	hasOobErr := false
+	for _, d := range diags {
+		if d.Rule == "type/index-out-of-bounds" {
+			hasOobErr = true
+			if !strings.Contains(d.Message, `index 6 is out of bounds for array pointer "ptr<[6]i32>" of size 6`) {
+				t.Errorf("unexpected message: %s", d.Message)
+			}
+			break
+		}
+	}
+	if !hasOobErr {
+		t.Fatalf("expected type/index-out-of-bounds diagnostic, got: %v", diags)
+	}
+}
+
+func TestUnsizedBufferPointerAllowed(t *testing.T) {
+	code := `
+fn test_unsized_ptr(buf: ptr<[]int>) int {
+    let v0 = buf[0]
+    buf[100] = 42
+    let deref = *buf
+    return v0 + deref
+}
+`
+	analyzer := NewAnalyzer()
+	_, diags, err := analyzer.AnalyzeSource([]byte(code))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(diags) > 0 {
+		t.Fatalf("expected 0 diagnostics for unsized buffer pointer, got: %v", diags)
+	}
+}
+
+func TestSizedPointerDecayToUnsized(t *testing.T) {
+	code := `
+fn process_buffer(b: ptr<[]int>) void {}
+
+fn test_decay(p: ptr<[6]int>) void {
+    process_buffer(p)
+}
+`
+	analyzer := NewAnalyzer()
+	_, diags, err := analyzer.AnalyzeSource([]byte(code))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(diags) > 0 {
+		t.Fatalf("expected 0 diagnostics for safe decay ptr<[6]int> -> ptr<[]int>, got: %v", diags)
+	}
+}
+
+func TestRefBufferIndexingAndSingleRefRejection(t *testing.T) {
+	code := `
+fn test_ref_buffer(r_sized: ref<[4]int>, r_slice: ref<[]int>, r_single: ref<int>) void {
+    let a = r_sized[0]
+    let b = r_slice[1]
+    let bad = r_single[0]
+}
+`
+	analyzer := NewAnalyzer()
+	_, diags, err := analyzer.AnalyzeSource([]byte(code))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	hasInvalidIndexErr := false
+	for _, d := range diags {
+		if d.Rule == "type/invalid-index" {
+			hasInvalidIndexErr = true
+			if !strings.Contains(d.Message, `cannot index managed reference of non-buffer type "ref<i32>"`) {
+				t.Errorf("unexpected message: %s", d.Message)
+			}
+			break
+		}
+	}
+	if !hasInvalidIndexErr {
+		t.Fatalf("expected type/invalid-index diagnostic for single ref, got: %v", diags)
+	}
+}
+
+func TestReadOnlyBufferWriteRejection(t *testing.T) {
+	code := `
+fn test_ro_buf(p_ro: ptr<ro []int>, r_ro: ref<ro []int>) void {
+    p_ro[0] = 10
+    r_ro[0] = 20
+}
+`
+	analyzer := NewAnalyzer()
+	_, diags, err := analyzer.AnalyzeSource([]byte(code))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	hasPtrWriteErr := false
+	hasRefWriteErr := false
+	for _, d := range diags {
+		if d.Rule == "type/immutable-pointer-write" {
+			hasPtrWriteErr = true
+		}
+		if d.Rule == "type/immutable-reference-write" {
+			hasRefWriteErr = true
+		}
+	}
+	if !hasPtrWriteErr {
+		t.Errorf("expected type/immutable-pointer-write diagnostic for p_ro[0], got: %v", diags)
+	}
+	if !hasRefWriteErr {
+		t.Errorf("expected type/immutable-reference-write diagnostic for r_ro[0], got: %v", diags)
+	}
+}
+
+
 

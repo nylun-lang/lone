@@ -201,7 +201,15 @@ func (p *PtrType) Equals(other Type) bool {
 func (p *PtrType) AssignableTo(target Type) bool {
 	if op, ok := target.(*PtrType); ok {
 		if op.ReadOnly || !p.ReadOnly {
-			return p.Elem.Equals(op.Elem)
+			if p.Elem.Equals(op.Elem) {
+				return true
+			}
+			// Safe decay: ptr<[N]T> is assignable to ptr<[]T>
+			if srcList, ok := p.Elem.(*ListType); ok && srcList.Fixed {
+				if tgtList, ok := op.Elem.(*ListType); ok && !tgtList.Fixed {
+					return srcList.Elem.Equals(tgtList.Elem)
+				}
+			}
 		}
 	}
 	return false
@@ -228,7 +236,21 @@ func (r *RefType) Equals(other Type) bool {
 func (r *RefType) AssignableTo(target Type) bool {
 	if or, ok := target.(*RefType); ok {
 		if or.ReadOnly || !r.ReadOnly {
-			return r.Elem.Equals(or.Elem)
+			if r.Elem.Equals(or.Elem) {
+				return true
+			}
+			// Safe decay: ref<[N]T> is assignable to ref<[]T>
+			if srcList, ok := r.Elem.(*ListType); ok && srcList.Fixed {
+				if tgtList, ok := or.Elem.(*ListType); ok && !tgtList.Fixed {
+					return srcList.Elem.Equals(tgtList.Elem)
+				}
+			}
+		}
+	}
+	// ref<[]T> ≡ []T (fat slice reference compatibility)
+	if tgtList, ok := target.(*ListType); ok && !tgtList.Fixed {
+		if srcList, ok := r.Elem.(*ListType); ok {
+			return srcList.Elem.Equals(tgtList.Elem)
 		}
 	}
 	return false
@@ -263,6 +285,12 @@ func (l *ListType) AssignableTo(target Type) bool {
 			return l.Elem.Equals(ol.Elem)
 		}
 		return l.Fixed && l.Size == ol.Size && l.Elem.Equals(ol.Elem)
+	}
+	// Slice []T can satisfy ref<[]T>
+	if rf, ok := target.(*RefType); ok {
+		if tgtList, ok := rf.Elem.(*ListType); ok && !tgtList.Fixed {
+			return l.Elem.Equals(tgtList.Elem)
+		}
 	}
 	return false
 }

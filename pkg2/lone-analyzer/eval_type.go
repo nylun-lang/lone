@@ -1285,6 +1285,10 @@ func (te *TypeEvaluator) analyzeAssignStmt(a *loneast.AssignStmt) *TAssignStmt {
 			te.addDiag(SeverityError, a.Span_, "type/immutable-pointer-write",
 				fmt.Sprintf("cannot write to read-only buffer through %q", ptrT.String()))
 		}
+		if refT, ok := idx.Base.ExprType().(*RefType); ok && refT.ReadOnly {
+			te.addDiag(SeverityError, a.Span_, "type/immutable-reference-write",
+				fmt.Sprintf("cannot write to read-only buffer through %q", refT.String()))
+		}
 	}
 
 	if tTarget.ExprType() != TypeUnknown && tVal.ExprType() != TypeUnknown {
@@ -1787,13 +1791,17 @@ func (te *TypeEvaluator) evalLiteral(l loneast.Literal) TExpr {
 
 func (te *TypeEvaluator) evalListLiteral(l loneast.ListLiteral) TExpr {
 	var elemType Type = TypeAny
-	if len(l.Elements) > 0 {
-		first := te.EvalExpr(l.Elements[0])
-		elemType = first.ExprType()
+	var tElems []TExpr
+	for _, el := range l.Elements {
+		tElem := te.EvalExpr(el)
+		tElems = append(tElems, tElem)
+		if elemType == TypeAny {
+			elemType = tElem.ExprType()
+		}
 	}
 	return &TLiteralExpr{
-		Kind:  loneast.LiteralInt, // stored as list value
-		Value: l.Elements,
+		Kind:  loneast.LiteralInt,
+		Value: tElems,
 		Typ:   &ListType{Elem: elemType, Fixed: true, Size: len(l.Elements)},
 		Span_: l.Span_,
 	}
@@ -1859,10 +1867,18 @@ func (te *TypeEvaluator) evalUnaryExpr(u loneast.UnaryExpr) TExpr {
 
 	case loneast.UNARY_OP_DEREF: // *expr
 		if pt, ok := sType.(*PtrType); ok {
-			return &TUnaryExpr{Op: u.Op, Expr: sub, Typ: pt.Elem, Span_: u.Span_}
+			elemType := pt.Elem
+			if lt, ok := pt.Elem.(*ListType); ok {
+				elemType = lt.Elem
+			}
+			return &TUnaryExpr{Op: u.Op, Expr: sub, Typ: elemType, Span_: u.Span_}
 		}
 		if rt, ok := sType.(*RefType); ok {
-			return &TUnaryExpr{Op: u.Op, Expr: sub, Typ: rt.Elem, Span_: u.Span_}
+			elemType := rt.Elem
+			if lt, ok := rt.Elem.(*ListType); ok {
+				elemType = lt.Elem
+			}
+			return &TUnaryExpr{Op: u.Op, Expr: sub, Typ: elemType, Span_: u.Span_}
 		}
 		te.addDiag(SeverityError, u.Span_, "type/invalid-deref",
 			fmt.Sprintf("cannot dereference non-pointer, non-reference type %q", sType.String()))
@@ -1954,6 +1970,13 @@ func (te *TypeEvaluator) evalCastExpr(c loneast.CastExpr) TExpr {
 	// Ref to Ptr cast: ref<T> as ptr<T>
 	_, isSrcRef := srcType.(*RefType)
 	if isSrcRef && isDstPtr {
+		return &TCastExpr{Expr: sub, TargetType: targetType, Span_: c.Span_}
+	}
+
+	// Integer <-> Pointer casts (e.g. #alloc(64) as ptr<[]u8> or addr as ptr<T>)
+	isSrcInt := srcType == TypeI32 || srcType == TypeU32 || srcType == TypeI64 || srcType == TypeU64
+	isDstInt := targetType == TypeI32 || targetType == TypeU32 || targetType == TypeI64 || targetType == TypeU64
+	if (isSrcInt && isDstPtr) || (isSrcPtr && isDstInt) {
 		return &TCastExpr{Expr: sub, TargetType: targetType, Span_: c.Span_}
 	}
 
@@ -2320,15 +2343,72 @@ func (te *TypeEvaluator) evalPostfixExpr(p loneast.PostFixExpr) TExpr {
 		case loneast.SuffixIndex:
 			tIdx := te.EvalExpr(suff.Index)
 			elemType := Type(TypeUnknown)
+
+			// 1. Validate that index is an integer
+			if tIdx.ExprType() != nil && tIdx.ExprType() != TypeAny && tIdx.ExprType() != TypeInfer {
+				idxType := tIdx.ExprType()
+				if idxType != TypeI32 && idxType != TypeI64 && idxType != TypeU32 && idxType != TypeU64 && idxType != TypeI16 && idxType != TypeU16 && idxType != TypeI8 && idxType != TypeU8 {
+					te.addDiag(SeverityError, suff.Span_, "type/invalid-index-type",
+						fmt.Sprintf("buffer index must be an integer, got %q", idxType.String()))
+				}
+			}
+
+			// 2. Validate base type and bounds
 			if lt, ok := curr.ExprType().(*ListType); ok {
 				elemType = lt.Elem
+				if lt.Fixed {
+					if lit, ok := tIdx.(*TLiteralExpr); ok && lit.Kind == loneast.LiteralInt {
+						if v, ok := lit.Value.(int64); ok {
+							if int(v) < 0 || int(v) >= lt.Size {
+								te.addDiag(SeverityError, suff.Span_, "type/index-out-of-bounds",
+									fmt.Sprintf("index %d is out of bounds for array of size %d", v, lt.Size))
+							}
+						}
+					}
+				}
 			} else if pt, ok := curr.ExprType().(*PtrType); ok {
-				elemType = pt.Elem
+				if lt, ok := pt.Elem.(*ListType); ok {
+					elemType = lt.Elem
+					if lt.Fixed {
+						// Fixed array pointer ptr<[N]T>
+						if lit, ok := tIdx.(*TLiteralExpr); ok && lit.Kind == loneast.LiteralInt {
+							if v, ok := lit.Value.(int64); ok {
+								if int(v) < 0 || int(v) >= lt.Size {
+									te.addDiag(SeverityError, suff.Span_, "type/index-out-of-bounds",
+										fmt.Sprintf("index %d is out of bounds for array pointer %q of size %d", v, pt.String(), lt.Size))
+								}
+							}
+						}
+					}
+					// Unsized ptr<[]T> is permitted with zero bounds checks
+				} else {
+					// Single-item pointer ptr<T>: indexing forbidden!
+					te.addDiag(SeverityError, suff.Span_, "type/single-pointer-indexing-rejected",
+						fmt.Sprintf("cannot index single-item pointer %q; use \"*p\" for dereference or cast to buffer pointer \"ptr<[]%s>\" for array indexing", pt.String(), pt.Elem.String()))
+					elemType = pt.Elem
+				}
+			} else if rt, ok := curr.ExprType().(*RefType); ok {
+				if lt, ok := rt.Elem.(*ListType); ok {
+					elemType = lt.Elem
+					if lt.Fixed {
+						// Fixed array reference ref<[N]T>
+						if lit, ok := tIdx.(*TLiteralExpr); ok && lit.Kind == loneast.LiteralInt {
+							if v, ok := lit.Value.(int64); ok {
+								if int(v) < 0 || int(v) >= lt.Size {
+									te.addDiag(SeverityError, suff.Span_, "type/index-out-of-bounds",
+										fmt.Sprintf("index %d is out of bounds for array reference %q of size %d", v, rt.String(), lt.Size))
+								}
+							}
+						}
+					}
+					// Unsized ref<[]T> is permitted (fat slice)
+				} else {
+					te.addDiag(SeverityError, suff.Span_, "type/invalid-index",
+						fmt.Sprintf("cannot index managed reference of non-buffer type %q", rt.String()))
+					elemType = rt.Elem
+				}
 			} else if curr.ExprType() == TypeStr {
 				elemType = TypeI32
-			} else if rt, ok := curr.ExprType().(*RefType); ok {
-				te.addDiag(SeverityError, suff.Span_, "type/invalid-index",
-					fmt.Sprintf("cannot index managed reference of type %q; indexing is only supported on raw pointer buffers 'ptr<T>'", rt.String()))
 			} else {
 				te.addDiag(SeverityError, suff.Span_, "type/invalid-index",
 					fmt.Sprintf("cannot index value of non-buffer type %q", curr.ExprType().String()))
