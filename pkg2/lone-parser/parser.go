@@ -587,24 +587,69 @@ func (p *Parser) parseTypeDec(isPub bool) (loneast.TYPE_DEC, error) {
 				}
 				methods = append(methods, method)
 			} else {
-				fName, err := p.expect(lonelexer.TokenIdent)
-				if err != nil {
-					return loneast.TYPE_DEC{}, err
+				isRo := false
+				if p.peek().Kind == lonelexer.TokenRo {
+					p.advance()
+					isRo = true
 				}
-				fColon, err := p.expect(lonelexer.TokenColon)
-				if err != nil {
-					return loneast.TYPE_DEC{}, err
+
+				if p.peek().Kind == lonelexer.TokenLBracket {
+					p.advance() // consume '['
+					var names []lonelexer.Token
+					for {
+						name, err := p.expect(lonelexer.TokenIdent)
+						if err != nil {
+							return loneast.TYPE_DEC{}, err
+						}
+						names = append(names, name)
+						if p.peek().Kind == lonelexer.TokenComma {
+							p.advance()
+							if p.peek().Kind == lonelexer.TokenRBracket {
+								break
+							}
+						} else {
+							break
+						}
+					}
+					if _, err := p.expect(lonelexer.TokenRBracket); err != nil {
+						return loneast.TYPE_DEC{}, err
+					}
+					if _, err := p.expect(lonelexer.TokenColon); err != nil {
+						return loneast.TYPE_DEC{}, err
+					}
+					fType, err := p.parseTypeRef()
+					if err != nil {
+						return loneast.TYPE_DEC{}, err
+					}
+					for _, nameTok := range names {
+						fields = append(fields, loneast.StructField{
+							Name:       nameTok.Text,
+							Type:       fType,
+							IsReadOnly: isRo,
+							Span_:      lonelexer.Span{Start: nameTok.Start, End: fType.NodeSpan().End},
+						})
+					}
+				} else {
+					fName, err := p.expect(lonelexer.TokenIdent)
+					if err != nil {
+						return loneast.TYPE_DEC{}, err
+					}
+					fColon, err := p.expect(lonelexer.TokenColon)
+					if err != nil {
+						return loneast.TYPE_DEC{}, err
+					}
+					_ = fColon
+					fType, err := p.parseTypeRef()
+					if err != nil {
+						return loneast.TYPE_DEC{}, err
+					}
+					fields = append(fields, loneast.StructField{
+						Name:       fName.Text,
+						Type:       fType,
+						IsReadOnly: isRo,
+						Span_:      lonelexer.Span{Start: fName.Start, End: fType.NodeSpan().End},
+					})
 				}
-				_ = fColon
-				fType, err := p.parseTypeRef()
-				if err != nil {
-					return loneast.TYPE_DEC{}, err
-				}
-				fields = append(fields, loneast.StructField{
-					Name:  fName.Text,
-					Type:  fType,
-					Span_: lonelexer.Span{Start: fName.Start, End: fType.NodeSpan().End},
-				})
 				if p.peek().Kind == lonelexer.TokenComma {
 					p.advance()
 				}

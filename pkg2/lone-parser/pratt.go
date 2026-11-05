@@ -80,6 +80,21 @@ func (p *Parser) ParseExpr(minPrec Precedence) (loneast.Expr, error) {
 			break
 		}
 
+		// Disambiguate leading prefix / statement tokens on a new line:
+		// If the operator starts on a later line than the prefix expression ended,
+		// and it could begin a new statement/expression (e.g. *, &, +, -, (, [),
+		// it should not greedily bind as an infix operator of the previous statement.
+		if op.Start.Line > prefixExpr.NodeSpan().End.Line {
+			if op.Kind == lonelexer.TokenStar ||
+				op.Kind == lonelexer.TokenAmpersand ||
+				op.Kind == lonelexer.TokenPlus ||
+				op.Kind == lonelexer.TokenMinus ||
+				op.Kind == lonelexer.TokenLParen ||
+				op.Kind == lonelexer.TokenLBracket {
+				break
+			}
+		}
+
 		nextExpr, err := p.parseInfix(prefixExpr)
 		if err != nil {
 			return nil, err
@@ -302,6 +317,32 @@ func (p *Parser) parseInfix(left loneast.Expr) (loneast.Expr, error) {
 				return nil, err
 			}
 			return appendSuffix(left, loneast.SuffixCallTypeMake{Data: list, Span_: list.NodeSpan()}, list.NodeSpan().End), nil
+		}
+		if p.peek().Kind == lonelexer.TokenLParen {
+			p.advance() // consume '('
+			args := []loneast.Expr{}
+			if p.peek().Kind != lonelexer.TokenRParen {
+				for {
+					arg, err := p.ParseExpr(PrecNone)
+					if err != nil {
+						return nil, err
+					}
+					args = append(args, arg)
+					if p.peek().Kind == lonelexer.TokenComma {
+						p.advance()
+						if p.peek().Kind == lonelexer.TokenRParen {
+							break
+						}
+					} else {
+						break
+					}
+				}
+			}
+			rparen, err := p.expect(lonelexer.TokenRParen)
+			if err != nil {
+				return nil, err
+			}
+			return appendSuffix(left, loneast.SuffixConstructorCall{Args: args, Span_: lonelexer.Span{Start: tok.Start, End: rparen.End}}, rparen.End), nil
 		}
 
 		ident, err := p.expect(lonelexer.TokenIdent)

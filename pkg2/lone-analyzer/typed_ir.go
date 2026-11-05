@@ -30,8 +30,9 @@ type TVarDec struct {
 	Variant   *EnumVariantInfo // non-nil if destructuring variant pattern
 	TargetVal TExpr            // target being destructured
 	Bindings  []*TVarDec       // bound variables unpacked from variant
-	IsMutable bool             // true for 'var', false for 'let'
-	Type      Type
+	IsMutable    bool             // true for 'var', false for 'let'
+	AddressTaken bool             // true if &var or &raw var taken
+	Type         Type
 	Value     TExpr
 	Span_     loneast.Span
 }
@@ -57,9 +58,10 @@ type TFnDec struct {
 func (f *TFnDec) Span() loneast.Span { return f.Span_ }
 
 type TStructDec struct {
-	Name  string
-	Type  *StructType
-	Span_ loneast.Span
+	Name    string
+	Type    *StructType
+	Methods []*TFnDec
+	Span_   loneast.Span
 }
 
 func (s *TStructDec) Span() loneast.Span { return s.Span_ }

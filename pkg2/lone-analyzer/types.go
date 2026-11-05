@@ -181,11 +181,10 @@ type PtrType struct {
 
 func (p *PtrType) Kind() TypeKind { return TypeKindPtr }
 func (p *PtrType) String() string {
-	ro := ""
 	if p.ReadOnly {
-		ro = "ro "
+		return fmt.Sprintf("ptr<ro %s>", p.Elem.String())
 	}
-	return fmt.Sprintf("%sptr<%s>", ro, p.Elem.String())
+	return fmt.Sprintf("ptr<%s>", p.Elem.String())
 }
 func (p *PtrType) Equals(other Type) bool {
 	if op, ok := other.(*PtrType); ok {
@@ -209,11 +208,10 @@ type RefType struct {
 
 func (r *RefType) Kind() TypeKind { return TypeKindRef }
 func (r *RefType) String() string {
-	ro := ""
 	if r.ReadOnly {
-		ro = "ro "
+		return fmt.Sprintf("ref<ro %s>", r.Elem.String())
 	}
-	return fmt.Sprintf("%sref<%s>", ro, r.Elem.String())
+	return fmt.Sprintf("ref<%s>", r.Elem.String())
 }
 func (r *RefType) Equals(other Type) bool {
 	if or, ok := other.(*RefType); ok {
@@ -268,9 +266,11 @@ func (l *ListType) AssignableTo(target Type) bool {
 // =====================
 
 type StructFieldInfo struct {
-	Name   string
-	Type   Type
-	Offset int
+	Name       string
+	Type       Type
+	Offset     int
+	IsReadOnly bool
+	IsPrivate  bool
 }
 
 type StructType struct {
@@ -280,6 +280,15 @@ type StructType struct {
 	Methods     map[string]*FnType
 	TotalSize   int
 	TotalAlign  int
+}
+
+func (s *StructType) HasPrivateFields() bool {
+	for _, f := range s.Fields {
+		if f.IsPrivate {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *StructType) Kind() TypeKind { return TypeKindStruct }

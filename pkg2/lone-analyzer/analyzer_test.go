@@ -473,3 +473,217 @@ fn test_invalid() void {
 	}
 }
 
+func TestStructEncapsulationAndPrivateFields(t *testing.T) {
+	code := `
+type Account = struct {
+    id: int,
+    _balance: int,
+
+    pub fn __init__(id: int, deposit: int) Account {
+        return Account::{
+            .id: id,
+            ._balance: deposit,
+        }
+    }
+
+    pub fn get_balance(self) int {
+        return self._balance
+    }
+}
+
+fn test_valid() void {
+    let acc = Account::(101, 500)
+    let bal = acc.get_balance()
+}
+
+fn test_invalid_raw_construct() void {
+    let bad = Account::{ .id: 102 }
+}
+
+fn test_invalid_private_access() void {
+    let acc = Account::(103, 300)
+    let secret = acc._balance
+}
+`
+	analyzer := NewAnalyzer()
+	_, diags, err := analyzer.AnalyzeSource([]byte(code))
+	if err != nil {
+		t.Fatalf("unexpected parse error: %v", err)
+	}
+
+	var hasRawConstructErr, hasPrivateAccessErr bool
+	for _, d := range diags {
+		if d.Rule == "type/raw-construct-private-fields" {
+			hasRawConstructErr = true
+		}
+		if d.Rule == "type/private-field-access" {
+			hasPrivateAccessErr = true
+		}
+	}
+
+	if !hasRawConstructErr {
+		t.Errorf("expected type/raw-construct-private-fields diagnostic, got: %v", diags)
+	}
+	if !hasPrivateAccessErr {
+		t.Errorf("expected type/private-field-access diagnostic, got: %v", diags)
+	}
+}
+
+func TestStructReadOnlyFieldEnforcement(t *testing.T) {
+	code := `
+type Point = struct {
+    ro id: int,
+    val: int,
+}
+
+fn test_ro() void {
+    var p = Point::{ .id: 1, .val: 10 }
+    p.val = 20
+    p.id = 99
+}
+`
+	analyzer := NewAnalyzer()
+	_, diags, err := analyzer.AnalyzeSource([]byte(code))
+	if err != nil {
+		t.Fatalf("unexpected parse error: %v", err)
+	}
+
+	hasRoWriteErr := false
+	for _, d := range diags {
+		if d.Rule == "type/immutable-field-write" {
+			hasRoWriteErr = true
+			break
+		}
+	}
+
+	if !hasRoWriteErr {
+		t.Errorf("expected type/immutable-field-write diagnostic, got: %v", diags)
+	}
+}
+
+func TestStructMissingInitForRoPrivateField(t *testing.T) {
+	code := `
+type SecretRecord = struct {
+    ro _key: str,
+    title: str,
+}
+`
+	analyzer := NewAnalyzer()
+	_, diags, err := analyzer.AnalyzeSource([]byte(code))
+	if err != nil {
+		t.Fatalf("unexpected parse error: %v", err)
+	}
+
+	hasMissingInitErr := false
+	for _, d := range diags {
+		if d.Rule == "type/missing-init-for-ro-private-field" {
+			hasMissingInitErr = true
+			break
+		}
+	}
+
+	if !hasMissingInitErr {
+		t.Errorf("expected type/missing-init-for-ro-private-field diagnostic, got: %v", diags)
+	}
+}
+
+func TestStructUnresolvedConstructor(t *testing.T) {
+	code := `
+type PlainData = struct {
+    x: int,
+    y: int,
+}
+
+fn test_bad_constructor() void {
+    let p = PlainData::(10, 20)
+}
+`
+	analyzer := NewAnalyzer()
+	_, diags, err := analyzer.AnalyzeSource([]byte(code))
+	if err != nil {
+		t.Fatalf("unexpected parse error: %v", err)
+	}
+
+	hasUnresolvedErr := false
+	for _, d := range diags {
+		if d.Rule == "type/unresolved-constructor" {
+			hasUnresolvedErr = true
+			break
+		}
+	}
+
+	if !hasUnresolvedErr {
+		t.Errorf("expected type/unresolved-constructor diagnostic, got: %v", diags)
+	}
+}
+
+func TestRefVsPtrImmutabilityTracking(t *testing.T) {
+	code := `
+fn test_immutable_writes() void {
+    let x = 42
+    let r = &x
+    *r = 99
+
+    let p = &raw x
+    *p = 100
+    p[0] = 101
+
+    var y = 10
+    var r_mut = &y
+    *r_mut = 20
+}
+`
+	analyzer := NewAnalyzer()
+	_, diags, err := analyzer.AnalyzeSource([]byte(code))
+	if err != nil {
+		t.Fatalf("unexpected parse error: %v", err)
+	}
+
+	var hasRefWriteErr, hasPtrWriteErr bool
+	for _, d := range diags {
+		if d.Rule == "type/immutable-reference-write" {
+			hasRefWriteErr = true
+		}
+		if d.Rule == "type/immutable-pointer-write" {
+			hasPtrWriteErr = true
+		}
+	}
+
+	if !hasRefWriteErr {
+		t.Errorf("expected type/immutable-reference-write diagnostic, got: %v", diags)
+	}
+	if !hasPtrWriteErr {
+		t.Errorf("expected type/immutable-pointer-write diagnostic, got: %v", diags)
+	}
+}
+
+func TestPointerIndexingAllowedAndRefForbidden(t *testing.T) {
+	code := `
+fn test_indexing(p: ptr<i32>, r: ref<i32>) void {
+    let val_p = p[2]
+    p[2] = 42
+
+    let val_r = r[2]
+}
+`
+	analyzer := NewAnalyzer()
+	_, diags, err := analyzer.AnalyzeSource([]byte(code))
+	if err != nil {
+		t.Fatalf("unexpected parse error: %v", err)
+	}
+
+	hasRefIndexErr := false
+	for _, d := range diags {
+		if d.Rule == "type/invalid-index" && strings.Contains(d.Message, "cannot index managed reference") {
+			hasRefIndexErr = true
+			break
+		}
+	}
+
+	if !hasRefIndexErr {
+		t.Errorf("expected type/invalid-index diagnostic for ref, got: %v", diags)
+	}
+}
+
+
+

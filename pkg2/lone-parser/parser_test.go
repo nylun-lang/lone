@@ -565,3 +565,63 @@ fn write_data<T where { T satisfies TrWriter }>(writer: T, msg: str) void {
 		t.Errorf("expected target TrWriter, got %q", tb2.Name)
 	}
 }
+
+func TestParseStructModifiersAndConstructorCall(t *testing.T) {
+	code := `
+type Point = struct {
+    ro id: int,
+    [x, y]: int,
+    ro [w, h]: f32,
+    _secret: str,
+
+    pub fn __init__(id: int, x: int, y: int) Point {
+        return Point::{ .id: id, .x: x, .y: y, .w: 0.0, .h: 0.0, ._secret: "hidden" }
+    }
+}
+
+fn main() void {
+    let p = Point::(1, 10, 20)
+}
+`
+	decls, err := Parse([]byte(code))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(decls) != 2 {
+		t.Fatalf("expected 2 decls, got %d", len(decls))
+	}
+
+	st := decls[0].(loneast.TYPE_DEC)
+	if len(st.Fields) != 6 {
+		t.Fatalf("expected 6 fields (id, x, y, w, h, _secret), got %d: %+v", len(st.Fields), st.Fields)
+	}
+
+	if !st.Fields[0].IsReadOnly || st.Fields[0].Name != "id" {
+		t.Errorf("expected ro id, got %+v", st.Fields[0])
+	}
+	if st.Fields[1].Name != "x" || st.Fields[2].Name != "y" {
+		t.Errorf("expected [x, y], got %s, %s", st.Fields[1].Name, st.Fields[2].Name)
+	}
+	if !st.Fields[3].IsReadOnly || st.Fields[3].Name != "w" || !st.Fields[4].IsReadOnly || st.Fields[4].Name != "h" {
+		t.Errorf("expected ro [w, h], got %+v, %+v", st.Fields[3], st.Fields[4])
+	}
+	if st.Fields[5].Name != "_secret" {
+		t.Errorf("expected _secret, got %s", st.Fields[5].Name)
+	}
+
+	fn := decls[1].(loneast.FN_DEC)
+	bind := fn.Body.Stmts[0].(loneast.BIND_DEC)
+	pf := bind.Value.(loneast.PostFixExpr)
+	if len(pf.Suffix) != 1 {
+		t.Fatalf("expected 1 suffix, got %d", len(pf.Suffix))
+	}
+	constr, ok := pf.Suffix[0].(loneast.SuffixConstructorCall)
+	if !ok {
+		t.Fatalf("expected SuffixConstructorCall, got %T", pf.Suffix[0])
+	}
+	if len(constr.Args) != 3 {
+		t.Errorf("expected 3 constructor args, got %d", len(constr.Args))
+	}
+}
+

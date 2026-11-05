@@ -270,7 +270,13 @@ func (te *TypeEvaluator) hoistTypeDec(t *loneast.TYPE_DEC) {
 			if al > 0 && offset%al != 0 {
 				offset += al - (offset % al)
 			}
-			info := StructFieldInfo{Name: f.Name, Type: fType, Offset: offset}
+			info := StructFieldInfo{
+				Name:       f.Name,
+				Type:       fType,
+				Offset:     offset,
+				IsReadOnly: f.IsReadOnly,
+				IsPrivate:  strings.HasPrefix(f.Name, "_"),
+			}
 			st.Fields = append(st.Fields, info)
 			st.FieldMap[f.Name] = info
 			offset += sz
@@ -292,6 +298,20 @@ func (te *TypeEvaluator) hoistTypeDec(t *loneast.TYPE_DEC) {
 				mRet = te.resolveType(*m.ReturnType)
 			}
 			st.Methods[m.Name] = &FnType{Params: mParams, Return: mRet}
+		}
+
+		hasRoPrivate := false
+		for _, f := range st.Fields {
+			if f.IsReadOnly && f.IsPrivate {
+				hasRoPrivate = true
+				break
+			}
+		}
+		if hasRoPrivate {
+			if _, hasInit := st.Methods["__init__"]; !hasInit {
+				te.addDiag(SeverityError, t.Span_, "type/missing-init-for-ro-private-field",
+					fmt.Sprintf("struct %q declares read-only private field(s) but provides no '__init__' constructor", t.Name))
+			}
 		}
 
 		te.structs[t.Name] = st
@@ -593,6 +613,31 @@ func (te *TypeEvaluator) hoistImpl(imp *loneast.IMPL_DEC) {
 	}
 }
 
+func (te *TypeEvaluator) analyzeTypeDecNode(d *loneast.TYPE_DEC) TNode {
+	if st, ok := te.structs[d.Name]; ok {
+		oldSelf := te.currentSelfType
+		te.currentSelfType = st
+		var tMethods []*TFnDec
+		for _, m := range d.Methods {
+			mCopy := m
+			if !strings.Contains(mCopy.Name, ".") {
+				mCopy.Name = d.Name + "." + mCopy.Name
+			}
+			tMethod := te.analyzeFnDec(&mCopy)
+			tMethods = append(tMethods, tMethod)
+		}
+		te.currentSelfType = oldSelf
+		return &TStructDec{Name: d.Name, Type: st, Methods: tMethods, Span_: d.Span_}
+	}
+	if tr, ok := te.traits[d.Name]; ok {
+		return &TTraitDec{Name: d.Name, Type: tr, Span_: d.Span_}
+	}
+	if et, ok := te.enums[d.Name]; ok {
+		return &TEnumDec{Name: d.Name, Type: et, Span_: d.Span_}
+	}
+	return nil
+}
+
 // =====================
 // ANALYSIS
 // =====================
@@ -616,16 +661,9 @@ func (te *TypeEvaluator) analyzeTopLevel(decl any) TNode {
 		return te.analyzeFnDec(d)
 
 	case loneast.TYPE_DEC:
-		if st, ok := te.structs[d.Name]; ok {
-			return &TStructDec{Name: d.Name, Type: st, Span_: d.Span_}
-		}
-		if tr, ok := te.traits[d.Name]; ok {
-			return &TTraitDec{Name: d.Name, Type: tr, Span_: d.Span_}
-		}
-		if et, ok := te.enums[d.Name]; ok {
-			return &TEnumDec{Name: d.Name, Type: et, Span_: d.Span_}
-		}
-		return nil
+		return te.analyzeTypeDecNode(&d)
+	case *loneast.TYPE_DEC:
+		return te.analyzeTypeDecNode(d)
 
 	case loneast.IMPL_DEC:
 		return te.analyzeImplDec(&d)
@@ -775,13 +813,19 @@ func (te *TypeEvaluator) analyzeVarDec(b *loneast.BIND_DEC) *TVarDec {
 		_ = te.stack.Define(sym)
 	}
 
-	return &TVarDec{
-		Name:      b.Name,
-		IsMutable: b.IsMutable,
-		Type:      resolvedType,
-		Value:     tVal,
-		Span_:     b.Span_,
+	tVar := &TVarDec{
+		Name:         b.Name,
+		IsMutable:    b.IsMutable,
+		AddressTaken: false,
+		Type:         resolvedType,
+		Value:        tVal,
+		Span_:        b.Span_,
 	}
+	if sym := te.stack.LookupLocal(b.Name); sym != nil {
+		sym.Node = tVar
+		tVar.AddressTaken = sym.AddressTaken
+	}
+	return tVar
 }
 
 func (te *TypeEvaluator) analyzeFnDec(f *loneast.FN_DEC) *TFnDec {
@@ -994,6 +1038,45 @@ func (te *TypeEvaluator) analyzeAssignStmt(a *loneast.AssignStmt) *TAssignStmt {
 		if sym != nil && !sym.IsMutable {
 			te.addDiag(SeverityError, a.Span_, "type/immutable-reassignment",
 				fmt.Sprintf("cannot reassign immutable binding %q declared with 'let'; use 'var' if mutation is intended", sym.Name))
+		}
+	}
+
+	// Check if target is a member access (struct field) and whether it is read-only or on an immutable binding
+	if mem, ok := tTarget.(*TMemberAccessExpr); ok {
+		if st, ok := mem.Base.ExprType().(*StructType); ok {
+			if fInfo, exists := st.Field(mem.Field); exists {
+				if fInfo.IsReadOnly {
+					te.addDiag(SeverityError, a.Span_, "type/immutable-field-write",
+						fmt.Sprintf("cannot assign to read-only field %q on struct %q; 'ro' fields are immutable after construction", mem.Field, st.Name))
+				}
+			}
+		}
+		if vref, ok := mem.Base.(*TVarRefExpr); ok {
+			sym := te.stack.Lookup(vref.Name)
+			if sym != nil && !sym.IsMutable {
+				te.addDiag(SeverityError, a.Span_, "type/immutable-reassignment",
+					fmt.Sprintf("cannot mutate field %q on immutable binding %q declared with 'let'", mem.Field, sym.Name))
+			}
+		}
+	}
+
+	// Check if target is a dereference: *r = val or *p = val
+	if un, ok := tTarget.(*TUnaryExpr); ok && un.Op == loneast.UNARY_OP_DEREF {
+		if refT, ok := un.Expr.ExprType().(*RefType); ok && refT.ReadOnly {
+			te.addDiag(SeverityError, a.Span_, "type/immutable-reference-write",
+				fmt.Sprintf("cannot write through read-only reference %q", refT.String()))
+		}
+		if ptrT, ok := un.Expr.ExprType().(*PtrType); ok && ptrT.ReadOnly {
+			te.addDiag(SeverityError, a.Span_, "type/immutable-pointer-write",
+				fmt.Sprintf("cannot write through read-only pointer %q", ptrT.String()))
+		}
+	}
+
+	// Check if target is an index into a buffer: p[i] = val
+	if idx, ok := tTarget.(*TIndexExpr); ok {
+		if ptrT, ok := idx.Base.ExprType().(*PtrType); ok && ptrT.ReadOnly {
+			te.addDiag(SeverityError, a.Span_, "type/immutable-pointer-write",
+				fmt.Sprintf("cannot write to read-only buffer through %q", ptrT.String()))
 		}
 	}
 
@@ -1382,10 +1465,60 @@ func (te *TypeEvaluator) evalUnaryExpr(u loneast.UnaryExpr) TExpr {
 		return &TUnaryExpr{Op: u.Op, Expr: sub, Typ: TypeUnknown, Span_: u.Span_}
 
 	case loneast.UNARY_OP_REF: // &expr
-		return &TUnaryExpr{Op: u.Op, Expr: sub, Typ: &RefType{Elem: sType, ReadOnly: false}, Span_: u.Span_}
+		isRo := false
+		if vref, ok := sub.(*TVarRefExpr); ok {
+			sym := te.stack.Lookup(vref.Name)
+			if sym != nil {
+				sym.AddressTaken = true
+				if tDec, ok := sym.Node.(*TVarDec); ok {
+					tDec.AddressTaken = true
+				}
+				if !sym.IsMutable {
+					isRo = true
+				}
+			}
+		} else if mem, ok := sub.(*TMemberAccessExpr); ok {
+			if st, ok := mem.Base.ExprType().(*StructType); ok {
+				if fInfo, exists := st.Field(mem.Field); exists && fInfo.IsReadOnly {
+					isRo = true
+				}
+			}
+			if vref, ok := mem.Base.(*TVarRefExpr); ok {
+				sym := te.stack.Lookup(vref.Name)
+				if sym != nil && !sym.IsMutable {
+					isRo = true
+				}
+			}
+		}
+		return &TUnaryExpr{Op: u.Op, Expr: sub, Typ: &RefType{Elem: sType, ReadOnly: isRo}, Span_: u.Span_}
 
 	case loneast.UNARY_OP_RAW_REF: // &raw expr
-		return &TUnaryExpr{Op: u.Op, Expr: sub, Typ: &PtrType{Elem: sType, ReadOnly: false}, Span_: u.Span_}
+		isRo := false
+		if vref, ok := sub.(*TVarRefExpr); ok {
+			sym := te.stack.Lookup(vref.Name)
+			if sym != nil {
+				sym.AddressTaken = true
+				if tDec, ok := sym.Node.(*TVarDec); ok {
+					tDec.AddressTaken = true
+				}
+				if !sym.IsMutable {
+					isRo = true
+				}
+			}
+		} else if mem, ok := sub.(*TMemberAccessExpr); ok {
+			if st, ok := mem.Base.ExprType().(*StructType); ok {
+				if fInfo, exists := st.Field(mem.Field); exists && fInfo.IsReadOnly {
+					isRo = true
+				}
+			}
+			if vref, ok := mem.Base.(*TVarRefExpr); ok {
+				sym := te.stack.Lookup(vref.Name)
+				if sym != nil && !sym.IsMutable {
+					isRo = true
+				}
+			}
+		}
+		return &TUnaryExpr{Op: u.Op, Expr: sub, Typ: &PtrType{Elem: sType, ReadOnly: isRo}, Span_: u.Span_}
 
 	default:
 		return &TUnaryExpr{Op: u.Op, Expr: sub, Typ: sType, Span_: u.Span_}
@@ -1491,6 +1624,16 @@ func (te *TypeEvaluator) evalPostfixExpr(p loneast.PostFixExpr) TExpr {
 
 			if targetStruct != nil {
 				if fInfo, exists := targetStruct.Field(suff.Name); exists {
+					if fInfo.IsPrivate {
+						isAllowed := false
+						if te.currentSelfType != nil && te.currentSelfType.Equals(targetStruct) {
+							isAllowed = true
+						}
+						if !isAllowed {
+							te.addDiag(SeverityError, suff.Span_, "type/private-field-access",
+								fmt.Sprintf("cannot access private field %q on struct %q outside its associated methods", suff.Name, targetStruct.Name))
+						}
+					}
 					curr = &TMemberAccessExpr{Base: curr, Field: suff.Name, Offset: fInfo.Offset, Typ: fInfo.Type, Span_: suff.Span_}
 				} else if mInfo, exists := targetStruct.Method(suff.Name); exists {
 					curr = &TMemberAccessExpr{Base: curr, Field: suff.Name, Typ: mInfo, Span_: suff.Span_}
@@ -1650,6 +1793,18 @@ func (te *TypeEvaluator) evalPostfixExpr(p loneast.PostFixExpr) TExpr {
 					}
 				}
 			}
+
+			if targetStruct != nil && targetStruct.HasPrivateFields() {
+				isAllowed := false
+				if te.currentSelfType != nil && te.currentSelfType.Equals(targetStruct) {
+					isAllowed = true
+				}
+				if !isAllowed {
+					te.addDiag(SeverityError, suff.Span_, "type/raw-construct-private-fields",
+						fmt.Sprintf("struct %q contains private field(s) and cannot be instantiated with raw aggregate syntax '::{ ... }'; use %s::(...) instead", targetStruct.Name, targetStruct.Name))
+				}
+			}
+
 			var resType Type = TypeAny
 			if targetStruct != nil {
 				resType = targetStruct
@@ -1661,11 +1816,81 @@ func (te *TypeEvaluator) evalPostfixExpr(p loneast.PostFixExpr) TExpr {
 				Span_: suff.Span_,
 			}
 
+		case loneast.SuffixConstructorCall:
+			var targetStruct *StructType
+			if st, ok := curr.ExprType().(*StructType); ok {
+				targetStruct = st
+			} else if vref, ok := curr.(*TVarRefExpr); ok {
+				if st, ok := te.structs[vref.Name]; ok {
+					targetStruct = st
+				} else if tmpl, ok := te.genericTypes[vref.Name]; ok {
+					if fnRetSt, ok := te.currentFnReturn.(*StructType); ok && strings.HasPrefix(fnRetSt.Name, tmpl.Name+"<") {
+						targetStruct = fnRetSt
+					} else {
+						if instantiated, ok := te.instantiateGenericType(tmpl, nil).(*StructType); ok {
+							targetStruct = instantiated
+						}
+					}
+				}
+			}
+
+			if targetStruct == nil {
+				te.addDiag(SeverityError, suff.Span_, "type/unresolved-constructor",
+					fmt.Sprintf("cannot invoke constructor on non-struct type %q", curr.ExprType().String()))
+				curr = &TCallExpr{Callee: curr, Args: nil, Typ: TypeUnknown, Span_: suff.Span_}
+			} else {
+				initMethod, hasInit := targetStruct.Method("__init__")
+				if !hasInit {
+					te.addDiag(SeverityError, suff.Span_, "type/unresolved-constructor",
+						fmt.Sprintf("struct %q does not define an '__init__' constructor; use raw aggregate %s::{ ... } instead", targetStruct.Name, targetStruct.Name))
+					curr = &TCallExpr{Callee: curr, Args: nil, Typ: targetStruct, Span_: suff.Span_}
+				} else {
+					var tArgs []TExpr
+					for _, arg := range suff.Args {
+						tArgs = append(tArgs, te.EvalExpr(arg))
+					}
+					if len(tArgs) != len(initMethod.Params) {
+						te.addDiag(SeverityError, suff.Span_, "type/call-arg-count",
+							fmt.Sprintf("constructor %s::(...) expects %d arguments, but got %d", targetStruct.Name, len(initMethod.Params), len(tArgs)))
+					} else {
+						for i, param := range initMethod.Params {
+							argTyp := tArgs[i].ExprType()
+							if !argTyp.AssignableTo(param.Type) && param.Type != TypeInfer && argTyp != TypeUnknown {
+								te.addDiag(SeverityError, tArgs[i].Span(), "type/call-arg-type",
+									fmt.Sprintf("cannot pass argument of type %q to parameter %q of type %q in constructor %s::(...)",
+										argTyp.String(), param.Name, param.Type.String(), targetStruct.Name))
+							}
+						}
+					}
+					callee := &TVarRefExpr{
+						Name:  targetStruct.Name + ".__init__",
+						Typ:   initMethod,
+						Span_: loneast.Span{Start: curr.Span().Start, End: suff.Span_.End},
+					}
+					curr = &TCallExpr{
+						Callee: callee,
+						Args:   tArgs,
+						Typ:    targetStruct,
+						Span_:  suff.Span_,
+					}
+				}
+			}
+
 		case loneast.SuffixIndex:
 			tIdx := te.EvalExpr(suff.Index)
 			elemType := Type(TypeUnknown)
 			if lt, ok := curr.ExprType().(*ListType); ok {
 				elemType = lt.Elem
+			} else if pt, ok := curr.ExprType().(*PtrType); ok {
+				elemType = pt.Elem
+			} else if curr.ExprType() == TypeStr {
+				elemType = TypeI32
+			} else if rt, ok := curr.ExprType().(*RefType); ok {
+				te.addDiag(SeverityError, suff.Span_, "type/invalid-index",
+					fmt.Sprintf("cannot index managed reference of type %q; indexing is only supported on raw pointer buffers 'ptr<T>'", rt.String()))
+			} else {
+				te.addDiag(SeverityError, suff.Span_, "type/invalid-index",
+					fmt.Sprintf("cannot index value of non-buffer type %q", curr.ExprType().String()))
 			}
 			curr = &TIndexExpr{Base: curr, Index: tIdx, Typ: elemType, Span_: suff.Span_}
 
@@ -2065,7 +2290,13 @@ func (te *TypeEvaluator) instantiateGenericType(tmpl *GenericTypeTemplate, args 
 			if al > 0 && offset%al != 0 {
 				offset += al - (offset % al)
 			}
-			info := StructFieldInfo{Name: f.Name, Type: fType, Offset: offset}
+			info := StructFieldInfo{
+				Name:       f.Name,
+				Type:       fType,
+				Offset:     offset,
+				IsReadOnly: f.IsReadOnly,
+				IsPrivate:  strings.HasPrefix(f.Name, "_"),
+			}
 			st.Fields = append(st.Fields, info)
 			st.FieldMap[f.Name] = info
 			offset += sz
@@ -2347,6 +2578,10 @@ func (te *TypeEvaluator) resolveBaseType(tr loneast.TYPE_REF) Type {
 				if tmpl, ok := te.genericTypes[tb.Name]; ok {
 					return te.instantiateGenericType(tmpl, tb.Args)
 				}
+			}
+			// Handle Self / self
+			if (tb.Name == "Self" || tb.Name == "self") && te.currentSelfType != nil {
+				return te.currentSelfType
 			}
 			// Primitive lookup
 			if prim := PrimitiveByName(tb.Name); prim != nil {

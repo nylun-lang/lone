@@ -179,6 +179,7 @@ const (
 	SuffixKindCallTypeMake
 	SuffixKindIndex
 	SuffixKindTraitMat
+	SuffixKindConstructorCall
 )
 
 type Suffix interface {
@@ -225,6 +226,14 @@ type SuffixCallTypeMake struct {
 
 func (SuffixCallTypeMake) IsSuffix() SuffixKind { return SuffixKindCallTypeMake }
 func (s SuffixCallTypeMake) NodeSpan() Span     { return s.Span_ }
+
+type SuffixConstructorCall struct {
+	Args  []Expr
+	Span_ Span
+}
+
+func (SuffixConstructorCall) IsSuffix() SuffixKind { return SuffixKindConstructorCall }
+func (s SuffixConstructorCall) NodeSpan() Span     { return s.Span_ }
 
 type SuffixIndex struct {
 	Index Expr

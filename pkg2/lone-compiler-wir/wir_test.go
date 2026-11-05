@@ -204,3 +204,75 @@ fn main() void {
 		t.Fatalf("unexpected wasmtime output:\ngot:  %q\nwant: %q", string(out), want)
 	}
 }
+
+func TestStructConstructorLowering(t *testing.T) {
+	code := `
+type Account = struct {
+    id: int,
+    _balance: int,
+
+    pub fn __init__(id: int, initial_deposit: int) Account {
+        return Account::{
+            .id: id,
+            ._balance: initial_deposit,
+        }
+    }
+
+    pub fn get_id(self) int {
+        return self.id
+    }
+}
+
+fn main() void {
+    let acc = Account::(101, 500)
+    let my_id = acc.get_id()
+}
+`
+	wat := compileSourceToWat(t, code)
+	if !strings.Contains(wat, "(func $Account.__init__") {
+		t.Errorf("expected $Account.__init__ in wat:\n%s", wat)
+	}
+	if !strings.Contains(wat, "call $Account.__init__") {
+		t.Errorf("expected call $Account.__init__ in wat:\n%s", wat)
+	}
+}
+
+func TestRefAndPtrLowering(t *testing.T) {
+	code := `
+fn main() int {
+    var x = 10
+    var r = &x
+    *r = 42
+
+    var p = &raw x
+    p[0] = *r + 5
+    return *p
+}
+`
+	wat := compileSourceToWat(t, code)
+	if !strings.Contains(wat, "i32.store") {
+		t.Errorf("expected i32.store for reference/pointer deref write in wat:\n%s", wat)
+	}
+	if !strings.Contains(wat, "i32.load") {
+		t.Errorf("expected i32.load for reference/pointer deref read in wat:\n%s", wat)
+	}
+
+	tmpDir := t.TempDir()
+	watPath := filepath.Join(tmpDir, "ref_ptr.wat")
+	if err := os.WriteFile(watPath, []byte(wat), 0644); err != nil {
+		t.Fatalf("failed to write temp wat: %v", err)
+	}
+
+	cmd := exec.Command("wasmtime", "--invoke", "main", watPath)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("wasmtime failed: %v, output: %s\nwat:\n%s", err, string(out), wat)
+	}
+
+	got := strings.TrimSpace(string(out))
+	if !strings.HasSuffix(got, "47") {
+		t.Fatalf("unexpected wasmtime output:\ngot:  %q\nwant suffix: 47", got)
+	}
+}
+
+

@@ -34,6 +34,11 @@ type stringEntry struct {
 	length int
 }
 
+type varSlotInfo struct {
+	offset int
+	typ    loneanalyzer.Type
+}
+
 type lowerer struct {
 	opts         LowerOptions
 	mod          *WasmModule
@@ -45,6 +50,8 @@ type lowerer struct {
 	labelId      int
 	usesPrint    bool
 	usesStrlen   bool
+	varSlots     map[string]varSlotInfo
+	frameSize    int
 }
 
 // LowerProgram compiles a typed program AST directly into a structured WebAssembly AST.
@@ -63,6 +70,7 @@ func LowerProgram(prog *loneanalyzer.TProgram, opts LowerOptions) (*WasmModule, 
 		stringVarLen: make(map[string]int),
 		nextOffset:   64, // [0..64) reserved for WASI iovec / runtime scratchpad
 		labelStack:   make(map[string]string),
+		varSlots:     make(map[string]varSlotInfo),
 	}
 	l.mod.MemoryPages = opts.MemoryPages
 	l.mod.MemoryExport = opts.MemoryExport
@@ -83,6 +91,10 @@ func LowerProgram(prog *loneanalyzer.TProgram, opts LowerOptions) (*WasmModule, 
 		case *loneanalyzer.TFnDec:
 			fnDecls = append(fnDecls, d)
 		case *loneanalyzer.TImplDec:
+			for _, m := range d.Methods {
+				fnDecls = append(fnDecls, m)
+			}
+		case *loneanalyzer.TStructDec:
 			for _, m := range d.Methods {
 				fnDecls = append(fnDecls, m)
 			}
@@ -759,6 +771,39 @@ func (l *lowerer) lowerFunction(fn *loneanalyzer.TFnDec) (*WasmFunc, error) {
 		wfn.Exports = []string{"_start", "main"}
 	}
 
+	var varSlots = make(map[string]varSlotInfo)
+	frameOffset := 0
+	for _, stmt := range fn.Body.Stmts {
+		if vdec, ok := stmt.(*loneanalyzer.TVarDec); ok && vdec.AddressTaken {
+			sz := loneanalyzer.TypeSize(vdec.Type)
+			if sz <= 0 {
+				sz = 4
+			}
+			al := loneanalyzer.TypeAlign(vdec.Type)
+			if al <= 0 {
+				al = 4
+			}
+			rem := frameOffset % al
+			if rem != 0 {
+				frameOffset += al - rem
+			}
+			varSlots[vdec.Name] = varSlotInfo{offset: frameOffset, typ: vdec.Type}
+			frameOffset += sz
+		}
+	}
+	if frameOffset%16 != 0 {
+		frameOffset += 16 - (frameOffset % 16)
+	}
+
+	oldSlots := l.varSlots
+	oldFrame := l.frameSize
+	l.varSlots = varSlots
+	l.frameSize = frameOffset
+	defer func() {
+		l.varSlots = oldSlots
+		l.frameSize = oldFrame
+	}()
+
 	alloc := NewLocalAllocator()
 	for _, p := range fn.Params {
 		pName := alloc.AddParam(p.Name)
@@ -768,10 +813,28 @@ func (l *lowerer) lowerFunction(fn *loneanalyzer.TFnDec) (*WasmFunc, error) {
 		})
 	}
 
-	bodyInsts := l.lowerBlock(fn.Body, alloc)
+	var bodyInsts []WasmInst
+	if frameOffset > 0 {
+		bodyInsts = append(bodyInsts,
+			InstGlobalGet{Name: "$__stack_pointer"},
+			InstConstI32{Value: int32(frameOffset)},
+			InstBinaryOp{Op: "i32.sub"},
+			InstGlobalSet{Name: "$__stack_pointer"},
+		)
+	}
+
+	bodyInsts = append(bodyInsts, l.lowerBlock(fn.Body, alloc)...)
 
 	// Ensure function ends with return if needed
 	if fn.ReturnType == loneanalyzer.TypeVoid || fn.ReturnType == nil {
+		if frameOffset > 0 {
+			bodyInsts = append(bodyInsts,
+				InstGlobalGet{Name: "$__stack_pointer"},
+				InstConstI32{Value: int32(frameOffset)},
+				InstBinaryOp{Op: "i32.add"},
+				InstGlobalSet{Name: "$__stack_pointer"},
+			)
+		}
 		bodyInsts = append(bodyInsts, InstReturn{})
 	} else {
 		// Non-void function: if it does not end with an explicit return or unreachable,
@@ -784,6 +847,14 @@ func (l *lowerer) lowerFunction(fn *loneanalyzer.TFnDec) (*WasmFunc, error) {
 			}
 		}
 		if !endsInReturn {
+			if frameOffset > 0 {
+				bodyInsts = append(bodyInsts,
+					InstGlobalGet{Name: "$__stack_pointer"},
+					InstConstI32{Value: int32(frameOffset)},
+					InstBinaryOp{Op: "i32.add"},
+					InstGlobalSet{Name: "$__stack_pointer"},
+				)
+			}
 			bodyInsts = append(bodyInsts, InstUnreachable{})
 		}
 	}
@@ -808,6 +879,14 @@ func (l *lowerer) lowerBlock(b loneanalyzer.TBlock, alloc *LocalAllocator) []Was
 func (l *lowerer) lowerStmt(stmt loneanalyzer.TStmt, alloc *LocalAllocator) []WasmInst {
 	switch s := stmt.(type) {
 	case *loneanalyzer.TVarDec:
+		if slot, isSlot := l.varSlots[s.Name]; isSlot {
+			var insts []WasmInst
+			insts = append(insts, InstGlobalGet{Name: "$__stack_pointer"})
+			insts = append(insts, l.lowerExpr(s.Value, alloc)...)
+			insts = append(insts, InstStore{Op: storeOpForType(s.Type), Offset: slot.offset})
+			return insts
+		}
+
 		var insts []WasmInst
 		valInsts := l.lowerExpr(s.Value, alloc)
 		insts = append(insts, valInsts...)
@@ -825,24 +904,83 @@ func (l *lowerer) lowerStmt(stmt loneanalyzer.TStmt, alloc *LocalAllocator) []Wa
 		return insts
 
 	case *loneanalyzer.TAssignStmt:
-		var insts []WasmInst
-		valInsts := l.lowerExpr(s.Value, alloc)
-		insts = append(insts, valInsts...)
-
 		if ref, ok := s.Target.(*loneanalyzer.TVarRefExpr); ok {
+			if slot, isSlot := l.varSlots[ref.Name]; isSlot {
+				var insts []WasmInst
+				insts = append(insts, InstGlobalGet{Name: "$__stack_pointer"})
+				insts = append(insts, l.lowerExpr(s.Value, alloc)...)
+				insts = append(insts, InstStore{Op: storeOpForType(ref.Typ), Offset: slot.offset})
+				return insts
+			}
+			var insts []WasmInst
+			insts = append(insts, l.lowerExpr(s.Value, alloc)...)
 			if localName, found := alloc.Resolve(ref.Name); found {
 				insts = append(insts, InstLocalSet{Name: localName})
 			} else {
 				// Global variable
 				insts = append(insts, InstGlobalSet{Name: "$g_" + ref.Name})
 			}
+			return insts
 		}
-		return insts
+		if mem, ok := s.Target.(*loneanalyzer.TMemberAccessExpr); ok {
+			var insts []WasmInst
+			insts = append(insts, l.lowerExpr(mem.Base, alloc)...)
+			insts = append(insts, l.lowerExpr(s.Value, alloc)...)
+			insts = append(insts, InstStore{Op: storeOpForType(mem.Typ), Offset: mem.Offset})
+			return insts
+		}
+		if un, ok := s.Target.(*loneanalyzer.TUnaryExpr); ok && un.Op == loneast.UNARY_OP_DEREF {
+			var insts []WasmInst
+			insts = append(insts, l.lowerExpr(un.Expr, alloc)...)
+			insts = append(insts, l.lowerExpr(s.Value, alloc)...)
+			insts = append(insts, InstStore{Op: storeOpForType(s.Value.ExprType()), Offset: 0})
+			return insts
+		}
+		if idx, ok := s.Target.(*loneanalyzer.TIndexExpr); ok {
+			elemSz := int32(loneanalyzer.TypeSize(s.Value.ExprType()))
+			if elemSz <= 0 {
+				elemSz = 4
+			}
+			var insts []WasmInst
+			insts = append(insts, l.lowerExpr(idx.Base, alloc)...)
+			insts = append(insts, l.lowerExpr(idx.Index, alloc)...)
+			if elemSz > 1 {
+				insts = append(insts, InstConstI32{Value: elemSz})
+				insts = append(insts, InstBinaryOp{Op: "i32.mul"})
+			}
+			insts = append(insts, InstBinaryOp{Op: "i32.add"})
+			insts = append(insts, l.lowerExpr(s.Value, alloc)...)
+			insts = append(insts, InstStore{Op: storeOpForType(s.Value.ExprType()), Offset: 0})
+			return insts
+		}
+		return nil
 
 	case *loneanalyzer.TReturnStmt:
 		var insts []WasmInst
 		if s.Value != nil {
 			insts = append(insts, l.lowerExpr(s.Value, alloc)...)
+			if l.frameSize > 0 {
+				wRetType := toWasmType(s.Value.ExprType())
+				temp := alloc.AllocTemp(wRetType)
+				insts = append(insts, InstLocalSet{Name: temp})
+				insts = append(insts,
+					InstGlobalGet{Name: "$__stack_pointer"},
+					InstConstI32{Value: int32(l.frameSize)},
+					InstBinaryOp{Op: "i32.add"},
+					InstGlobalSet{Name: "$__stack_pointer"},
+				)
+				insts = append(insts, InstLocalGet{Name: temp})
+				alloc.FreeTemp(temp, wRetType)
+			}
+		} else {
+			if l.frameSize > 0 {
+				insts = append(insts,
+					InstGlobalGet{Name: "$__stack_pointer"},
+					InstConstI32{Value: int32(l.frameSize)},
+					InstBinaryOp{Op: "i32.add"},
+					InstGlobalSet{Name: "$__stack_pointer"},
+				)
+			}
 		}
 		insts = append(insts, InstReturn{})
 		return insts
@@ -1151,6 +1289,12 @@ func (l *lowerer) lowerExpr(expr loneanalyzer.TExpr, alloc *LocalAllocator) []Wa
 		}
 
 	case *loneanalyzer.TVarRefExpr:
+		if slot, isSlot := l.varSlots[e.Name]; isSlot {
+			return []WasmInst{
+				InstGlobalGet{Name: "$__stack_pointer"},
+				InstLoad{Op: loadOpForType(e.Typ), Offset: slot.offset},
+			}
+		}
 		if localName, found := alloc.Resolve(e.Name); found {
 			return []WasmInst{InstLocalGet{Name: localName}}
 		}
@@ -1181,6 +1325,20 @@ func (l *lowerer) lowerExpr(expr loneanalyzer.TExpr, alloc *LocalAllocator) []Wa
 		case loneast.UNARY_OP_NOT:
 			insts = append(insts, l.lowerExpr(e.Expr, alloc)...)
 			insts = append(insts, InstUnaryOp{Op: "i32.eqz"})
+		case loneast.UNARY_OP_DEREF:
+			insts = append(insts, l.lowerExpr(e.Expr, alloc)...)
+			insts = append(insts, InstLoad{Op: loadOpForType(e.Typ), Offset: 0})
+		case loneast.UNARY_OP_REF, loneast.UNARY_OP_RAW_REF:
+			if vref, ok := e.Expr.(*loneanalyzer.TVarRefExpr); ok {
+				if slot, isSlot := l.varSlots[vref.Name]; isSlot {
+					return []WasmInst{
+						InstGlobalGet{Name: "$__stack_pointer"},
+						InstConstI32{Value: int32(slot.offset)},
+						InstBinaryOp{Op: "i32.add"},
+					}
+				}
+			}
+			insts = append(insts, l.lowerExpr(e.Expr, alloc)...)
 		default:
 			insts = append(insts, l.lowerExpr(e.Expr, alloc)...)
 		}
@@ -1252,6 +1410,22 @@ func (l *lowerer) lowerExpr(expr loneanalyzer.TExpr, alloc *LocalAllocator) []Wa
 			return insts
 		}
 		return []WasmInst{InstConstI32{Value: 0}}
+
+	case *loneanalyzer.TIndexExpr:
+		elemSz := int32(loneanalyzer.TypeSize(e.Typ))
+		if elemSz <= 0 {
+			elemSz = 4
+		}
+		var insts []WasmInst
+		insts = append(insts, l.lowerExpr(e.Base, alloc)...)
+		insts = append(insts, l.lowerExpr(e.Index, alloc)...)
+		if elemSz > 1 {
+			insts = append(insts, InstConstI32{Value: elemSz})
+			insts = append(insts, InstBinaryOp{Op: "i32.mul"})
+		}
+		insts = append(insts, InstBinaryOp{Op: "i32.add"})
+		insts = append(insts, InstLoad{Op: loadOpForType(e.Typ), Offset: 0})
+		return insts
 
 	default:
 		return nil

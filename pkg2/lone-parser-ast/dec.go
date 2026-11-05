@@ -85,9 +85,10 @@ func (f FN_DEC) NodeSpan() Span { return f.Span_ }
 
 // StructField represents a field inside a struct declaration.
 type StructField struct {
-	Name  string
-	Type  TYPE_REF
-	Span_ Span
+	Name       string
+	Type       TYPE_REF
+	IsReadOnly bool
+	Span_      Span
 }
 
 func (s StructField) NodeSpan() Span { return s.Span_ }
