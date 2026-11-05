@@ -18,9 +18,9 @@ Explored the user's proposal to formalize **String Interpolation** by treating i
 1. **Explicit Format String Syntax (`f"Hello ${name}"`)**:
    - Double-quoted strings prefixed with `f` and containing `${expr}` interpolation markers.
    - Prevents brace collisions with struct literals `{ ... }` and ensures normal strings `"Price: $100"` require zero escaping.
-2. **Dual Desugaring Modes**:
-   - **Direct Output (`println("Hello ${name}")`)**: Desugars directly into consecutive primitive writes (`#print("Hello ")`, `print(name)`). **Zero heap allocations**.
-   - **Value Construction (`let s: str = "...")`)**: Desugars to a buffer construction (`StringBuilder`) returning a heap `str`.
+2. **Stack-Buffered Single-Write Architecture**:
+   - **Temporary Output (`println(f"Hello ${name}")`)**: Formatted into a temporary Page 0 datastack scratch buffer and flushed in **one single atomic syscall** (`fd_write`). Prevents log tearing, avoids pipe chunking, and achieves **zero heap allocations**.
+   - **Value Construction (`let s: str = f"...")`)**: Allocated on the Managed Store (heap `#alloc`) for persistent lifetime.
 3. **Trait Contract (`TrDisplay`)**:
    - Types implement `TrDisplay` via zero-copy streaming:
      ```lone

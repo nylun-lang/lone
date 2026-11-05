@@ -18,9 +18,9 @@ In Lone v0.5.0-beta, formatting values requires manual sequencing of standalone 
 This exploration formulates a cohesive design for **String Interpolation** grounded in Lone's core principles:
 1. **Explicit Format String Syntax (`f"Hello, ${name}! You scored ${score}."`)**:
    Explicit `f` prefix distinguishes formatted strings from normal string literals, upholding **IL1 (Explicit over implicit)** and ensuring normal strings `"Price: $100"` never require escaping for `$`.
-2. **Dual Desugaring Modes**:
-   - **Direct Output / Streaming (Zero Allocation)**: When passed directly to `print`, `println`, or any stream writer, interpolation desugars into consecutive, in-place writes without allocating intermediate strings on the heap.
-   - **Value Construction**: When assigned to a `str` variable, it desugars into an efficient buffer construction.
+2. **Stack-Buffered Single-Write Architecture**:
+   - **Temporary Output Position (`println(f"...")`)**: Assembled into a caller-reserved Page 0 datastack scratch buffer and flushed in **one single atomic syscall** (`fd_write`). Guarantees zero heap allocations, single-syscall throughput, and complete untorn lines for downstream pipes.
+   - **Persistent Value Position (`let s: str = f"..."`)**: Assembled into the Managed Store (heap `#alloc`) for persistent lifetime.
 3. **Trait-Grounded Printable Contract (`TrDisplay` / `TrSerializable`)**:
    Any type `T` can be interpolated if it implements a standard formatting/display trait. Built-in types (`int`, `f64`, `bool`, `str`) provide inlined zero-cost implementations out of the box.
 
@@ -54,79 +54,63 @@ println("The ticket costs $50 per person.") -- Plain string, no interpolation!
 
 ---
 
-## 3. The Dual Desugaring Architecture
+## 3. The Stack-Buffered Single-Write Architecture
 
-The fundamental question in a systems language is: *Does string interpolation allocate heap memory?*
+### 3.1 The Danger of Naive Multi-Print Desugaring
+A naive systems desugaring would expand `println(f"Hello ${name}, score: ${score}")` into multiple sequential calls: `print("Hello ")`, `print(name)`, `print(", score: ")`, `print_int(score)`, `println("")`.
 
-In Lone, we can achieve **Zero-Allocation Formatting** by letting the compiler distinguish between *streaming to output* and *constructing a string value*.
+While this avoids heap allocations on paper, it introduces **three catastrophic systems hazards**:
+1. **Output Tearing & Interleaving**:
+   If another thread, async task, or error handler writes to stdout/stderr while the sequence executes, its output gets spliced directly into the middle of the sentence (e.g. `Hello ERROR: disk full! Alice, score: 95`).
+2. **Pipe Chunking & Syscall Explosion**:
+   Emitting 5 separate WASI `fd_write` syscalls per line instead of 1 introduces massive 5x syscall overhead. Downstream pipe readers (`lone_app | grep`) or JSON log parsers doing non-blocking reads can receive incomplete chunks and fail with unexpected EOF.
+3. **Expression Invalidation**:
+   If `f"..."` only worked as desugared `print` calls, code like `let msg = f"User: ${name}"` would be impossible, breaking the fundamental rule that `f"..."` is a first-class expression producing a `str`.
+
+---
+
+### 3.2 The Sound Architecture: Datastack-Buffered Single Write
+To guarantee **atomic output**, **single-syscall delivery**, and **zero heap allocations**, Lone adopts a two-tier memory strategy:
 
 ```
                           ┌─────────────────────────────┐
-                          │   "Hello ${name}, ${age}"   │
+                          │   f"Hello ${name}, ${age}"  │
                           └──────────────┬──────────────┘
                                          │
                  ┌───────────────────────┴───────────────────────┐
                  ▼                                               ▼
-         In Output Position                              In Value Position
-     println("Hello ${name}")                       let s: str = "Hello ${name}"
+       Temporary Output Scope                          Escaping Value Scope
+     println(f"Hello ${name}")                     let s: str = f"Hello ${name}"
                  │                                               │
                  ▼                                               ▼
-     Zero-Allocation Streaming                      Buffered Heap Construction
-   print("Hello ")                                var b = StringBuilder::new()
-   print(name)                                    b.write("Hello ")
-   println()                                      b.write(name)
-                                                  let s = b.finish()
+     Stack-Buffered Single Write                     Managed Store Heap Allocation
+  - Formatted into Page 0 datastack                - Allocated on Managed Store (heap)
+  - EXACTLY ONE atomic fd_write syscall            - Persistent contiguous str
+  - ZERO output tearing, ZERO heap cost            - Deterministic #free on ref drop
+  - Instant datastack frame rewind
 ```
 
----
-
-### 3.1 Mode 1: Zero-Allocation Streaming (Direct Output)
-
-When an interpolated string literal is passed directly to `print`, `println`, `eprint`, or a writer method:
-
+#### Mode 1: Temporary Output Position (`println`, `eprintln`)
+When an interpolated string is passed directly to an output function or used as a statement:
 ```lone
-println("User #${id}: ${name} (active: ${is_active})")
+println(f"User #${id}: ${name} (active: ${is_active})")
 ```
+1. The compiler allocates a temporary scratch frame (e.g. 128 bytes) on the **current Page 0 datastack**.
+2. Formats all elements directly into this contiguous stack buffer.
+3. Invokes the underlying WASI `fd_write` **EXACTLY ONCE** with the full, cohesive line `{ ptr: stack_buf, len: total_len }`.
+4. The datastack pointer rewinds immediately.
+* **Guarantees**: **1 single atomic syscall**, **0 bytes of heap memory**, **zero log tearing**, and downstream pipes receive the complete line in a single chunk.
 
-The compiler **never allocates an intermediate string on the heap**. Instead, the compiler expands the single call into a sequence of zero-cost primitive writes:
-
-```lone
--- Desugared WIR Lowering:
-#print("User #")
-println_int(id)
-#print(": ")
-#print(name)
-#print(" (active: ")
-if is_active { #print("true") } else { #print("false") }
-#print(")\n")
-```
-
-* **Execution Cost**: **Zero heap allocations**, zero garbage, zero copies.
-* Directly leverages existing WASI/WebAssembly output primitives.
-
----
-
-### 3.2 Mode 2: Value Construction (`let s: str = ...`)
-
+#### Mode 2: Persistent Value Position (`let s: str = ...`)
 When an interpolated string is assigned to a variable, passed to a function expecting `str`, or returned:
-
 ```lone
 fn format_entry(user: User) str {
-    return "User[${user.id}]: ${user.name}"
+    return f"User[${user.id}]: ${user.name}"
 }
 ```
-
-The compiler desugars this into a temporary datastack/heap string builder:
-
-```lone
--- Desugared WIR Lowering:
-var _buf = StringBuilder::with_capacity(64)
-_buf.write("User[")
-_buf.write_int(user.id)
-_buf.write("]: ")
-_buf.write(user.name)
-let s = _buf.finish()
-```
+1. The compiler allocates the formatted string in the **Managed Store** (dynamic heap `#alloc`).
+2. Populates the string sequentially and returns the fat pointer `str` `{ ptr, len }`.
+3. Deterministically reclaimed via `#free` when all references to `s` drop.
 
 ---
 
