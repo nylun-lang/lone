@@ -156,6 +156,22 @@ func (te *TypeEvaluator) initBuiltins() {
 			},
 		},
 	}
+
+	// Built-in TrDisplay trait for string interpolation and display
+	trDisplay := &TraitType{
+		Name: "TrDisplay",
+		Methods: map[string]*FnType{
+			"fmt": {
+				Params: []FnParamInfo{
+					{Name: "self", Type: TypeAny},
+					{Name: "buf", Type: TypeAny},
+				},
+				Return: TypeVoid,
+			},
+		},
+	}
+	te.traits["TrDisplay"] = trDisplay
+	_ = te.stack.Define(&Symbol{Name: "TrDisplay", Kind: SymbolType, Type: trDisplay})
 }
 
 func (te *TypeEvaluator) Diagnostics() []Diagnostic {
@@ -1527,6 +1543,11 @@ func (te *TypeEvaluator) EvalExpr(e loneast.Expr) TExpr {
 	case *loneast.AnonFnExpr:
 		return te.evalAnonFnExpr(*expr)
 
+	case loneast.InterpolatedStringExpr:
+		return te.evalInterpolatedStringExpr(expr)
+	case *loneast.InterpolatedStringExpr:
+		return te.evalInterpolatedStringExpr(*expr)
+
 	default:
 		return nil
 	}
@@ -1660,6 +1681,57 @@ func (te *TypeEvaluator) walkExprForClosureCaptures(expr TExpr, closureSpan lone
 		for _, elem := range e.Elements {
 			te.walkExprForClosureCaptures(elem, closureSpan)
 		}
+	case *TInterpolatedStringExpr:
+		for _, part := range e.Parts {
+			te.walkExprForClosureCaptures(part, closureSpan)
+		}
+	}
+}
+
+func (te *TypeEvaluator) isDisplayable(t Type) bool {
+	if t == nil || t == TypeUnknown {
+		return true
+	}
+	if refT, ok := t.(*RefType); ok {
+		t = refT.Elem
+	}
+	// Primitives
+	if t == TypeStr || t == TypeI32 || t == TypeI64 || t == TypeU32 || t == TypeU64 ||
+		t == TypeF32 || t == TypeF64 || t == TypeBool || t == TypeChar {
+		return true
+	}
+	if _, ok := t.(*PtrType); ok {
+		return true
+	}
+	// Check TrDisplay trait implementation
+	if te.traitImpls["TrDisplay"] != nil {
+		if te.traitImpls["TrDisplay"][t.String()] != nil {
+			return true
+		}
+	}
+	return false
+}
+
+func (te *TypeEvaluator) evalInterpolatedStringExpr(s loneast.InterpolatedStringExpr) TExpr {
+	var parts []TExpr
+	for _, part := range s.Parts {
+		tpart := te.EvalExpr(part)
+		if tpart == nil {
+			continue
+		}
+		parts = append(parts, tpart)
+
+		pt := tpart.ExprType()
+		if !te.isDisplayable(pt) {
+			te.addDiag(SeverityError, part.NodeSpan(), "type/missing-trait-impl",
+				fmt.Sprintf("type %q does not implement trait \"TrDisplay\"", pt.String()))
+		}
+	}
+
+	return &TInterpolatedStringExpr{
+		Parts: parts,
+		Typ:   TypeStr,
+		Span_: s.Span_,
 	}
 }
 

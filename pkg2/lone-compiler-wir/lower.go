@@ -48,10 +48,11 @@ type lowerer struct {
 	nextOffset   int
 	loopStack    []loopContext
 	labelStack   map[string]string // user label -> wasm block label
-	labelId      int
-	usesPrint    bool
-	usesStrlen   bool
-	varSlots     map[string]varSlotInfo
+	labelId       int
+	usesPrint     bool
+	usesStrlen    bool
+	usesFormatI32 bool
+	varSlots      map[string]varSlotInfo
 	anonFnMap    map[string]string
 	frameSize    int
 }
@@ -155,6 +156,110 @@ func LowerProgram(prog *loneanalyzer.TProgram, opts LowerOptions) (*WasmModule, 
       )
     )
     (i32.sub (local.get $curr) (local.get $ptr))
+  )`)
+	}
+
+	if l.usesFormatI32 {
+		l.mod.InlinedRuntime = append(l.mod.InlinedRuntime, `  ;; Inlined runtime: format_i32(val, buf) -> len
+  (func $__lone_rt_format_i32 (param $val i32) (param $buf i32) (result i32)
+    (local $start i32)
+    (local $v i32)
+    (local $d i32)
+    (local $i i32)
+    (local $j i32)
+    (local $temp i32)
+    local.get $buf
+    local.set $start
+    local.get $val
+    local.set $v
+    local.get $v
+    i32.eqz
+    if
+      local.get $buf
+      i32.const 48
+      i32.store8
+      i32.const 1
+      return
+    end
+    local.get $v
+    i32.const 0
+    i32.lt_s
+    if
+      local.get $buf
+      i32.const 45
+      i32.store8
+      local.get $buf
+      i32.const 1
+      i32.add
+      local.set $buf
+      i32.const 0
+      local.get $v
+      i32.sub
+      local.set $v
+    end
+    local.get $buf
+    local.set $i
+    (block $done
+      (loop $loop
+        local.get $v
+        i32.eqz
+        br_if $done
+        local.get $v
+        i32.const 10
+        i32.rem_u
+        i32.const 48
+        i32.add
+        local.set $d
+        local.get $i
+        local.get $d
+        i32.store8
+        local.get $i
+        i32.const 1
+        i32.add
+        local.set $i
+        local.get $v
+        i32.const 10
+        i32.div_u
+        local.set $v
+        br $loop
+      )
+    )
+    local.get $buf
+    local.set $j
+    local.get $i
+    i32.const 1
+    i32.sub
+    local.set $temp
+    (block $rev_done
+      (loop $rev_loop
+        local.get $j
+        local.get $temp
+        i32.ge_u
+        br_if $rev_done
+        local.get $j
+        i32.load8_u
+        local.set $d
+        local.get $j
+        local.get $temp
+        i32.load8_u
+        i32.store8
+        local.get $temp
+        local.get $d
+        i32.store8
+        local.get $j
+        i32.const 1
+        i32.add
+        local.set $j
+        local.get $temp
+        i32.const 1
+        i32.sub
+        local.set $temp
+        br $rev_loop
+      )
+    )
+    local.get $i
+    local.get $start
+    i32.sub
   )`)
 	}
 
@@ -1477,6 +1582,9 @@ func (l *lowerer) lowerExpr(expr loneanalyzer.TExpr, alloc *LocalAllocator) []Wa
 	case *loneanalyzer.TAnonFnExpr:
 		return []WasmInst{InstConstI32{Value: 0}}
 
+	case *loneanalyzer.TInterpolatedStringExpr:
+		return l.lowerInterpolatedString(e, alloc, false, false)
+
 	default:
 		return nil
 	}
@@ -1551,13 +1659,19 @@ func (l *lowerer) lowerCallExpr(e *loneanalyzer.TCallExpr, alloc *LocalAllocator
 	}
 
 	switch calleeName {
-	case "#print":
+	case "#print", "print", "println":
 		l.usesPrint = true
 		var insts []WasmInst
 		if len(e.Args) == 1 {
 			arg := e.Args[0]
+			if interp, ok := arg.(*loneanalyzer.TInterpolatedStringExpr); ok {
+				return l.lowerInterpolatedString(interp, alloc, true, calleeName == "println")
+			}
 			if lit, ok := arg.(*loneanalyzer.TLiteralExpr); ok {
 				if strVal, ok := lit.Value.(string); ok {
+					if calleeName == "println" {
+						strVal += "\n"
+					}
 					offset, length := l.allocString(strVal)
 					insts = append(insts, InstConstI32{Value: int32(offset)})
 					insts = append(insts, InstConstI32{Value: int32(length)})
@@ -1571,6 +1685,12 @@ func (l *lowerer) lowerCallExpr(e *loneanalyzer.TCallExpr, alloc *LocalAllocator
 				if strLen, hasLen := l.stringVarLen[ref.Name]; hasLen {
 					insts = append(insts, InstConstI32{Value: int32(strLen)})
 					insts = append(insts, InstCall{Target: "$__lone_rt_print"})
+					if calleeName == "println" {
+						nlOffset, nlLen := l.allocString("\n")
+						insts = append(insts, InstConstI32{Value: int32(nlOffset)})
+						insts = append(insts, InstConstI32{Value: int32(nlLen)})
+						insts = append(insts, InstCall{Target: "$__lone_rt_print"})
+					}
 					return insts
 				}
 			}
@@ -1584,6 +1704,12 @@ func (l *lowerer) lowerCallExpr(e *loneanalyzer.TCallExpr, alloc *LocalAllocator
 			dynInsts = append(dynInsts, InstLocalGet{Name: ptrLocal})
 			dynInsts = append(dynInsts, InstCall{Target: "$__lone_rt_strlen"})
 			dynInsts = append(dynInsts, InstCall{Target: "$__lone_rt_print"})
+			if calleeName == "println" {
+				nlOffset, nlLen := l.allocString("\n")
+				dynInsts = append(dynInsts, InstConstI32{Value: int32(nlOffset)})
+				dynInsts = append(dynInsts, InstConstI32{Value: int32(nlLen)})
+				dynInsts = append(dynInsts, InstCall{Target: "$__lone_rt_print"})
+			}
 			return dynInsts
 		} else if len(e.Args) >= 2 {
 			// #print(ptr, len)
@@ -1681,6 +1807,206 @@ func (l *lowerer) lowerCallExpr(e *loneanalyzer.TCallExpr, alloc *LocalAllocator
 		insts = append(insts, l.lowerExpr(arg, alloc)...)
 	}
 	insts = append(insts, InstCall{Target: "$" + calleeName})
+	return insts
+}
+
+func (l *lowerer) lowerInterpolatedString(
+	expr *loneanalyzer.TInterpolatedStringExpr,
+	alloc *LocalAllocator,
+	toStack bool,
+	isPrintln bool,
+) []WasmInst {
+	l.usesPrint = true
+	var insts []WasmInst
+
+	bufLocal := alloc.AllocTemp(TypeI32)
+	curLocal := alloc.AllocTemp(TypeI32)
+	defer alloc.FreeTemp(bufLocal, TypeI32)
+	defer alloc.FreeTemp(curLocal, TypeI32)
+
+	bufSize := 256
+	staticBytes := 0
+	for _, p := range expr.Parts {
+		if lit, ok := p.(*loneanalyzer.TLiteralExpr); ok && lit.Kind == loneast.LiteralString {
+			if s, ok := lit.Value.(string); ok {
+				staticBytes += len(s)
+			}
+		} else {
+			staticBytes += 32
+		}
+	}
+	if staticBytes+32 > bufSize {
+		bufSize = (staticBytes + 63) & ^15
+	}
+
+	if toStack {
+		insts = append(insts,
+			InstGlobalGet{Name: "$__stack_pointer"},
+			InstConstI32{Value: int32(bufSize)},
+			InstBinaryOp{Op: "i32.sub"},
+			InstLocalTee{Name: bufLocal},
+			InstLocalSet{Name: curLocal},
+			InstLocalGet{Name: bufLocal},
+			InstGlobalSet{Name: "$__stack_pointer"},
+		)
+	} else {
+		insts = append(insts,
+			InstConstI32{Value: int32(bufSize)},
+			InstCall{Target: "$__lone_rt_alloc"},
+			InstLocalTee{Name: bufLocal},
+			InstLocalSet{Name: curLocal},
+		)
+	}
+
+	for _, part := range expr.Parts {
+		// 1. Literal string
+		if lit, ok := part.(*loneanalyzer.TLiteralExpr); ok && lit.Kind == loneast.LiteralString {
+			if strVal, ok := lit.Value.(string); ok && len(strVal) > 0 {
+				offset, length := l.allocString(strVal)
+				insts = append(insts,
+					InstLocalGet{Name: curLocal},
+					InstConstI32{Value: int32(offset)},
+					InstConstI32{Value: int32(length)},
+					InstCall{Target: "$__lone_rt_memcpy"},
+					InstLocalGet{Name: curLocal},
+					InstConstI32{Value: int32(length)},
+					InstBinaryOp{Op: "i32.add"},
+					InstLocalSet{Name: curLocal},
+				)
+				continue
+			}
+		}
+
+		// 2. Integers
+		pt := part.ExprType()
+		if pt == loneanalyzer.TypeI32 || pt == loneanalyzer.TypeU32 {
+			l.usesFormatI32 = true
+			insts = append(insts, l.lowerExpr(part, alloc)...)
+			insts = append(insts,
+				InstLocalGet{Name: curLocal},
+				InstCall{Target: "$__lone_rt_format_i32"},
+				InstLocalGet{Name: curLocal},
+				InstBinaryOp{Op: "i32.add"},
+				InstLocalSet{Name: curLocal},
+			)
+			continue
+		}
+
+		// 3. Boolean
+		if pt == loneanalyzer.TypeBool {
+			trueOffset, _ := l.allocString("true")
+			falseOffset, _ := l.allocString("false")
+			boolLocal := alloc.AllocTemp(TypeI32)
+			insts = append(insts, l.lowerExpr(part, alloc)...)
+			insts = append(insts,
+				InstLocalTee{Name: boolLocal},
+				InstIf{
+					Then: []WasmInst{
+						InstLocalGet{Name: curLocal},
+						InstConstI32{Value: int32(trueOffset)},
+						InstConstI32{Value: 4},
+						InstCall{Target: "$__lone_rt_memcpy"},
+						InstLocalGet{Name: curLocal},
+						InstConstI32{Value: 4},
+						InstBinaryOp{Op: "i32.add"},
+						InstLocalSet{Name: curLocal},
+					},
+					Else: []WasmInst{
+						InstLocalGet{Name: curLocal},
+						InstConstI32{Value: int32(falseOffset)},
+						InstConstI32{Value: 5},
+						InstCall{Target: "$__lone_rt_memcpy"},
+						InstLocalGet{Name: curLocal},
+						InstConstI32{Value: 5},
+						InstBinaryOp{Op: "i32.add"},
+						InstLocalSet{Name: curLocal},
+					},
+				},
+			)
+			alloc.FreeTemp(boolLocal, TypeI32)
+			continue
+		}
+
+		// 4. Dynamic String
+		if pt == loneanalyzer.TypeStr {
+			l.usesStrlen = true
+			strLocal := alloc.AllocTemp(TypeI32)
+			lenLocal := alloc.AllocTemp(TypeI32)
+			insts = append(insts, l.lowerExpr(part, alloc)...)
+			insts = append(insts,
+				InstLocalTee{Name: strLocal},
+				InstCall{Target: "$__lone_rt_strlen"},
+				InstLocalTee{Name: lenLocal},
+				InstLocalGet{Name: curLocal},
+				InstLocalGet{Name: strLocal},
+				InstLocalGet{Name: lenLocal},
+				InstCall{Target: "$__lone_rt_memcpy"},
+				InstLocalGet{Name: curLocal},
+				InstLocalGet{Name: lenLocal},
+				InstBinaryOp{Op: "i32.add"},
+				InstLocalSet{Name: curLocal},
+			)
+			alloc.FreeTemp(strLocal, TypeI32)
+			alloc.FreeTemp(lenLocal, TypeI32)
+			continue
+		}
+
+		// 5. Pointers: format as integer address
+		if _, ok := pt.(*loneanalyzer.PtrType); ok {
+			l.usesFormatI32 = true
+			insts = append(insts, l.lowerExpr(part, alloc)...)
+			insts = append(insts,
+				InstLocalGet{Name: curLocal},
+				InstCall{Target: "$__lone_rt_format_i32"},
+				InstLocalGet{Name: curLocal},
+				InstBinaryOp{Op: "i32.add"},
+				InstLocalSet{Name: curLocal},
+			)
+			continue
+		}
+
+		// Fallback: evaluate expression and drop
+		insts = append(insts, l.lowerExpr(part, alloc)...)
+		insts = append(insts, InstDrop{})
+	}
+
+	if toStack {
+		if isPrintln {
+			insts = append(insts,
+				InstLocalGet{Name: curLocal},
+				InstConstI32{Value: 10},
+				InstStore{Op: "i32.store8", Offset: 0},
+				InstLocalGet{Name: curLocal},
+				InstConstI32{Value: 1},
+				InstBinaryOp{Op: "i32.add"},
+				InstLocalSet{Name: curLocal},
+			)
+		}
+		// Exact 1 atomic syscall: $__lone_rt_print(bufLocal, curLocal - bufLocal)
+		insts = append(insts,
+			InstLocalGet{Name: bufLocal},
+			InstLocalGet{Name: curLocal},
+			InstLocalGet{Name: bufLocal},
+			InstBinaryOp{Op: "i32.sub"},
+			InstCall{Target: "$__lone_rt_print"},
+		)
+		// Rewind Page 0 datastack
+		insts = append(insts,
+			InstGlobalGet{Name: "$__stack_pointer"},
+			InstConstI32{Value: int32(bufSize)},
+			InstBinaryOp{Op: "i32.add"},
+			InstGlobalSet{Name: "$__stack_pointer"},
+		)
+	} else {
+		// Null-terminate string and return bufLocal pointer
+		insts = append(insts,
+			InstLocalGet{Name: curLocal},
+			InstConstI32{Value: 0},
+			InstStore{Op: "i32.store8", Offset: 0},
+			InstLocalGet{Name: bufLocal},
+		)
+	}
+
 	return insts
 }
 

@@ -989,6 +989,93 @@ fn test_satisfaction() void {
 	}
 }
 
+func TestStringInterpolationPrimitives(t *testing.T) {
+	code := `
+fn main() void {
+    let name = "Lone"
+    let ver = 6
+    let active = true
+    let msg = f"Running ${name} v0.${ver}.0 (active: ${active})"
+}
+`
+	analyzer := NewAnalyzer()
+	prog, diags, err := analyzer.AnalyzeSource([]byte(code))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(diags) > 0 {
+		t.Fatalf("expected 0 diagnostics, got: %v", diags)
+	}
+
+	fnDec := prog.Decls[0].(*TFnDec)
+	bMsg := fnDec.Body.Stmts[3].(*TVarDec)
+	interp, ok := bMsg.Value.(*TInterpolatedStringExpr)
+	if !ok {
+		t.Fatalf("expected TInterpolatedStringExpr, got %#v", bMsg.Value)
+	}
+	if interp.ExprType() != TypeStr {
+		t.Errorf("expected TypeStr, got %s", interp.ExprType().String())
+	}
+}
+
+func TestStringInterpolationMissingTrDisplay(t *testing.T) {
+	code := `
+type Point = struct {
+    x: int,
+    y: int,
+}
+
+fn main() void {
+    let p = Point::{ .x: 10, .y: 20 }
+    let s = f"Coord: ${p}"
+}
+`
+	analyzer := NewAnalyzer()
+	_, diags, err := analyzer.AnalyzeSource([]byte(code))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	hasMissingTrait := false
+	for _, d := range diags {
+		if d.Rule == "type/missing-trait-impl" && strings.Contains(d.Message, "does not implement trait \"TrDisplay\"") {
+			hasMissingTrait = true
+			break
+		}
+	}
+	if !hasMissingTrait {
+		t.Fatalf("expected type/missing-trait-impl diagnostic, got: %v", diags)
+	}
+}
+
+func TestStringInterpolationWithTrDisplay(t *testing.T) {
+	code := `
+type Point = struct {
+    x: int,
+    y: int,
+}
+
+impl TrDisplay on Point {
+    fn fmt(self, buf: any) void {
+    }
+}
+
+fn main() void {
+    let p = Point::{ .x: 10, .y: 20 }
+    let s = f"Coord: ${p}"
+}
+`
+	analyzer := NewAnalyzer()
+	_, diags, err := analyzer.AnalyzeSource([]byte(code))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(diags) > 0 {
+		t.Fatalf("expected 0 diagnostics for struct implementing TrDisplay, got: %v", diags)
+	}
+}
+
+
 
 
 

@@ -61,9 +61,12 @@ func (l *Lexer) NextToken() (Token, error) {
 		return l.scanIntrinsic()
 	}
 
-	// 3. String literal
+	// 3. String literal or formatted string (f"...")
 	if ch == '"' {
 		return l.scanString()
+	}
+	if ch == 'f' && l.peekN(1) == '"' {
+		return l.scanFString()
 	}
 
 	// 4. Character literal
@@ -312,6 +315,61 @@ func (l *Lexer) scanString() (Token, error) {
 
 	return Token{Kind: TokenIllegal, Text: "", Start: start, End: l.pos()},
 		fmt.Errorf("unterminated string literal at line %d:%d", start.Line, start.Col)
+}
+
+func (l *Lexer) scanFString() (Token, error) {
+	start := l.pos()
+	l.advance() // skip 'f'
+	l.advance() // skip '"'
+
+	var sb strings.Builder
+	for !l.isEOF() {
+		ch := l.peek()
+		if ch == '"' {
+			l.advance() // skip closing '"'
+			return Token{Kind: TokenFString, Text: sb.String(), Start: start, End: l.pos()}, nil
+		}
+		if ch == '\n' || ch == '\r' {
+			return Token{Kind: TokenIllegal, Text: "", Start: start, End: l.pos()},
+				fmt.Errorf("unterminated format string literal at line %d:%d", start.Line, start.Col)
+		}
+		if ch == '\\' {
+			l.advance()
+			if l.isEOF() {
+				break
+			}
+			esc := l.peek()
+			l.advance()
+			switch esc {
+			case 'n':
+				sb.WriteByte('\n')
+			case 'r':
+				sb.WriteByte('\r')
+			case 't':
+				sb.WriteByte('\t')
+			case '\\':
+				sb.WriteByte('\\')
+			case '"':
+				sb.WriteByte('"')
+			case '$':
+				sb.WriteString("\\${")
+				if !l.isEOF() && l.peek() == '{' {
+					l.advance()
+				}
+			case '0':
+				sb.WriteByte(0)
+			default:
+				sb.WriteByte(esc)
+			}
+			continue
+		}
+
+		sb.WriteByte(ch)
+		l.advance()
+	}
+
+	return Token{Kind: TokenIllegal, Text: "", Start: start, End: l.pos()},
+		fmt.Errorf("unterminated format string literal at line %d:%d", start.Line, start.Col)
 }
 
 func (l *Lexer) scanChar() (Token, error) {

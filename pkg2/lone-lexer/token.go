@@ -34,6 +34,7 @@ const (
 	TokenInt    // e.g. 42, 0xFF, 1_000
 	TokenFloat  // e.g. 3.14, 0.5
 	TokenString // e.g. "hello\n"
+	TokenFString // e.g. f"hello ${name}"
 	TokenChar   // e.g. 'a'
 
 	// Keywords
@@ -127,6 +128,7 @@ var tokenNames = map[TokenKind]string{
 	TokenInt:        "INT",
 	TokenFloat:      "FLOAT",
 	TokenString:     "STRING",
+	TokenFString:    "FSTRING",
 	TokenChar:       "CHAR",
 	TokenImport:     "import",
 	TokenFrom:       "from",

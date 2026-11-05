@@ -27,6 +27,7 @@ const (
 	ExprTry
 	ExprTuple
 	ExprAnonFn
+	ExprInterpolatedString
 )
 
 type Expr interface {
@@ -471,4 +472,13 @@ type AnonFnExpr struct {
 
 func (AnonFnExpr) IsExpr() ExprKind { return ExprAnonFn }
 func (a AnonFnExpr) NodeSpan() Span { return a.Span_ }
+
+type InterpolatedStringExpr struct {
+	Parts []Expr
+	Span_ Span
+}
+
+func (InterpolatedStringExpr) IsExpr() ExprKind { return ExprInterpolatedString }
+func (i InterpolatedStringExpr) NodeSpan() Span  { return i.Span_ }
+
 

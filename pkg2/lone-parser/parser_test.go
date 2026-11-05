@@ -700,4 +700,54 @@ fn draw_rect([x, y, w, h]: int, [point_a, point_b]: (int, int), color: str) void
 	}
 }
 
+func TestParseInterpolatedString(t *testing.T) {
+	code := `
+let msg = f"Hello, ${name}! You have ${count + 1} items."
+let esc = f"Price is \${price}"
+`
+	decls, err := Parse([]byte(code))
+	if err != nil {
+		t.Fatalf("unexpected parse error: %v", err)
+	}
+	if len(decls) != 2 {
+		t.Fatalf("expected 2 decls, got %d", len(decls))
+	}
+
+	b1 := decls[0].(loneast.BIND_DEC)
+	interp, ok := b1.Value.(loneast.InterpolatedStringExpr)
+	if !ok {
+		t.Fatalf("expected InterpolatedStringExpr, got %#v", b1.Value)
+	}
+	// Parts should be: "Hello, ", `name`, "! You have ", `count + 1`, " items."
+	if len(interp.Parts) != 5 {
+		t.Fatalf("expected 5 parts, got %d", len(interp.Parts))
+	}
+
+	b2 := decls[1].(loneast.BIND_DEC)
+	interp2, ok := b2.Value.(loneast.InterpolatedStringExpr)
+	if !ok {
+		t.Fatalf("expected InterpolatedStringExpr for esc, got %#v", b2.Value)
+	}
+	// Should have literal parts with "${price}"
+	if len(interp2.Parts) != 1 {
+		t.Fatalf("expected 1 part for escaped string, got %d", len(interp2.Parts))
+	}
+	lit, ok := interp2.Parts[0].(loneast.Literal)
+	if !ok || lit.Value != "Price is ${price}" {
+		t.Errorf("expected escaped text 'Price is ${price}', got %#v", interp2.Parts[0])
+	}
+
+	// Error tests
+	_, err = Parse([]byte(`let bad = f"empty ${}"`))
+	if err == nil {
+		t.Errorf("expected error for empty ${}, got nil")
+	}
+
+	_, err = Parse([]byte(`let bad = f"unclosed ${val"`))
+	if err == nil {
+		t.Errorf("expected error for unclosed ${, got nil")
+	}
+}
+
+
 

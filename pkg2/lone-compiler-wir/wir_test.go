@@ -366,6 +366,68 @@ fn main() int {
 	}
 }
 
+func TestInterpolatedStringPrinting(t *testing.T) {
+	code := `
+fn main() void {
+    let name = "Lone"
+    let ver = 6
+    let active = true
+    println(f"Running ${name} v0.${ver}.0 (active: ${active})")
+}
+`
+	wat := compileSourceToWat(t, code)
+
+	tmpDir := t.TempDir()
+	watPath := filepath.Join(tmpDir, "interp.wat")
+	if err := os.WriteFile(watPath, []byte(wat), 0644); err != nil {
+		t.Fatalf("failed to write temp wat: %v", err)
+	}
+
+	cmd := exec.Command("wasmtime", watPath)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("wasmtime failed: %v, output: %s\nwat:\n%s", err, string(out), wat)
+	}
+
+	got := string(out)
+	expected := "Running Lone v0.6.0 (active: true)\n"
+	if got != expected {
+		t.Fatalf("unexpected wasmtime output:\ngot:  %q\nwant: %q\nwat:\n%s", got, expected, wat)
+	}
+}
+
+func TestInterpolatedStringValueScope(t *testing.T) {
+	code := `
+fn main() void {
+    let name = "Lone"
+    let count = 100
+    let msg = f"Built with ${name} for ${count} users!"
+    #print(msg)
+}
+`
+	wat := compileSourceToWat(t, code)
+
+	tmpDir := t.TempDir()
+	watPath := filepath.Join(tmpDir, "interp_val.wat")
+	if err := os.WriteFile(watPath, []byte(wat), 0644); err != nil {
+		t.Fatalf("failed to write temp wat: %v", err)
+	}
+
+	cmd := exec.Command("wasmtime", watPath)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("wasmtime failed: %v, output: %s\nwat:\n%s", err, string(out), wat)
+	}
+
+	got := string(out)
+	expected := "Built with Lone for 100 users!"
+	if got != expected {
+		t.Fatalf("unexpected wasmtime output:\ngot:  %q\nwant: %q\nwat:\n%s", got, expected, wat)
+	}
+}
+
+
+
 
 
 

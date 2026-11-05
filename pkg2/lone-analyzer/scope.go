@@ -142,6 +142,22 @@ func registerBuiltins(root *Scope) {
 		},
 	})
 	_ = root.Define(&Symbol{
+		Name: "print",
+		Kind: SymbolFn,
+		Type: &FnType{
+			Params: []FnParamInfo{{Name: "s", Type: TypeStr}},
+			Return: TypeVoid,
+		},
+	})
+	_ = root.Define(&Symbol{
+		Name: "println",
+		Kind: SymbolFn,
+		Type: &FnType{
+			Params: []FnParamInfo{{Name: "s", Type: TypeStr}},
+			Return: TypeVoid,
+		},
+	})
+	_ = root.Define(&Symbol{
 		Name: "#panic",
 		Kind: SymbolFn,
 		Type: &FnType{

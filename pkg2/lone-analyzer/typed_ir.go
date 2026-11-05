@@ -392,3 +392,15 @@ func (a *TAnonFnExpr) ExprType() Type     { return a.Typ }
 func (a *TAnonFnExpr) tnode()             {}
 func (a *TAnonFnExpr) texpr()             {}
 
+type TInterpolatedStringExpr struct {
+	Parts []TExpr
+	Typ   Type
+	Span_ loneast.Span
+}
+
+func (i *TInterpolatedStringExpr) Span() loneast.Span { return i.Span_ }
+func (i *TInterpolatedStringExpr) ExprType() Type     { return i.Typ }
+func (i *TInterpolatedStringExpr) tnode()             {}
+func (i *TInterpolatedStringExpr) texpr()             {}
+
+

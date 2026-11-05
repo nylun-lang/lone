@@ -5,6 +5,7 @@ import (
 	lonelexer "lone/pkg2/lone-lexer"
 	loneast "lone/pkg2/lone-parser-ast"
 	"strconv"
+	"strings"
 )
 
 type Precedence int
@@ -131,6 +132,9 @@ func (p *Parser) parsePrefix() (loneast.Expr, error) {
 			Value: tok.Text,
 			Span_: tok.Span(),
 		}, nil
+
+	case lonelexer.TokenFString:
+		return p.parseFString(tok)
 
 	case lonelexer.TokenChar:
 		return loneast.Literal{
@@ -894,3 +898,79 @@ func (p *Parser) parseMatchPattern() (loneast.MatchPattern, error) {
 
 	return nil, fmt.Errorf("unexpected pattern token %s (%q) at %s", tok.Kind, tok.Text, tok.Start)
 }
+
+func (p *Parser) parseFString(tok lonelexer.Token) (loneast.Expr, error) {
+	text := tok.Text
+	var parts []loneast.Expr
+	var curLit strings.Builder
+
+	flushLit := func() {
+		if curLit.Len() > 0 {
+			parts = append(parts, loneast.Literal{
+				Kind:  loneast.LiteralString,
+				Value: curLit.String(),
+				Span_: tok.Span(),
+			})
+			curLit.Reset()
+		}
+	}
+
+	i := 0
+	for i < len(text) {
+		// Check for escaped \${
+		if i+2 < len(text) && text[i:i+3] == "\\${" {
+			curLit.WriteString("${")
+			i += 3
+			continue
+		}
+
+		if i+1 < len(text) && text[i:i+2] == "${" {
+			flushLit()
+			exprStart := i + 2
+			j := exprStart
+			braceDepth := 1
+			for j < len(text) && braceDepth > 0 {
+				if text[j] == '{' {
+					braceDepth++
+				} else if text[j] == '}' {
+					braceDepth--
+				}
+				if braceDepth > 0 {
+					j++
+				}
+			}
+			if braceDepth > 0 {
+				return nil, fmt.Errorf("unclosed interpolation '${' in format string at %s", tok.Start)
+			}
+			exprStr := strings.TrimSpace(text[exprStart:j])
+			if exprStr == "" {
+				return nil, fmt.Errorf("empty interpolation '${}' in format string at %s", tok.Start)
+			}
+
+			subTokens, err := lonelexer.NewLexer([]byte(exprStr)).Tokenize()
+			if err != nil {
+				return nil, fmt.Errorf("lexing interpolation expression failed at %s: %w", tok.Start, err)
+			}
+			subParser := NewParser(subTokens)
+			subExpr, err := subParser.ParseExpr(PrecNone)
+			if err != nil {
+				return nil, fmt.Errorf("parsing interpolation expression failed at %s: %w", tok.Start, err)
+			}
+			parts = append(parts, subExpr)
+
+			i = j + 1
+			continue
+		}
+
+		curLit.WriteByte(text[i])
+		i++
+	}
+
+	flushLit()
+
+	return loneast.InterpolatedStringExpr{
+		Parts: parts,
+		Span_: tok.Span(),
+	}, nil
+}
+
