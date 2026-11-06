@@ -320,7 +320,8 @@ func (te *TypeEvaluator) hoistTypeDec(t *loneast.TYPE_DEC) {
 			fInfo := StructFieldInfo{
 				Name:       f.Name,
 				Type:       fType,
-				IsReadOnly: f.IsReadOnly,
+				IsReadOnly: f.IsReadOnly || f.IsRoPub,
+				IsRoPub:    f.IsRoPub,
 			}
 			if existing, exists := ifc.FieldMap[f.Name]; exists {
 				if !existing.Type.Equals(fType) || existing.IsReadOnly != f.IsReadOnly {
@@ -363,12 +364,18 @@ func (te *TypeEvaluator) hoistTypeDec(t *loneast.TYPE_DEC) {
 			if al > 0 && offset%al != 0 {
 				offset += al - (offset % al)
 			}
+			isPriv := strings.HasPrefix(f.Name, "_")
+			if isPriv && f.IsRoPub {
+				te.addDiag(SeverityError, f.Span_, "syn/redundant-field-modifier",
+					fmt.Sprintf("private field %q cannot have 'ro(pub)' modifier", f.Name))
+			}
 			info := StructFieldInfo{
 				Name:       f.Name,
 				Type:       fType,
 				Offset:     offset,
 				IsReadOnly: f.IsReadOnly,
-				IsPrivate:  strings.HasPrefix(f.Name, "_"),
+				IsRoPub:    f.IsRoPub,
+				IsPrivate:  isPriv,
 			}
 			st.Fields = append(st.Fields, info)
 			st.FieldMap[f.Name] = info
@@ -1259,6 +1266,12 @@ func (te *TypeEvaluator) analyzeAssignStmt(a *loneast.AssignStmt) *TAssignStmt {
 					te.addDiag(SeverityError, a.Span_, "type/immutable-field-write",
 						fmt.Sprintf("cannot assign to read-only field %q on struct %q; 'ro' fields are immutable after construction", mem.Field, targetStruct.Name))
 				}
+				if fInfo.IsRoPub {
+					if te.currentSelfType == nil || !te.currentSelfType.Equals(targetStruct) {
+						te.addDiag(SeverityError, a.Span_, "type/asymmetric-field-write",
+							fmt.Sprintf("field %q on struct %q is read-only outside its declaring struct", mem.Field, targetStruct.Name))
+					}
+				}
 			}
 		}
 
@@ -1906,8 +1919,15 @@ func (te *TypeEvaluator) evalUnaryExpr(u loneast.UnaryExpr) TExpr {
 			}
 		} else if mem, ok := sub.(*TMemberAccessExpr); ok {
 			if st, ok := mem.Base.ExprType().(*StructType); ok {
-				if fInfo, exists := st.Field(mem.Field); exists && fInfo.IsReadOnly {
-					isRo = true
+				if fInfo, exists := st.Field(mem.Field); exists {
+					if fInfo.IsReadOnly {
+						isRo = true
+					}
+					if fInfo.IsRoPub {
+						if te.currentSelfType == nil || !te.currentSelfType.Equals(st) {
+							isRo = true
+						}
+					}
 				}
 			}
 			if vref, ok := mem.Base.(*TVarRefExpr); ok {
@@ -1934,8 +1954,15 @@ func (te *TypeEvaluator) evalUnaryExpr(u loneast.UnaryExpr) TExpr {
 			}
 		} else if mem, ok := sub.(*TMemberAccessExpr); ok {
 			if st, ok := mem.Base.ExprType().(*StructType); ok {
-				if fInfo, exists := st.Field(mem.Field); exists && fInfo.IsReadOnly {
-					isRo = true
+				if fInfo, exists := st.Field(mem.Field); exists {
+					if fInfo.IsReadOnly {
+						isRo = true
+					}
+					if fInfo.IsRoPub {
+						if te.currentSelfType == nil || !te.currentSelfType.Equals(st) {
+							isRo = true
+						}
+					}
 				}
 			}
 			if vref, ok := mem.Base.(*TVarRefExpr); ok {
@@ -2878,12 +2905,18 @@ func (te *TypeEvaluator) instantiateGenericType(tmpl *GenericTypeTemplate, args 
 			if al > 0 && offset%al != 0 {
 				offset += al - (offset % al)
 			}
+			isPriv := strings.HasPrefix(f.Name, "_")
+			if isPriv && f.IsRoPub {
+				te.addDiag(SeverityError, f.Span_, "syn/redundant-field-modifier",
+					fmt.Sprintf("private field %q cannot have 'ro(pub)' modifier", f.Name))
+			}
 			info := StructFieldInfo{
 				Name:       f.Name,
 				Type:       fType,
 				Offset:     offset,
 				IsReadOnly: f.IsReadOnly,
-				IsPrivate:  strings.HasPrefix(f.Name, "_"),
+				IsRoPub:    f.IsRoPub,
+				IsPrivate:  isPriv,
 			}
 			st.Fields = append(st.Fields, info)
 			st.FieldMap[f.Name] = info
@@ -3291,9 +3324,9 @@ func (te *TypeEvaluator) TypeSatisfiesInterface(target Type, ifc *InterfaceType,
 				fmt.Sprintf("field %q on %q has type %q, but interface %q requires %q", req.Name, st.Name, actual.Type.String(), ifc.Name, req.Type.String()))
 			return false
 		}
-		if !req.IsReadOnly && actual.IsReadOnly {
+		if !req.IsReadOnly && (actual.IsReadOnly || actual.IsRoPub) {
 			te.addDiag(SeverityError, span, "type/field-mutability-mismatch",
-				fmt.Sprintf("field %q on %q is read-only, but interface %q requires a mutable field", req.Name, st.Name, ifc.Name))
+				fmt.Sprintf("field %q on %q is read-only to external callers, but interface %q requires a mutable field", req.Name, st.Name, ifc.Name))
 			return false
 		}
 	}

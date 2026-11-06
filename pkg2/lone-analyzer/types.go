@@ -304,6 +304,7 @@ type StructFieldInfo struct {
 	Type       Type
 	Offset     int
 	IsReadOnly bool
+	IsRoPub    bool
 	IsPrivate  bool
 }
 

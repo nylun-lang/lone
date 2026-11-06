@@ -1328,5 +1328,87 @@ fn test_ro_buf(p_ro: ptr<ro []int>, r_ro: ref<ro []int>) void {
 	}
 }
 
+func TestAsymmetricFieldVisibility(t *testing.T) {
+	// 1. Valid inherent mutation vs invalid external mutation
+	code := `
+type Counter = struct {
+    ro(pub) count: i32,
+    name: str,
+
+    pub fn increment(self: ref<Counter>) void {
+        self.count = self.count + 1
+    }
+}
+
+type IfcReader = interface {
+    ro count: i32,
+}
+
+type IfcWriter = interface {
+    count: i32,
+}
+
+fn test_valid_access(c: ref<Counter>) void {
+    let x = c.count -- OK: public read
+}
+
+fn test_invalid_external_mutation(c: ref<Counter>) void {
+    c.count = 99 -- Error: type/asymmetric-field-write
+}
+
+fn check_reader<T where { T satisfies IfcReader }>(r: ref<T>) void {}
+fn check_writer<T where { T satisfies IfcWriter }>(w: ref<T>) void {}
+
+fn test_interfaces(c: ref<Counter>) void {
+    check_reader(c) -- OK: IfcReader requires ro count
+    check_writer(c) -- Error: IfcWriter requires mutable count
+}
+`
+	analyzer := NewAnalyzer()
+	_, diags, err := analyzer.AnalyzeSource([]byte(code))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	hasAsymWriteErr := false
+	hasMutabilityMismatchErr := false
+	for _, d := range diags {
+		if d.Rule == "type/asymmetric-field-write" {
+			hasAsymWriteErr = true
+		}
+		if d.Rule == "type/field-mutability-mismatch" {
+			hasMutabilityMismatchErr = true
+		}
+	}
+
+	if !hasAsymWriteErr {
+		t.Errorf("expected type/asymmetric-field-write diagnostic, got: %v", diags)
+	}
+	if !hasMutabilityMismatchErr {
+		t.Errorf("expected type/field-mutability-mismatch diagnostic for IfcWriter, got: %v", diags)
+	}
+
+	// 2. Private field with ro(pub) rejection
+	privCode := `
+type BadStruct = struct {
+    ro(pub) _secret: i32,
+}
+`
+	_, privDiags, err := analyzer.AnalyzeSource([]byte(privCode))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	hasRedundantErr := false
+	for _, d := range privDiags {
+		if d.Rule == "syn/redundant-field-modifier" {
+			hasRedundantErr = true
+		}
+	}
+	if !hasRedundantErr {
+		t.Errorf("expected syn/redundant-field-modifier for ro(pub) on _secret, got: %v", privDiags)
+	}
+}
+
+
 
 

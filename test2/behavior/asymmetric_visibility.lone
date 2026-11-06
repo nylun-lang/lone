@@ -1,0 +1,38 @@
+pub type IfcSession = interface {
+    ro attempts: i32,
+    ro max_val: i32,
+}
+
+pub type Game = struct {
+    ro _secret: i32,
+    ro max_val: i32,
+    ro(pub) attempts: i32,
+
+    pub fn __init__(max_num: i32) Game {
+        return Game::{
+            ._secret: 42,
+            .max_val: max_num,
+            .attempts: 0,
+        }
+    }
+
+    pub fn record_attempt(self: ref<Game>) void {
+        self.attempts = self.attempts + 1
+    }
+}
+
+pub fn get_session_attempts<T where { T satisfies IfcSession }>(s: ref<T>) i32 {
+    return s.attempts
+}
+
+fn main() void {
+    var g = Game::(100)
+    g.record_attempt()
+    g.record_attempt()
+    g.record_attempt()
+
+    let att = get_session_attempts(&g)
+    if att == 3 and g.attempts == 3 and g.max_val == 100 {
+        #print("Asymmetric field visibility ro(pub) verified in Wasm!\n")
+    }
+}

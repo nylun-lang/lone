@@ -14,14 +14,14 @@ import .print, .println, .read_line, .parse_int, .random_range from :std:io
 -- Interface data contract representing any active game session.
 pub type IfcGameSession = interface {
     ro max_val: i32,
-    attempts: i32,
+    ro attempts: i32,
 }
 
 -- Game struct demonstrating encapsulation, read-only fields, and canonical constructors.
 pub type Game = struct {
     ro _secret: i32,
     ro max_val: i32,
-    attempts: i32,
+    ro(pub) attempts: i32,
 
     -- Canonical constructor invoked via `Game::(max_num)`.
     pub fn __init__(max_num: i32) Game {

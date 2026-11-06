@@ -353,6 +353,7 @@ pub type Point3D = struct {
 - **Encapsulation Protection**: Structs with private fields (`_*`) cannot be instantiated via raw aggregate syntax `Point3D::{ ... }` from outside; callers must use `Point3D::(...)`.
 - **Initialization Guarantees**: Structs with read-only private fields must declare an `__init__` constructor (`type/missing-init-for-ro-private-field`).
 - **Immutability Protection**: Writes to `ro` fields after instantiation trigger `type/immutable-field-write`.
+- **Asymmetric Field Visibility `ro(pub)`**: Declaring `ro(pub) field: T` exposes the field as read-only to external callers while remaining mutable inside inherent methods on `Type` (`self.field = val`). External assignment attempts trigger `type/asymmetric-field-write`. Taking references from outside yields `ref<ro T>`. Natural satisfaction of `interface { ro field: T }` contracts is preserved.
 
 ### 5.6 Interface Declarations (`TYPE_DEC_INTERFACE`)
 Interfaces declare pure data contracts without implementation:

@@ -90,6 +90,7 @@ type StructField struct {
 	Name       string
 	Type       TYPE_REF
 	IsReadOnly bool
+	IsRoPub    bool
 	Span_      Span
 }
 

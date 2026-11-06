@@ -741,9 +741,21 @@ func (p *Parser) parseTypeDec(isPub bool) (loneast.TYPE_DEC, error) {
 				methods = append(methods, method)
 			} else {
 				isRo := false
+				isRoPub := false
 				if p.peek().Kind == lonelexer.TokenRo {
 					p.advance()
-					isRo = true
+					if p.peek().Kind == lonelexer.TokenLParen {
+						p.advance() // consume '('
+						if _, err := p.expect(lonelexer.TokenPub); err != nil {
+							return loneast.TYPE_DEC{}, err
+						}
+						if _, err := p.expect(lonelexer.TokenRParen); err != nil {
+							return loneast.TYPE_DEC{}, err
+						}
+						isRoPub = true
+					} else {
+						isRo = true
+					}
 				}
 
 				if p.peek().Kind == lonelexer.TokenLBracket {
@@ -779,6 +791,7 @@ func (p *Parser) parseTypeDec(isPub bool) (loneast.TYPE_DEC, error) {
 							Name:       nameTok.Text,
 							Type:       fType,
 							IsReadOnly: isRo,
+							IsRoPub:    isRoPub,
 							Span_:      lonelexer.Span{Start: nameTok.Start, End: fType.NodeSpan().End},
 						})
 					}
@@ -800,6 +813,7 @@ func (p *Parser) parseTypeDec(isPub bool) (loneast.TYPE_DEC, error) {
 						Name:       fName.Text,
 						Type:       fType,
 						IsReadOnly: isRo,
+						IsRoPub:    isRoPub,
 						Span_:      lonelexer.Span{Start: fName.Start, End: fType.NodeSpan().End},
 					})
 				}
@@ -840,9 +854,21 @@ func (p *Parser) parseTypeDec(isPub bool) (loneast.TYPE_DEC, error) {
 
 		for p.peek().Kind != lonelexer.TokenRBrace && !p.isAtEnd() {
 			isRo := false
+			isRoPub := false
 			if p.peek().Kind == lonelexer.TokenRo {
 				p.advance()
-				isRo = true
+				if p.peek().Kind == lonelexer.TokenLParen {
+					p.advance() // consume '('
+					if _, err := p.expect(lonelexer.TokenPub); err != nil {
+						return loneast.TYPE_DEC{}, err
+					}
+					if _, err := p.expect(lonelexer.TokenRParen); err != nil {
+						return loneast.TYPE_DEC{}, err
+					}
+					isRoPub = true
+				} else {
+					isRo = true
+				}
 			}
 
 			// Grouped fields: [x, y]: int
@@ -879,6 +905,7 @@ func (p *Parser) parseTypeDec(isPub bool) (loneast.TYPE_DEC, error) {
 						Name:       nameTok.Text,
 						Type:       fType,
 						IsReadOnly: isRo,
+						IsRoPub:    isRoPub,
 						Span_:      lonelexer.Span{Start: lbrack.Start, End: fType.NodeSpan().End},
 					})
 				}
@@ -900,6 +927,7 @@ func (p *Parser) parseTypeDec(isPub bool) (loneast.TYPE_DEC, error) {
 						Name:       idTok.Text,
 						Type:       fType,
 						IsReadOnly: isRo,
+						IsRoPub:    isRoPub,
 						Span_:      lonelexer.Span{Start: idTok.Start, End: fType.NodeSpan().End},
 					})
 				}
