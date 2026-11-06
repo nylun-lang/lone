@@ -3,15 +3,15 @@
 - **RFC**: `RFC-20261106-documentation_generator_command`
 - **Title**: CLI Documentation Generator via `lone doc-gen json`
 - **Author**: Human & AI Pair
-- **Status**: Draft
+- **Status**: Accepted
 - **Created**: 2026-11-06
 - **Target Version**: v0.7.0
 - **Related RFCs**:
-  - [`RFC-20261106-symbol_documentation_directive`](../accepted/RFC-20261106-symbol_documentation_directive.md)
-  - [`RFC-20261106-trait_implementation_labels`](../accepted/RFC-20261106-trait_implementation_labels.md)
-  - [`RFC-20261106-function_and_method_overloading`](../accepted/RFC-20261106-function_and_method_overloading.md)
-  - [`RFC-20261106-asymmetric_field_visibility`](../accepted/RFC-20261106-asymmetric_field_visibility.md)
-  - [`RFC-20261104-interface_data_contracts`](../accepted/RFC-20261104-interface_data_contracts.md)
+  - [`RFC-20261106-symbol_documentation_directive`](./RFC-20261106-symbol_documentation_directive.md)
+  - [`RFC-20261106-trait_implementation_labels`](./RFC-20261106-trait_implementation_labels.md)
+  - [`RFC-20261106-function_and_method_overloading`](./RFC-20261106-function_and_method_overloading.md)
+  - [`RFC-20261106-asymmetric_field_visibility`](./RFC-20261106-asymmetric_field_visibility.md)
+  - [`RFC-20261104-interface_data_contracts`](./RFC-20261104-interface_data_contracts.md)
 - **Applies to**: `cmd/lone`, `pkg/lone-analyzer`, `pkg/lone-project`, `docs/scripts`, `dev/SPEC.md`
 
 ---
