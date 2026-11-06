@@ -61,6 +61,26 @@ func NewTypeEvaluator() *TypeEvaluator {
 	return te
 }
 
+func (te *TypeEvaluator) Structs() map[string]*StructType {
+	return te.structs
+}
+
+func (te *TypeEvaluator) Interfaces() map[string]*InterfaceType {
+	return te.interfaces
+}
+
+func (te *TypeEvaluator) Enums() map[string]*EnumType {
+	return te.enums
+}
+
+func (te *TypeEvaluator) Traits() map[string]*TraitType {
+	return te.traits
+}
+
+func (te *TypeEvaluator) TraitImpls() map[string]map[string]*loneast.IMPL_DEC {
+	return te.traitImpls
+}
+
 func (te *TypeEvaluator) initBuiltins() {
 	// Built-in Error enum
 	errorEnum := &EnumType{

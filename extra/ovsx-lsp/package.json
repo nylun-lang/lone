@@ -2,7 +2,7 @@
   "name": "lone-lsp",
   "displayName": "Lone Language Support",
   "description": "Language Server Protocol client and syntax highlighting for the Lone programming language",
-  "version": "0.4.0",
+  "version": "0.6.0",
   "publisher": "lone-lang",
   "license": "Apache-2.0",
   "repository": {

@@ -32,6 +32,31 @@
     "strings": {
       "patterns": [
         {
+          "name": "string.interpolated.lone",
+          "begin": "f\"",
+          "end": "\"",
+          "patterns": [
+            {
+              "name": "constant.character.escape.lone",
+              "match": "\\\\."
+            },
+            {
+              "name": "meta.embedded.expression.lone",
+              "begin": "\\$\\{",
+              "end": "\\}",
+              "beginCaptures": {
+                "0": { "name": "punctuation.definition.template-expression.begin.lone" }
+              },
+              "endCaptures": {
+                "0": { "name": "punctuation.definition.template-expression.end.lone" }
+              },
+              "patterns": [
+                { "include": "$self" }
+              ]
+            }
+          ]
+        },
+        {
           "name": "string.quoted.double.lone",
           "begin": "\"",
           "end": "\"",
@@ -76,15 +101,15 @@
       "patterns": [
         {
           "name": "keyword.control.lone",
-          "match": "\\b(if|else|while|loop|for|in|return|break|and|or|xor|is|not)\\b"
+          "match": "\\b(if|else|while|loop|for|in|return|break|match|must|try|and|or|xor|is|not)\\b"
         },
         {
           "name": "keyword.declaration.lone",
-          "match": "\\b(fn|var|let|type|struct|trait|impl|drop|pub|import|from|as)\\b"
+          "match": "\\b(fn|var|let|type|struct|interface|enum|trait|impl|drop|pub|import|from|as)\\b"
         },
         {
           "name": "keyword.other.lone",
-          "match": "\\b(ro|comptime)\\b"
+          "match": "\\b(ro|comptime|where|satisfies|self|Self)\\b"
         },
         {
           "name": "constant.language.lone",

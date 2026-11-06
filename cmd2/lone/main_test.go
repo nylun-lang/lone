@@ -14,8 +14,8 @@ func TestCmd2LoneVersion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("version command failed: %v, output: %s", err, string(out))
 	}
-	if !strings.Contains(string(out), "lone v2") {
-		t.Errorf("expected 'lone v2', got:\n%s", string(out))
+	if !strings.Contains(string(out), "lone v0.6.0") {
+		t.Errorf("expected 'lone v0.6.0', got:\n%s", string(out))
 	}
 }
 
