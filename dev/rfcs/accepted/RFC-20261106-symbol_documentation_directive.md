@@ -3,13 +3,13 @@
 - **RFC**: `RFC-20261106-symbol_documentation_directive`
 - **Title**: Symbol Documentation via `@fa:docs <string>`
 - **Author**: Human & AI Pair
-- **Status**: Draft
+- **Status**: Accepted
 - **Created**: 2026-11-06
 - **Target Version**: v0.7.0
 - **Related RFCs**:
-  - [`RFC-20261104-interface_data_contracts`](../accepted/RFC-20261104-interface_data_contracts.md)
-  - [`RFC-20261104-struct_initialization_and_field_modifiers`](../accepted/RFC-20261104-struct_initialization_and_field_modifiers.md)
-  - [`RFC-20261106-function_and_method_overloading`](./RFC-20261106-function_and_method_overloading.md)
+  - [`RFC-20261104-interface_data_contracts`](./RFC-20261104-interface_data_contracts.md)
+  - [`RFC-20261104-struct_initialization_and_field_modifiers`](./RFC-20261104-struct_initialization_and_field_modifiers.md)
+  - [`RFC-20261106-function_and_method_overloading`](../drafts/RFC-20261106-function_and_method_overloading.md)
 - **Applies to**: `pkg/lone-lexer`, `pkg/lone-parser-ast`, `pkg/lone-parser`, `pkg/lone-analyzer`, `pkg/lone-lsp`, `cmd/lone`, `dev/SPEC.md`
 
 ---
