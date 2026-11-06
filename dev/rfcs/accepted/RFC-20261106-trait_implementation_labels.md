@@ -20,7 +20,8 @@ This RFC introduces **Trait Implementation Labels** via the `@fa:impl_label <str
 Key capabilities:
 1. **Alternative Trait Implementations**: Allows a single struct or type to define multiple distinct implementation strategies for the **exact same trait `TrT`** (e.g. buffered vs unbuffered I/O, synchronous vs asynchronous write, compact vs verbose formatting).
 2. **Strict Signature Invariance**: Every labeled implementation **must adhere 100% to the trait's declared method signatures**. No method signature divergence is permitted, ensuring complete stability and type safety.
-3. **Mandatory Default Implementation**: A type **must** provide an unlabeled (default) implementation of `TrT` before or alongside any labeled implementation. A type cannot declare labeled variations in isolation.
+3. **Strict Struct-Only Target Scope**: Both `@fa:impl_label` declarations and `Type->label` specialization syntax are **strictly forbidden on anything that is not a nominal `struct` type**. Labeled implementations cannot be declared on primitives, enums, interfaces, tuples, or aliases.
+4. **Mandatory Default Implementation**: A struct **must** provide an unlabeled (default) implementation of `TrT` before or alongside any labeled implementation. A struct cannot declare labeled variations in isolation.
 4. **Explicit Arrow Materialization (`Type->label`)**: Callers select between the default implementation and labeled alternatives using clean arrow specialization syntax:
    - Default (unlabeled): `TrT::|TargetType|`
    - Labeled alternative: `TrT::|TargetType->label|`
@@ -153,10 +154,48 @@ error[type/trait-signature-mismatch]: method 'write' in @fa:impl_label "bad" doe
    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected 2 parameters (self, str), got 3
 ```
 
-### Rule 3: Complete Implementation
+### Rule 3: Strict Struct-Only Enforcement
+Both `@fa:impl_label` declarations and `Type->label` specialization syntax are **strictly forbidden on anything that is not a nominal `struct` type**:
+
+- **Forbidden Targets**:
+  - Primitive types (`i8`..`i128`, `u8`..`u128`, `f32`, `f64`, `bool`, `str`, `char`, `void`, `none`)
+  - Enums (`enum`)
+  - Interfaces (`interface`)
+  - Type aliases, tuples, lists, references, and pointers
+  - Generic type parameters (`T->label` is forbidden per Rule 6)
+
+Attempting to attach `@fa:impl_label` to an implementation on a non-struct type is rejected at compile time:
+
+```lone
+@fa:impl_label "hex"
+impl TrDisplay for i32 { ... } -- COMPILE ERROR!
+
+@fa:impl_label "rgb"
+impl TrDisplay for ColorEnum { ... } -- COMPILE ERROR!
+```
+
+**Diagnostic**:
+```text
+error[type/invalid-impl-label-target]: @fa:impl_label is strictly forbidden on non-struct type 'i32'
+  --> src/math.lone:10:1
+   |
+10 | @fa:impl_label "hex"
+   | ^^^^^^^^^^^^^^^^^^^^ target type 'i32' is not a struct
+   = note: trait implementation labels and arrow syntax Type->label are exclusively permitted on nominal struct types
+```
+
+Likewise, attempting to specialize a non-struct type with arrow syntax at a call site (e.g. `render<i32->hex>(42)`) triggers `type/invalid-impl-label-target`.
+
+**Rationale**:
+- **Prevents Global Primitive Fragmentation**: Allowing competing labeled implementations on primitives (`i32->hex`, `i32->octal`) would pollute global type resolution and create coherence chaos across external libraries.
+- **Enums Already Have Exhaustive Variants**: Enums achieve structural variance through variant tags and pattern matching (`match`), making labeled trait variations redundant and confusing.
+- **Interfaces are Contracts, Not Types**: Interfaces define compile-time data contracts, not concrete memory representations, and cannot possess implementation bodies.
+- **Architectural Symmetry**: Structs in Lone are the sole nominal aggregate types that encapsulate physical fields, constructors (`__init__`), and inherent methods. Restricting implementation labels strictly to structs preserves a clean, unambiguous conceptual boundary.
+
+### Rule 4: Complete Implementation
 A labeled `impl` block must implement **all** required methods of the trait. Partial implementations are rejected (`type/incomplete-trait-impl`).
 
-### Rule 4: Unique Label per (Trait, Type) Pair
+### Rule 5: Unique Label per (Trait, Type) Pair
 A type cannot declare two implementations with the same label for the same trait (`sym/duplicate-impl-label`).
 
 ---
@@ -201,7 +240,7 @@ fn process_output<T where { T satisfies TrDisplay }>(item: T) void {
 }
 ```
 
-#### Rule 5: Generic Type Parameters CANNOT Permit Label Materialization
+#### Rule 6: Generic Type Parameters CANNOT Permit Label Materialization
 Inside a generic function body, attempting to qualify a generic type parameter `T` with a label during materialization is a **strict compile-time error** (`type/generic-parameter-label-forbidden`):
 
 ```lone
