@@ -4,7 +4,7 @@ layout: home
 hero:
   name: "Lone"
   text: "Statically Typed Systems Language for WebAssembly"
-  tagline: "High-performance compiler with multi-pass static analysis, Falone MIR, and standalone WASI/Web targets."
+  tagline: "High-performance compiler with Pratt parsing, linear memory management, WIR backend, and standalone WASI/Web targets."
   image:
     src: /logo.svg
     alt: Lone Language Logo
@@ -17,15 +17,15 @@ hero:
       link: /content/latest/language/variables-and-types
     - theme: alt
       text: Toolchain & CLI
-      link: /content/latest/toolchain/falone-cli
+      link: /content/latest/toolchain/lone-cli
 
 features:
   - title: Predictable Type System
-    details: Static typing with automatic inference (infer), fixed-size lists ([N]T), and a strict consume-or-drop invariant.
-  - title: Falone MIR & Zero-Dep Wasm
-    details: Clean lowering to control-flow graphs with basic blocks, inlined WASI syscalls, and structured Wasm loops.
-  - title: Auto-Generated Runtime Adapters
-    details: Built-in --with-adapter flag generates production-ready JavaScript glue for Node.js and web browsers.
-  - title: Built-in Intrinsics
-    details: High-speed intrinsics like #print mapped directly to linear memory data segments and optimized syscalls.
+    details: Static typing with algebraic data types, pattern matching, interface contracts, and asymmetric field visibility ro(pub).
+  - title: Direct WIR & Zero-Dep Wasm
+    details: Clean lowering to WebAssembly Intermediate Representation with linear scan register allocation and inlined WASI syscalls.
+  - title: Safe Linear Memory Architecture
+    details: Downward Page 0 datastack (shadow stack) paired with Page 1+ free-list heap allocator with coalescing and dynamic memory.grow.
+  - title: Built-in Intrinsics & Standard Library
+    details: High-speed compiler intrinsics prefixed with # alongside a pure-Lone standard library (:std:io, :std:sys).
 ---

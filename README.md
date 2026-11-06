@@ -3,7 +3,7 @@
 <img src="./assets/lone-banner.png" alt="Lone Logo">
 
 [![Build Status](https://img.shields.io/badge/version-v0.6.0-blue.svg)](./dev/SPEC.md)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](./LICENSE)
 [![Tests](https://img.shields.io/badge/tests-passing-brightgreen.svg)](./test)
 
 **Lone** is an explicit, systems- and UI-oriented programming language designed from the ground up to compile directly to **WebAssembly (Wasm)** with zero runtime overhead as its primary target. It takes inspiration from Go, TypeScript, Python, and Rust/Zig.
@@ -151,4 +151,4 @@ Full documentation is available under `docs/`:
 
 ## License
 
-Lone is open source software licensed under the [MIT License](./LICENSE).
+Lone is open source software licensed under the [Apache License, Version 2.0](./LICENSE).

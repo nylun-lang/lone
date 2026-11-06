@@ -5,14 +5,14 @@ order: 2
 
 # Getting Started with Lone
 
-This guide covers building the Lone v0.5.0-beta toolchain, writing your first program with algebraic types and pattern matching, and running it on WebAssembly.
+This guide covers building the Lone v0.6.0 toolchain, writing your first program with algebraic types, formatted string interpolation, pattern matching, and running it on WebAssembly.
 
 ---
 
 ## Prerequisites
 
 - **Go 1.22+**: Required to build the Lone compiler and CLI tools.
-- **Node.js 18+** or **Wasmtime**: For executing compiled WebAssembly modules (`.wat` or `.wasm`).
+- **Wasmtime**: For executing compiled WebAssembly modules (`.wat` or `.wasm`).
 
 ---
 
@@ -26,17 +26,13 @@ cd lone
 
 # Build the Lone compiler and CLI
 go build -o lone ./cmd/lone
-
-# Or build the Greenfield next-gen compiler driver
-go build -o lone2 ./cmd2/lone2
 ```
 
 Verify your installation:
 
 ```bash
-./lone --version
-# Or
-./lone2 --help
+./lone version
+# lone v0.6.0
 ```
 
 ---
@@ -71,8 +67,7 @@ pub fn main() void {
     let sum_op = MathOp::Add(15, 27)
     let result = evaluate(sum_op)
     
-    #print("Calculation result: ")
-    println_int(result)
+    println(f"Calculation result: ${result}")
 }
 ```
 

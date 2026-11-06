@@ -45,11 +45,17 @@ Provides formatted and unformatted standard I/O backed by WebAssembly WASI:
 - `println_int(n: i32) void`: Prints an integer as decimal text followed by `\n`.
 - `read_line() str`: Reads a line of input from standard input up to `\n`.
 - `int_to_str(n: i32) str`: Formats an integer to string representation.
-- `parse_int(s: str) i32`: Parses decimal text into an integer.
+- `parse_int(s: str) Result<i32>`: Parses decimal text into an integer, returning `Result::Ok(n)` or `Result::Err(Error::Generic)`.
 - `TrWriter`: Writer contract (`write(self, msg: str) void`).
 - `TrReader`: Reader contract (`read(self, buf: ptr<u8>, max_len: i32) i32`).
 
-### 2. `:std:builtin`
+### 2. `:std:sys`
+Provides low-level system and runtime utilities:
+
+- `random_i32() i32`: Generates a pseudo-random 32-bit integer backed by WASI `random_get`.
+- `random_range(min: i32, max: i32) i32`: Generates an integer uniformly in `[min, max]`.
+
+### 3. `:std:builtin`
 Provides core language primitives, ranges, and iteration traits:
 
 - `range(start: i32, end: i32) Range`: Creates an iterable integer range `[start, end)`.

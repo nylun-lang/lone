@@ -84,3 +84,29 @@ var bad = a < b < c       -- COMPILE ERROR: comparison operators cannot be chain
 
 Attempting to chain comparisons (`a < b < c`, `a <= b <= c`, `a < b > c`) is rejected immediately at compile time.
 Parenthesized boolean comparisons against numbers like `(a < b) < c` are also rejected during semantic analysis (`type/invalid-comparison`).
+
+---
+
+## Explicit Casting (`as`)
+
+Lone prohibits implicit widening or narrowing numeric conversions. All type conversions must be explicit using `as`:
+
+```rust
+let small: i32 = 42
+let wide: i64 = small as i64
+let byte: u8 = small as u8
+```
+
+---
+
+## Error Propagation Operators (`must`, `try`)
+
+Lone provides first-class operators for unwrapping and propagating `Result<V, U>`:
+
+- **`must <expr>`**: Asserts that `expr` is `Result::Ok(val)` or `Option::Some(val)` and evaluates to the inner payload `val`. If the value is `Result::Err` or `Option::None`, execution terminates immediately with a WebAssembly `unreachable` trap.
+- **`try <expr>`**: Unwraps `Result::Ok(val)` into `val`. If the value is `Result::Err(err)`, the enclosing function immediately returns `Result::Err(err)`.
+
+```rust
+let val = must parse_int("123") -- i32
+let item = try fetch_item(id)   -- propagates Err on failure
+```

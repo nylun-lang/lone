@@ -25,6 +25,8 @@ fn greet(name: str) void {
 
 - **Parameters**: Must have explicit type annotations `(name: type, ...)`. Parameter names must follow `snake_case`.
 - **Return Type**: Every function must specify a return type or `void`. Non-void functions must guarantee a return value along all code branches.
+- **Instance Methods**: Declared inside structs. The receiver parameter is explicitly typed as `self: Target` (by-value copy) or `self: ref<Target>` (by-reference), with `self: ref<var Target>` for mutating calls.
+- **Constructors**: Designated by `pub fn __init__(...) Type`. Invoked directly using `Type::(...)`.
 - **Intrinsic Functions**: Built-in compiler primitives are prefixed with `#` (e.g. `#print`, `#panic`, `#alloc`).
 
 ---

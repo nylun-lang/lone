@@ -18,7 +18,7 @@ if (fs.existsSync(sidebarFile)) {
 // https://vitepress.vuejs.org/config/app-configs
 export default defineConfig({
   title: 'Lone',
-  description: 'A statically typed systems language compiling to Falone MIR and WebAssembly',
+  description: 'A statically typed systems language compiling directly to WebAssembly',
   base: '/',
   lastUpdated: true,
   cleanUrls: true,
@@ -33,9 +33,9 @@ export default defineConfig({
       {
         text: 'Tools',
         items: [
-          { text: 'Falone Compiler', link: '/content/latest/toolchain/falone-cli' },
-          { text: 'Lone-alyzer', link: '/content/latest/language/type-system' },
-          { text: 'Runtime Adapters', link: '/content/latest/toolchain/runtime-adapters' },
+          { text: 'Lone Compiler CLI', link: '/content/latest/toolchain/lone-cli' },
+          { text: 'Lone Debugger', link: '/content/latest/toolchain/lone-debug' },
+          { text: 'Runtime & WASI', link: '/content/latest/toolchain/wasm-and-wasi' },
         ],
       },
       { text: 'GitHub', link: 'https://github.com/lone-lang/lone' },
@@ -48,7 +48,7 @@ export default defineConfig({
     ],
 
     footer: {
-      message: 'Released under the MIT License.',
+      message: 'Released under the Apache License, Version 2.0.',
       copyright: 'Copyright © 2026 Lone Contributors',
     },
 

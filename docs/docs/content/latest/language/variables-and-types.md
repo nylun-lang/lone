@@ -24,6 +24,10 @@ var is_active: bool = true
 -- Inferred types
 let total = 100         -- Inferred as i32
 var greeting = "Hello"  -- Inferred as str
+
+-- Grouped declarations
+let [width, height]: i32 = get_dimensions()
+var [min_val, max_val]: i32 = 0
 ```
 
 ---
@@ -99,20 +103,20 @@ Passing a `ref<T>` where a `ptr<T>` is expected triggers a compile-time type err
 
 ---
 
-## Struct Declarations
+## Struct Declarations & Asymmetric Field Visibility
 
-Structs encapsulate fields, constructors, and instance methods:
+Structs encapsulate physical fields, constructors, and instance methods:
 
 ```rust
 pub type Point = struct {
     x: i32,
     y: i32,
 
-    pub fn new(x: i32, y: i32) Point {
-        return Point::{ .x: x, .y: y }
+    pub fn __init__(x: i32, y: i32) Point {
+        return Point { x: x, y: y }
     }
 
-    pub fn distance_squared(self, other: Point) i32 {
+    pub fn distance_squared(self: Point, other: Point) i32 {
         var dx = self.x - other.x
         var dy = self.y - other.y
         return dx * dx + dy * dy
@@ -120,7 +124,59 @@ pub type Point = struct {
 }
 ```
 
-Structs can be instantiated via associated construct (`Point::{ .x: 10, .y: 20 }`) or constructor method (`Point.new(10, 20)`).
+### Canonical Constructor Syntax (`__init__`)
+Invoking `Type::(...)` desugars into a call to `Type.__init__(...)`:
+
+```rust
+let pt = Point::(10, 20)
+```
+
+Attempting to instantiate a struct via `Type::(...)` when `__init__` is not defined raises a compile-time static error (`type/constructor-undefined`).
+
+### Asymmetric Field Visibility (`ro(pub)`)
+Lone supports asymmetric field permissions:
+- Fields marked `ro(pub)` are **publicly readable** across module boundaries, but **only mutable** within the declaring module.
+- Fields marked `_name` are fully private to the struct.
+- Fields marked `ro` are read-only everywhere.
+
+```rust
+pub type UserSession = struct {
+    _token: str,           -- Struct-private: unreadable and unwritable outside
+    ro(pub) user_id: i32,  -- Publicly readable, privately mutable
+    pub name: str,         -- Publicly readable and writable
+
+    pub fn __init__(user_id: i32, token: str, name: str) UserSession {
+        return UserSession { _token: token, user_id: user_id, name: name }
+    }
+
+    pub fn reset_id(self: ref<var UserSession>, new_id: i32) void {
+        self.user_id = new_id -- Permitted: inside declaring struct module
+    }
+}
+```
+
+---
+
+## Interface Contracts (`interface`)
+
+Interfaces define structural data contracts for compile-time conformance and duck-typing:
+
+```rust
+pub type IfcNamed = interface {
+    ro name: str
+}
+
+pub type IfcSession = interface {
+    ro user_id: i32
+    ro name: str
+}
+
+fn print_user_id(session: IfcSession) void {
+    println_int(session.user_id)
+}
+```
+
+Any struct providing the required fields with matching types and visibility satisfies the interface automatically without explicit declaration.
 
 ---
 

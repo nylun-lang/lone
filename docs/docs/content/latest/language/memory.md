@@ -71,5 +71,7 @@ When available free blocks cannot satisfy an allocation request, `$__lone_rt_all
 
 ## References (`ref<T>`) vs. Raw Pointers (`ptr<T>`)
 
-- **`ref<T>` (Managed Reference)**: Safe reference created via `&x`. Tracked by the compiler to prevent escaping pointers.
-- **`ptr<T>` (Raw Pointer)**: Unsafe WebAssembly linear memory address (`i32`) created via `&raw x`. Can be manipulated with raw memory offsets and intrinsics.
+- **`ref<T>` (Safe Managed Reference)**: Safe reference created via `&x`. Immutable by default (`ref<T>`), or explicitly mutable when bound as `ref<var T>`. Cannot escape its enclosing stack scope.
+- **`ref<[]T>` (Fat Slice Reference)**: Encapsulates a pointer and length for safe contiguous bounds-checked access.
+- **`ptr<T>` (Raw Unsafe Pointer)**: Direct WebAssembly linear memory address (`i32`) created via `&raw x`. Supports raw memory indexing `ptr[i]` and offset arithmetic.
+- **`ptr<[N]T>` (Sized Buffer Pointer)**: Typed pointer to a fixed-size buffer of `N` contiguous elements in linear memory, facilitating zero-copy buffer operations and WASI syscall integration.

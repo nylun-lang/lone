@@ -14,9 +14,6 @@ order: 1
 ```bash
 # Build the unified Lone CLI
 go build -o lone ./cmd/lone
-
-# Build the Greenfield next-gen compiler driver
-go build -o lone2 ./cmd2/lone
 ```
 
 ---
@@ -83,14 +80,24 @@ lone lsp
 
 ---
 
-### 6. `lone2 parse` (Greenfield Toolchain)
-Validates source syntax and prints declaration statistics using the Greenfield Pratt precedence parser:
+### 6. `lone parse`
+Validates source syntax and prints declaration statistics using the Pratt precedence parser:
 
 ```bash
-lone2 parse <file.lone>
+lone parse <file.lone>
 ```
 
 Output:
 ```text
 Successfully parsed calc.lone: 3 top-level declaration(s)
+```
+
+---
+
+### 7. `lone version`
+Displays the active compiler version and architecture:
+
+```bash
+lone version
+# lone v0.6.0
 ```

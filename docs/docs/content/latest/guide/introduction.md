@@ -3,7 +3,7 @@ title: "Introduction"
 order: 1
 ---
 
-# Introduction to Lone (v0.5.0-beta)
+# Introduction to Lone (v0.6.0)
 
 **Lone** is an explicit, systems- and UI-oriented programming language designed from the ground up to compile directly to **WebAssembly (Wasm)** with zero runtime overhead as its primary target. It takes inspiration from Go, TypeScript, Python, and Rust/Zig.
 
@@ -20,20 +20,23 @@ order: 1
 
 ---
 
-## Compiler Architecture (v0.5.0-beta)
+## Compiler Architecture (v0.6.0)
 
-The modern Lone toolchain implements a clean, high-performance Greenfield architecture:
+The Lone toolchain implements a zero-dependency, high-performance architecture:
 
 ```
 [Lone Source (.lone)]
          │
-         ▼  (pkg2/lone-lexer & lone-parser / Pratt precedence)
+         ▼  (pkg/lone-lexer & lone-parser / Pratt precedence)
      [Raw AST]
          │
-         ▼  (pkg2/lone-analyzer / multi-pass analysis)
-  [Typed IR (TProgram)]  <── Validates types, drop rule, and naming rules
+         ▼  (pkg/lone-project / multi-file resolver)
+ [Resolved AST Graph]
          │
-         ▼  (pkg2/lone-compiler-wir / WIR lowering & monomorphization)
+         ▼  (pkg/lone-analyzer / multi-pass analysis)
+  [Typed IR (TProgram)]  <── Validates types, interface contracts, and drop rules
+         │
+         ▼  (pkg/lone-compiler-wir / WIR lowering & monomorphization)
  [WebAssembly (WAT / Wasm)]
          │
          ├── Page 0: Downward Datastack (Shadow Stack) + Constants
@@ -42,14 +45,22 @@ The modern Lone toolchain implements a clean, high-performance Greenfield archit
 
 ---
 
-## Key Features in v0.5.0-beta
+## Key Features in v0.6.0
 
+- **Asymmetric Field Visibility (`ro(pub)`)**: Physical struct fields are publicly accessible as read-only outside the declaring module, while remaining fully mutable internally.
+- **Formal Interface Contracts (`interface`)**: Compile-time duck-typing and structural contracts that decoupled callers from concrete implementations.
+- **Canonical Struct Constructors (`__init__`)**: Direct construction syntax `Type::(...)` desugars into invocations of `pub fn __init__(...) Type`.
+- **Reference & Pointer Semantics**:
+  - Safe typed references `ref<T>` with immutability by default and `ref<var T>`.
+  - Raw pointers `ptr<T>` for low-level memory operations and sized array pointers `ptr<[N]T>`.
+  - Fat slice references `ref<[]T>` encapsulating pointer and length.
+- **Formatted String Interpolation (`f"..."`)**: Compile-time desugared format strings with `${...}` expressions and `TrDisplay` trait integration.
+- **Grouped Variable Declarations**: `[a, b]: Type` syntax for declaring multiple variables cleanly.
 - **Tagged Union Enums**: Full algebraic data types with variant payloads, discriminant tagging, and standard types like `Option<T>` and `Result<V, U>`.
 - **Exhaustive Pattern Matching**: First-class `match` expressions with pattern destructuring and compiler-checked exhaustiveness.
 - **Error Handling with `must` & `try`**:
   - `must <expr>`: Unwraps `Result::Ok` or panics via WebAssembly `unreachable`.
   - `try <expr>`: Propagates `Result::Err` up the call stack with early return.
 - **Parametric Polymorphism & Constraints**: Generics with `where` constraint blocks using `satisfies` (trait contract) and `is` (type match), plus `infer` escape hatches.
-- **Explicit Trait Materialization**: `TrTrait::|T|` syntax for unambiguous, zero-cost trait method dispatch. Trait names strictly enforce the `Tr` prefix convention.
-- **Linear Memory & Free-List Allocator**: Two-tier memory model: Page 0 downward datastack frame allocation (zero-cost rewind) alongside Page 1+ dynamic heap managed by an inlined free-list allocator with bi-directional coalescing and `memory.grow`.
-- **Modern Control Flow**: Pre-condition `while`, infinite `loop`, post-condition `loop { ... } while: [cond]` with smart variable scoping, and multi-branch packed `if`.
+- **Linear Memory & Free-List Allocator**: Two-tier memory model: Page 0 downward datastack frame allocation alongside Page 1+ dynamic heap managed by an inlined free-list allocator with bi-directional coalescing and `memory.grow`.
+- **Full LSP Protocol Daemon (`lone lsp`)**: JSON-RPC 2.0 language server providing diagnostics, hover tooltips, definition jumps, and document symbols.

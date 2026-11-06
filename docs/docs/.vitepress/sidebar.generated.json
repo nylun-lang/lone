@@ -101,6 +101,107 @@
         ]
       }
     ],
+    "/content/0.6.0/": [
+      {
+        "text": "Getting Started & Guides",
+        "collapsible": true,
+        "collapsed": false,
+        "key": "guide",
+        "items": [
+          {
+            "text": "Introduction",
+            "link": "/content/0.6.0/guide/introduction",
+            "order": 1
+          },
+          {
+            "text": "Getting Started",
+            "link": "/content/0.6.0/guide/getting-started",
+            "order": 2
+          }
+        ]
+      },
+      {
+        "text": "Language Reference",
+        "collapsible": true,
+        "collapsed": false,
+        "key": "language",
+        "items": [
+          {
+            "text": "Variables & Types",
+            "link": "/content/0.6.0/language/variables-and-types",
+            "order": 1
+          },
+          {
+            "text": "Functions & Generics",
+            "link": "/content/0.6.0/language/functions",
+            "order": 2
+          },
+          {
+            "text": "Control Flow & Pattern Matching",
+            "link": "/content/0.6.0/language/control-flow",
+            "order": 3
+          },
+          {
+            "text": "Traits & Materialization",
+            "link": "/content/0.6.0/language/traits",
+            "order": 4
+          },
+          {
+            "text": "Linear Memory & Allocator",
+            "link": "/content/0.6.0/language/memory",
+            "order": 5
+          },
+          {
+            "text": "Built-in Intrinsics",
+            "link": "/content/0.6.0/language/intrinsics",
+            "order": 6
+          },
+          {
+            "text": "Operators & Precedence",
+            "link": "/content/0.6.0/language/operators",
+            "order": 7
+          },
+          {
+            "text": "Modules, Imports & Standard Library",
+            "link": "/content/0.6.0/language/modules-and-imports",
+            "order": 8
+          },
+          {
+            "text": "Type System & Safety Invariants",
+            "link": "/content/0.6.0/language/type-system",
+            "order": 9
+          }
+        ]
+      },
+      {
+        "text": "Compiler & Toolchain",
+        "collapsible": true,
+        "collapsed": false,
+        "key": "toolchain",
+        "items": [
+          {
+            "text": "Lone CLI Reference",
+            "link": "/content/0.6.0/toolchain/lone-cli",
+            "order": 1
+          },
+          {
+            "text": "WebAssembly & WASI",
+            "link": "/content/0.6.0/toolchain/wasm-and-wasi",
+            "order": 2
+          },
+          {
+            "text": "Runtime Glue & Adapters",
+            "link": "/content/0.6.0/toolchain/runtime-adapters",
+            "order": 3
+          },
+          {
+            "text": "Lone Debug Toolchain",
+            "link": "/content/0.6.0/toolchain/lone-debug",
+            "order": 4
+          }
+        ]
+      }
+    ],
     "/content/0.5.0-beta/": [
       {
         "text": "Getting Started & Guides",
@@ -414,10 +515,14 @@
       "link": "/content/latest/guide/introduction"
     },
     {
-      "text": "v0.5.0-beta (latest)",
+      "text": "v0.6.0 (latest)",
       "items": [
         {
-          "text": "0.5.0-beta (latest)",
+          "text": "0.6.0 (latest)",
+          "link": "/content/0.6.0/guide/introduction"
+        },
+        {
+          "text": "0.5.0-beta",
           "link": "/content/0.5.0-beta/guide/introduction"
         },
         {
@@ -435,8 +540,9 @@
       ]
     }
   ],
-  "latestVersion": "0.5.0-beta",
+  "latestVersion": "0.6.0",
   "versions": [
+    "0.6.0",
     "0.5.0-beta",
     "0.4.0",
     "0.2.0",
