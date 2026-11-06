@@ -217,15 +217,28 @@ func (p *Parser) parsePrefix() (loneast.Expr, error) {
 			for {
 				if p.peek().Kind == lonelexer.TokenSelf {
 					selfTok := p.advance()
-					params = append(params, loneast.FnParam{
-						Name: "self",
-						Type: loneast.TYPE_REF{
-							Kind:  loneast.TYPE_BASE,
-							Value: &loneast.TypeBase{Name: "Self"},
+					if p.peek().Kind == lonelexer.TokenColon {
+						p.advance()
+						pType, err := p.parseTypeRef()
+						if err != nil {
+							return nil, err
+						}
+						params = append(params, loneast.FnParam{
+							Name:  "self",
+							Type:  pType,
+							Span_: loneast.Span{Start: selfTok.Span().Start, End: pType.NodeSpan().End},
+						})
+					} else {
+						params = append(params, loneast.FnParam{
+							Name: "self",
+							Type: loneast.TYPE_REF{
+								Kind:  loneast.TYPE_BASE,
+								Value: &loneast.TypeBase{Name: "Self"},
+								Span_: selfTok.Span(),
+							},
 							Span_: selfTok.Span(),
-						},
-						Span_: selfTok.Span(),
-					})
+						})
+					}
 				} else if p.peek().Kind == lonelexer.TokenLBracket {
 					lbrack := p.advance()
 					var names []string

@@ -92,3 +92,90 @@ pub fn eprintln(msg: str) void {
     drop err.write(msg)
     drop err.write("\n")
 }
+
+-- Reads a single line from standard input (stripping trailing \r and \n),
+-- promotes the resulting UTF-8 buffer to the managed heap, and returns it as `str`.
+pub fn read_line() str {
+    var tmp = #alloc(1024) as ptr<[]u8>
+    var len: i32 = 0
+    var ch: u8 = 0 as u8
+    let inp = Stdin.new()
+
+    while len < 1023 {
+        var n: i32 = sys_read(inp.fd, &raw ch, 1)
+        if n <= 0 {
+            break
+        }
+        if ch == (10 as u8) {
+            break
+        }
+        if ch != (13 as u8) {
+            tmp[len] = ch
+            len = len + 1
+        }
+    }
+
+    var out = #alloc(len + 1) as ptr<[]u8>
+    var i: i32 = 0
+    while i < len {
+        out[i] = tmp[i]
+        i = i + 1
+    }
+    out[len] = 0 as u8
+    #free(tmp as i32)
+    return out as str
+}
+
+-- Parses an integer from a string, skipping leading whitespace and handling optional signs.
+pub fn parse_int(s: str) i32 {
+    var n: i32 = 0
+    var i: i32 = 0
+    var is_neg = false
+
+    while s[i] == 32 or s[i] == 9 or s[i] == 10 or s[i] == 13 {
+        i = i + 1
+    }
+
+    if s[i] == 45 {
+        is_neg = true
+        i = i + 1
+    } else if s[i] == 43 {
+        i = i + 1
+    }
+
+    while s[i] != 0 {
+        var ch: i32 = s[i]
+        if ch >= 48 and ch <= 57 {
+            var digit: i32 = ch - 48
+            n = n * 10 + digit
+        } else {
+            break
+        }
+        i = i + 1
+    }
+
+    if is_neg {
+        return 0 - n
+    }
+    return n
+}
+
+-- Returns a random 32-bit signed integer using WASI random_get.
+pub fn random_i32() i32 {
+    var val: i32 = 0
+    drop sys_random(&raw val as ptr<any>, 4)
+    return val
+}
+
+-- Returns a pseudo-random integer between min and max (inclusive).
+pub fn random_range(min: i32, max: i32) i32 {
+    if max <= min {
+        return min
+    }
+    var r: i32 = random_i32()
+    if r < 0 {
+        r = 0 - r
+    }
+    var span: i32 = (max - min) + 1
+    return min + (r % span)
+}

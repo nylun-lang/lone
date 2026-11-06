@@ -54,6 +54,7 @@ type lowerer struct {
 	usesFormatI32 bool
 	varSlots      map[string]varSlotInfo
 	anonFnMap    map[string]string
+	wasiSyscalls map[string]bool
 	frameSize    int
 }
 
@@ -75,6 +76,7 @@ func LowerProgram(prog *loneanalyzer.TProgram, opts LowerOptions) (*WasmModule, 
 		labelStack:   make(map[string]string),
 		varSlots:     make(map[string]varSlotInfo),
 		anonFnMap:    make(map[string]string),
+		wasiSyscalls: make(map[string]bool),
 	}
 	l.mod.MemoryPages = opts.MemoryPages
 	l.mod.MemoryExport = opts.MemoryExport
@@ -139,6 +141,51 @@ func LowerProgram(prog *loneanalyzer.TProgram, opts LowerOptions) (*WasmModule, 
     (i32.store (i32.const 4) (local.get $len))
     (drop (call $__wasi_fd_write (i32.const 1) (i32.const 0) (i32.const 1) (i32.const 8)))
   )`)
+		}
+	}
+
+	for sc := range l.wasiSyscalls {
+		switch sc {
+		case "fd_write":
+			l.mod.Imports = append(l.mod.Imports, Import{
+				Module: "wasi_snapshot_preview1",
+				Name:   "fd_write",
+				Alias:  "$fd_write",
+				Params: []WasmType{TypeI32, TypeI32, TypeI32, TypeI32},
+				Result: TypeI32,
+			})
+		case "fd_read":
+			l.mod.Imports = append(l.mod.Imports, Import{
+				Module: "wasi_snapshot_preview1",
+				Name:   "fd_read",
+				Alias:  "$fd_read",
+				Params: []WasmType{TypeI32, TypeI32, TypeI32, TypeI32},
+				Result: TypeI32,
+			})
+		case "fd_close":
+			l.mod.Imports = append(l.mod.Imports, Import{
+				Module: "wasi_snapshot_preview1",
+				Name:   "fd_close",
+				Alias:  "$fd_close",
+				Params: []WasmType{TypeI32},
+				Result: TypeI32,
+			})
+		case "proc_exit":
+			l.mod.Imports = append(l.mod.Imports, Import{
+				Module: "wasi_snapshot_preview1",
+				Name:   "proc_exit",
+				Alias:  "$proc_exit",
+				Params: []WasmType{TypeI32},
+				Result: TypeVoid,
+			})
+		case "random_get":
+			l.mod.Imports = append(l.mod.Imports, Import{
+				Module: "wasi_snapshot_preview1",
+				Name:   "random_get",
+				Alias:  "$random_get",
+				Params: []WasmType{TypeI32, TypeI32},
+				Result: TypeI32,
+			})
 		}
 	}
 
@@ -1027,26 +1074,27 @@ func (l *lowerer) lowerStmt(stmt loneanalyzer.TStmt, alloc *LocalAllocator) []Wa
 
 		if slot, isSlot := l.varSlots[s.Name]; isSlot {
 			var insts []WasmInst
-			insts = append(insts, InstGlobalGet{Name: "$__stack_pointer"})
-			insts = append(insts, l.lowerExpr(s.Value, alloc)...)
-			insts = append(insts, InstStore{Op: storeOpForType(s.Type), Offset: slot.offset})
+			if s.Value != nil {
+				insts = append(insts, InstGlobalGet{Name: "$__stack_pointer"})
+				insts = append(insts, l.lowerExpr(s.Value, alloc)...)
+				insts = append(insts, InstStore{Op: storeOpForType(s.Type), Offset: slot.offset})
+			}
 			return insts
 		}
 
 		var insts []WasmInst
-		valInsts := l.lowerExpr(s.Value, alloc)
-		insts = append(insts, valInsts...)
-
-		// Track string variable lengths for #print
-		if lit, ok := s.Value.(*loneanalyzer.TLiteralExpr); ok {
-			if strVal, ok := lit.Value.(string); ok {
-				l.stringVarLen[s.Name] = len(strVal)
-			}
-		}
-
 		wType := toWasmType(s.Type)
 		localName := alloc.AllocVar(s.Name, wType)
-		insts = append(insts, InstLocalSet{Name: localName})
+		if s.Value != nil {
+			valInsts := l.lowerExpr(s.Value, alloc)
+			insts = append(insts, valInsts...)
+			if lit, ok := s.Value.(*loneanalyzer.TLiteralExpr); ok {
+				if strVal, ok := lit.Value.(string); ok {
+					l.stringVarLen[s.Name] = len(strVal)
+				}
+			}
+			insts = append(insts, InstLocalSet{Name: localName})
+		}
 		return insts
 
 	case *loneanalyzer.TAssignStmt:
@@ -1678,7 +1726,11 @@ func (l *lowerer) lowerExpr(expr loneanalyzer.TExpr, alloc *LocalAllocator) []Wa
 
 	case *loneanalyzer.TIndexExpr:
 		elemSz := int32(loneanalyzer.TypeSize(e.Typ))
-		if elemSz <= 0 {
+		loadOp := loadOpForType(e.Typ)
+		if e.Base.ExprType() == loneanalyzer.TypeStr {
+			elemSz = 1
+			loadOp = "i32.load8_u"
+		} else if elemSz <= 0 {
 			elemSz = 4
 		}
 		var insts []WasmInst
@@ -1719,7 +1771,7 @@ func (l *lowerer) lowerExpr(expr loneanalyzer.TExpr, alloc *LocalAllocator) []Wa
 			insts = append(insts, InstBinaryOp{Op: "i32.mul"})
 		}
 		insts = append(insts, InstBinaryOp{Op: "i32.add"})
-		insts = append(insts, InstLoad{Op: loadOpForType(e.Typ), Offset: 0})
+		insts = append(insts, InstLoad{Op: loadOp, Offset: 0})
 		return insts
 
 	case *loneanalyzer.TTupleExpr:
@@ -1804,10 +1856,32 @@ func (l *lowerer) lowerCallExpr(e *loneanalyzer.TCallExpr, alloc *LocalAllocator
 	} else if anon, ok := e.Callee.(*loneanalyzer.TAnonFnExpr); ok {
 		calleeName = strings.TrimPrefix(anon.Name, "$")
 	} else if mem, ok := e.Callee.(*loneanalyzer.TMemberAccessExpr); ok {
-		calleeName = mem.Field
+		var stName string
+		baseType := mem.Base.ExprType()
+		if st, ok := baseType.(*loneanalyzer.StructType); ok {
+			stName = st.Name
+		} else if refT, ok := baseType.(*loneanalyzer.RefType); ok {
+			if st, ok := refT.Elem.(*loneanalyzer.StructType); ok {
+				stName = st.Name
+			}
+		} else if ptrT, ok := baseType.(*loneanalyzer.PtrType); ok {
+			if st, ok := ptrT.Elem.(*loneanalyzer.StructType); ok {
+				stName = st.Name
+			}
+		} else if mat, ok := baseType.(*loneanalyzer.MaterializedTraitType); ok {
+			stName = mat.TargetType.String()
+		}
+		if stName != "" {
+			calleeName = stName + "." + mem.Field
+		} else {
+			calleeName = mem.Field
+		}
 	}
 
 	switch calleeName {
+	case "fd_write", "fd_read", "fd_close", "proc_exit", "random_get":
+		l.wasiSyscalls[calleeName] = true
+
 	case "#print", "print", "println":
 		l.usesPrint = true
 		var insts []WasmInst
@@ -2020,24 +2094,12 @@ func (l *lowerer) lowerInterpolatedString(
 		bufSize = (staticBytes + 63) & ^15
 	}
 
-	if toStack {
-		insts = append(insts,
-			InstGlobalGet{Name: "$__stack_pointer"},
-			InstConstI32{Value: int32(bufSize)},
-			InstBinaryOp{Op: "i32.sub"},
-			InstLocalTee{Name: bufLocal},
-			InstLocalSet{Name: curLocal},
-			InstLocalGet{Name: bufLocal},
-			InstGlobalSet{Name: "$__stack_pointer"},
-		)
-	} else {
-		insts = append(insts,
-			InstConstI32{Value: int32(bufSize)},
-			InstCall{Target: "$__lone_rt_alloc"},
-			InstLocalTee{Name: bufLocal},
-			InstLocalSet{Name: curLocal},
-		)
-	}
+	insts = append(insts,
+		InstConstI32{Value: int32(bufSize)},
+		InstCall{Target: "$__lone_rt_alloc"},
+		InstLocalTee{Name: bufLocal},
+		InstLocalSet{Name: curLocal},
+	)
 
 	for _, part := range expr.Parts {
 		// 1. Literal string
@@ -2171,12 +2233,10 @@ func (l *lowerer) lowerInterpolatedString(
 			InstBinaryOp{Op: "i32.sub"},
 			InstCall{Target: "$__lone_rt_print"},
 		)
-		// Rewind Page 0 datastack
+		// Free scratch buffer
 		insts = append(insts,
-			InstGlobalGet{Name: "$__stack_pointer"},
-			InstConstI32{Value: int32(bufSize)},
-			InstBinaryOp{Op: "i32.add"},
-			InstGlobalSet{Name: "$__stack_pointer"},
+			InstLocalGet{Name: bufLocal},
+			InstCall{Target: "$__lone_rt_free"},
 		)
 	} else {
 		// Null-terminate string and return bufLocal pointer
@@ -2530,6 +2590,14 @@ func loadOpForType(t loneanalyzer.Type) string {
 		return "f32.load"
 	case loneanalyzer.TypeF64:
 		return "f64.load"
+	case loneanalyzer.TypeU8, loneanalyzer.TypeBool, loneanalyzer.TypeChar:
+		return "i32.load8_u"
+	case loneanalyzer.TypeI8:
+		return "i32.load8_s"
+	case loneanalyzer.TypeU16:
+		return "i32.load16_u"
+	case loneanalyzer.TypeI16:
+		return "i32.load16_s"
 	default:
 		return "i32.load"
 	}
@@ -2543,6 +2611,10 @@ func storeOpForType(t loneanalyzer.Type) string {
 		return "f32.store"
 	case loneanalyzer.TypeF64:
 		return "f64.store"
+	case loneanalyzer.TypeU8, loneanalyzer.TypeI8, loneanalyzer.TypeBool, loneanalyzer.TypeChar:
+		return "i32.store8"
+	case loneanalyzer.TypeU16, loneanalyzer.TypeI16:
+		return "i32.store16"
 	default:
 		return "i32.store"
 	}

@@ -344,6 +344,11 @@ func (te *TypeEvaluator) hoistTypeDec(t *loneast.TYPE_DEC) {
 			FieldMap: make(map[string]StructFieldInfo),
 			Methods:  make(map[string]*FnType),
 		}
+		te.structs[t.Name] = st
+		_ = te.stack.Define(&Symbol{Name: t.Name, Kind: SymbolType, Type: st, Node: t})
+		oldSelf := te.currentSelfType
+		te.currentSelfType = st
+		defer func() { te.currentSelfType = oldSelf }()
 
 		offset := 0
 		maxAlign := 1
@@ -402,8 +407,6 @@ func (te *TypeEvaluator) hoistTypeDec(t *loneast.TYPE_DEC) {
 			}
 		}
 
-		te.structs[t.Name] = st
-		_ = te.stack.Define(&Symbol{Name: t.Name, Kind: SymbolType, Type: st, Node: t})
 	}
 
 	if t.Kind == loneast.TYPE_DEC_TRAIT {
@@ -1095,7 +1098,11 @@ func (te *TypeEvaluator) analyzeImplDec(i *loneast.IMPL_DEC) *TImplDec {
 	var tMethods []*TFnDec
 
 	for _, m := range i.Methods {
-		tMethod := te.analyzeFnDec(&m)
+		mCopy := m
+		if !strings.Contains(mCopy.Name, ".") {
+			mCopy.Name = targetType.String() + "." + mCopy.Name
+		}
+		tMethod := te.analyzeFnDec(&mCopy)
 		tMethods = append(tMethods, tMethod)
 	}
 
@@ -1980,6 +1987,11 @@ func (te *TypeEvaluator) evalCastExpr(c loneast.CastExpr) TExpr {
 		return &TCastExpr{Expr: sub, TargetType: targetType, Span_: c.Span_}
 	}
 
+	// String <-> Pointer / Integer casts (e.g. buf as str or str as ptr<[]u8>)
+	if (srcType == TypeStr && (isDstPtr || isDstInt)) || (targetType == TypeStr && (isSrcPtr || isSrcInt)) {
+		return &TCastExpr{Expr: sub, TargetType: targetType, Span_: c.Span_}
+	}
+
 	te.addDiag(SeverityError, c.Span_, "type/invalid-cast",
 		fmt.Sprintf("invalid explicit cast from type %q to %q", srcType.String(), targetType.String()))
 	return &TCastExpr{Expr: sub, TargetType: targetType, Span_: c.Span_}
@@ -2188,6 +2200,55 @@ func (te *TypeEvaluator) evalPostfixExpr(p loneast.PostFixExpr) TExpr {
 				retType := Type(TypeVoid)
 				if fnT, ok := curr.ExprType().(*FnType); ok {
 					retType = fnT.Return
+					if mem, isMem := curr.(*TMemberAccessExpr); isMem {
+						if len(fnT.Params) > 0 && fnT.Params[0].Name == "self" && len(tArgs) == len(fnT.Params)-1 {
+							selfParamType := fnT.Params[0].Type
+							baseType := mem.Base.ExprType()
+							var selfArg TExpr = mem.Base
+							if _, isRef := selfParamType.(*RefType); isRef {
+								if _, baseIsRef := baseType.(*RefType); !baseIsRef {
+									if _, baseIsPtr := baseType.(*PtrType); !baseIsPtr {
+										if vref, ok := mem.Base.(*TVarRefExpr); ok {
+											sym := te.stack.Lookup(vref.Name)
+											if sym != nil {
+												sym.AddressTaken = true
+												if tDec, ok := sym.Node.(*TVarDec); ok {
+													tDec.AddressTaken = true
+												}
+											}
+										}
+										selfArg = &TUnaryExpr{
+											Op:    loneast.UNARY_OP_REF,
+											Expr:  mem.Base,
+											Typ:   &RefType{Elem: baseType},
+											Span_: mem.Base.Span(),
+										}
+									}
+								}
+							} else if _, isPtr := selfParamType.(*PtrType); isPtr {
+								if _, baseIsPtr := baseType.(*PtrType); !baseIsPtr {
+									if _, baseIsRef := baseType.(*RefType); !baseIsRef {
+										if vref, ok := mem.Base.(*TVarRefExpr); ok {
+											sym := te.stack.Lookup(vref.Name)
+											if sym != nil {
+												sym.AddressTaken = true
+												if tDec, ok := sym.Node.(*TVarDec); ok {
+													tDec.AddressTaken = true
+												}
+											}
+										}
+										selfArg = &TUnaryExpr{
+											Op:    loneast.UNARY_OP_RAW_REF,
+											Expr:  mem.Base,
+											Typ:   &PtrType{Elem: baseType},
+											Span_: mem.Base.Span(),
+										}
+									}
+								}
+							}
+							tArgs = append([]TExpr{selfArg}, tArgs...)
+						}
+					}
 				}
 				curr = &TCallExpr{Callee: curr, Args: tArgs, Typ: retType, Span_: suff.Span_}
 			}
@@ -2850,10 +2911,26 @@ func (te *TypeEvaluator) monomorphizeFn(tmpl *GenericFnTemplate, args []TExpr) *
 		var resolved Type = TypeUnknown
 		for argIdx, param := range tmpl.Decl.Params {
 			if param.Type.Kind == loneast.TYPE_BASE {
-				if tb, ok := param.Type.Value.(*loneast.TypeBase); ok && tb.Name == p.Name {
-					if argIdx < len(args) {
-						resolved = args[argIdx].ExprType()
-						break
+				if tb, ok := param.Type.Value.(*loneast.TypeBase); ok {
+					if tb.Name == p.Name {
+						if argIdx < len(args) {
+							resolved = args[argIdx].ExprType()
+							break
+						}
+					} else if (tb.Name == "ref" || tb.Name == "ptr") && len(tb.Args) > 0 {
+						if atb, ok := tb.Args[0].Value.(*loneast.TypeBase); ok && atb.Name == p.Name {
+							if argIdx < len(args) {
+								argT := args[argIdx].ExprType()
+								if refT, ok := argT.(*RefType); ok {
+									resolved = refT.Elem
+								} else if ptrT, ok := argT.(*PtrType); ok {
+									resolved = ptrT.Elem
+								} else {
+									resolved = argT
+								}
+								break
+							}
+						}
 					}
 				}
 			}
@@ -2885,6 +2962,23 @@ func (te *TypeEvaluator) monomorphizeFn(tmpl *GenericFnTemplate, args []TExpr) *
 						Kind:  loneast.TYPE_BASE,
 						Value: &loneast.TypeBase{Name: mappedT.String()},
 						Span_: p.Span_,
+					}
+				} else if (tb.Name == "ref" || tb.Name == "ptr") && len(tb.Args) > 0 {
+					if atb, ok := tb.Args[0].Value.(*loneast.TypeBase); ok {
+						if mappedT, ok := paramMap[atb.Name]; ok {
+							newP.Type = loneast.TYPE_REF{
+								Kind: loneast.TYPE_BASE,
+								Value: &loneast.TypeBase{
+									Name: tb.Name,
+									Args: []loneast.TYPE_REF{{
+										Kind:  loneast.TYPE_BASE,
+										Value: &loneast.TypeBase{Name: mappedT.String()},
+										Span_: tb.Args[0].Span_,
+									}},
+								},
+								Span_: p.Span_,
+							}
+						}
 					}
 				}
 			}

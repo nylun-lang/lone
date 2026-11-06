@@ -1,0 +1,127 @@
+-- Lone Example: Number Guessing Game (v0.6.0 Standard)
+-- Demonstrates the canonical Lone v0.6.0 language features:
+--   1. Module Imports & Standard I/O (:std:io)
+--   2. Canonical Struct Initialization (Game::(...)) & __init__ Constructors
+--   3. Field Modifiers (ro read-only, _name private encapsulation)
+--   4. Explicit Reference Parameters & Mutation (self: ref<Game>)
+--   5. Interface Data Contracts & Generic Constraints (T satisfies IfcGameSession)
+--   6. Grouped Variable Declarations (let [a, b]: i32 = ...)
+--   7. Sized Buffer Pointers & Typestate Buffer Semantics (ptr<[10]int>)
+--   8. Native Formatted String Interpolation (f"...")
+
+import .print, .println, .read_line, .parse_int, .random_range from :std:io
+
+-- Interface data contract representing any active game session.
+pub type IfcGameSession = interface {
+    ro max_val: i32,
+    attempts: i32,
+}
+
+-- Game struct demonstrating encapsulation, read-only fields, and canonical constructors.
+pub type Game = struct {
+    ro _secret: i32,
+    ro max_val: i32,
+    attempts: i32,
+
+    -- Canonical constructor invoked via `Game::(max_num)`.
+    pub fn __init__(max_num: i32) Game {
+        return Game::{
+            ._secret: random_range(1, max_num),
+            .max_val: max_num,
+            .attempts: 0,
+        }
+    }
+
+    -- Evaluates a guess, mutating attempts in-place through a managed reference.
+    -- Returns -1 for too low, 1 for too high, and 0 for correct.
+    pub fn check(self: ref<Game>, guess: i32) i32 {
+        self.attempts = self.attempts + 1
+        if guess < self._secret {
+            return -1
+        }
+        if guess > self._secret {
+            return 1
+        }
+        return 0
+    }
+
+    -- Inherent accessor to safely reveal the private secret upon game conclusion.
+    pub fn get_secret(self: ref<Game>) i32 {
+        return self._secret
+    }
+}
+
+-- Generic diagnostic reporter constrained to types satisfying the IfcGameSession contract.
+pub fn print_session_status<T where { T satisfies IfcGameSession }>(session: ref<T>) void {
+    println(f"  [Session Status: ${session.attempts} attempt(s) logged | range: 1-${session.max_val}]")
+}
+
+fn main() void {
+    -- Grouped declarations initializing multiple bindings simultaneously
+    let [min_val, surrender_code]: i32 = 0
+    let title = "Lone Guessing Game (v0.6.0)"
+
+    println("==================================================")
+    println(f"        Welcome to the ${title}!        ")
+    println("==================================================")
+    println("I have chosen a secret number between 1 and 100.")
+    println(f"Can you guess what it is? (Enter ${surrender_code} to surrender)\n")
+
+    -- Canonical initialization calling __init__
+    var game = Game::(100)
+
+    -- Sized buffer tracking the player's first 10 guesses
+    var history: [10]int = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    var hist_ptr: ptr<[10]int> = &raw history
+
+    var playing = true
+    while playing {
+        print("Your guess: ")
+        var input = read_line()
+        var guess: i32 = parse_int(input)
+
+        if guess == surrender_code {
+            println(f"\nGiving up? The secret number was: ${game.get_secret()}")
+            println("Better luck next time!")
+            playing = false
+        } else {
+            var outcome = game.check(guess)
+
+            -- Record guess into sized buffer via pointer indexing
+            if game.attempts <= 10 {
+                hist_ptr[game.attempts - 1] = guess
+            }
+
+            if outcome == -1 {
+                println(f"-> Too low! Try a higher number than ${guess}.\n")
+                print_session_status(&game)
+            } else if outcome == 1 {
+                println(f"-> Too high! Try a lower number than ${guess}.\n")
+                print_session_status(&game)
+            } else {
+                println(f"\n🎉 BINGO! You guessed the secret number in ${game.attempts} attempt(s)!")
+                print_session_status(&game)
+
+                -- Display guess history from the sized buffer
+                print("Your guess history: ")
+                var i: i32 = 0
+                while i < game.attempts and i < 10 {
+                    let past_guess = hist_ptr[i]
+                    print(f"${past_guess} ")
+                    i = i + 1
+                }
+                println("")
+
+                if game.attempts <= 5 {
+                    println("Rank: Master Mind! Outstanding intuition!")
+                } else if game.attempts <= 8 {
+                    println("Rank: Expert Guesser! Great strategy!")
+                } else {
+                    println("Rank: Victorious! You got there in the end!")
+                }
+
+                playing = false
+            }
+        }
+    }
+}

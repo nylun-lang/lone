@@ -475,15 +475,28 @@ func (p *Parser) parseFnDec(isPub bool) (loneast.FN_DEC, error) {
 			// Check for 'self'
 			if p.peek().Kind == lonelexer.TokenSelf {
 				selfTok := p.advance()
-				params = append(params, loneast.FnParam{
-					Name: "self",
-					Type: loneast.TYPE_REF{
-						Kind:  loneast.TYPE_BASE,
-						Value: &loneast.TypeBase{Name: "Self"},
+				if p.peek().Kind == lonelexer.TokenColon {
+					p.advance()
+					pType, err := p.parseTypeRef()
+					if err != nil {
+						return loneast.FN_DEC{}, err
+					}
+					params = append(params, loneast.FnParam{
+						Name:  "self",
+						Type:  pType,
+						Span_: loneast.Span{Start: selfTok.Span().Start, End: pType.NodeSpan().End},
+					})
+				} else {
+					params = append(params, loneast.FnParam{
+						Name: "self",
+						Type: loneast.TYPE_REF{
+							Kind:  loneast.TYPE_BASE,
+							Value: &loneast.TypeBase{Name: "Self"},
+							Span_: selfTok.Span(),
+						},
 						Span_: selfTok.Span(),
-					},
-					Span_: selfTok.Span(),
-				})
+					})
+				}
 			} else if p.peek().Kind == lonelexer.TokenLBracket {
 				lbrack := p.advance()
 				var names []string
@@ -945,15 +958,28 @@ func (p *Parser) parseTypeDec(isPub bool) (loneast.TYPE_DEC, error) {
 				for {
 					if p.peek().Kind == lonelexer.TokenSelf {
 						selfTok := p.advance()
-						sigParams = append(sigParams, loneast.FnParam{
-							Name: "self",
-							Type: loneast.TYPE_REF{
-								Kind:  loneast.TYPE_BASE,
-								Value: &loneast.TypeBase{Name: "Self"},
+						if p.peek().Kind == lonelexer.TokenColon {
+							p.advance()
+							pType, err := p.parseTypeRef()
+							if err != nil {
+								return loneast.TYPE_DEC{}, err
+							}
+							sigParams = append(sigParams, loneast.FnParam{
+								Name:  "self",
+								Type:  pType,
+								Span_: loneast.Span{Start: selfTok.Span().Start, End: pType.NodeSpan().End},
+							})
+						} else {
+							sigParams = append(sigParams, loneast.FnParam{
+								Name: "self",
+								Type: loneast.TYPE_REF{
+									Kind:  loneast.TYPE_BASE,
+									Value: &loneast.TypeBase{Name: "Self"},
+									Span_: selfTok.Span(),
+								},
 								Span_: selfTok.Span(),
-							},
-							Span_: selfTok.Span(),
-						})
+							})
+						}
 					} else {
 						pName, err := p.expect(lonelexer.TokenIdent)
 						if err != nil {
