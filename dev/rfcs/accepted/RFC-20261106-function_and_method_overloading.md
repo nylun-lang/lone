@@ -3,13 +3,13 @@
 - **RFC**: `RFC-20261106-function_and_method_overloading`
 - **Title**: Function and Method Overloading via `@fa:fn_overload`
 - **Author**: Human & AI Pair
-- **Status**: Draft
+- **Status**: Accepted
 - **Created**: 2026-11-06
 - **Target Version**: v0.7.0
 - **Related RFCs**:
-  - [`RFC-20261104-struct_initialization_and_field_modifiers`](../accepted/RFC-20261104-struct_initialization_and_field_modifiers.md)
-  - [`RFC-20261105-grouped_declarations_anonymous_functions_and_tuples`](../accepted/RFC-20261105-grouped_declarations_anonymous_functions_and_tuples.md)
-- **Applies to**: `pkg2/lone-parser`, `pkg2/lone-analyzer`, `pkg2/lone-compiler-wir`, `dev/SPEC.md`
+  - [`RFC-20261104-struct_initialization_and_field_modifiers`](./RFC-20261104-struct_initialization_and_field_modifiers.md)
+  - [`RFC-20261105-grouped_declarations_anonymous_functions_and_tuples`](./RFC-20261105-grouped_declarations_anonymous_functions_and_tuples.md)
+- **Applies to**: `pkg/lone-parser`, `pkg/lone-analyzer`, `pkg/lone-compiler-wir`, `dev/SPEC.md`
 
 ---
 
