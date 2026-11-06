@@ -127,10 +127,12 @@ pub fn read_line() str {
 }
 
 -- Parses an integer from a string, skipping leading whitespace and handling optional signs.
-pub fn parse_int(s: str) i32 {
+-- Returns Result::Ok(n) on success, or Result::Err(Error::Generic) if no valid digits were found.
+pub fn parse_int(s: str) Result<i32> {
     var n: i32 = 0
     var i: i32 = 0
     var is_neg = false
+    var has_digits = false
 
     while s[i] == 32 or s[i] == 9 or s[i] == 10 or s[i] == 13 {
         i = i + 1
@@ -146,6 +148,7 @@ pub fn parse_int(s: str) i32 {
     while s[i] != 0 {
         var ch: i32 = s[i]
         if ch >= 48 and ch <= 57 {
+            has_digits = true
             var digit: i32 = ch - 48
             n = n * 10 + digit
         } else {
@@ -154,10 +157,14 @@ pub fn parse_int(s: str) i32 {
         i = i + 1
     }
 
-    if is_neg {
-        return 0 - n
+    if !has_digits {
+        return Result::Err(Error::Generic)
     }
-    return n
+
+    if is_neg {
+        return Result::Ok(0 - n)
+    }
+    return Result::Ok(n)
 }
 
 -- Returns a random 32-bit signed integer using WASI random_get.

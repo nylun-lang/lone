@@ -78,49 +78,55 @@ fn main() void {
     while playing {
         print("Your guess: ")
         var input = read_line()
-        var guess: i32 = parse_int(input)
+        var parsed = parse_int(input)
 
-        if guess == surrender_code {
-            println(f"\nGiving up? The secret number was: ${game.get_secret()}")
-            println("Better luck next time!")
-            playing = false
+        if parsed is Result::Err {
+            println("-> Invalid input! Please enter a valid number (or 0 to surrender).\n")
         } else {
-            var outcome = game.check(guess)
+            var guess: i32 = must parsed
 
-            -- Record guess into sized buffer via pointer indexing
-            if game.attempts <= 10 {
-                hist_ptr[game.attempts - 1] = guess
-            }
-
-            if outcome == -1 {
-                println(f"-> Too low! Try a higher number than ${guess}.\n")
-                print_session_status(&game)
-            } else if outcome == 1 {
-                println(f"-> Too high! Try a lower number than ${guess}.\n")
-                print_session_status(&game)
-            } else {
-                println(f"\n🎉 BINGO! You guessed the secret number in ${game.attempts} attempt(s)!")
-                print_session_status(&game)
-
-                -- Display guess history from the sized buffer
-                print("Your guess history: ")
-                var i: i32 = 0
-                while i < game.attempts and i < 10 {
-                    let past_guess = hist_ptr[i]
-                    print(f"${past_guess} ")
-                    i = i + 1
-                }
-                println("")
-
-                if game.attempts <= 5 {
-                    println("Rank: Master Mind! Outstanding intuition!")
-                } else if game.attempts <= 8 {
-                    println("Rank: Expert Guesser! Great strategy!")
-                } else {
-                    println("Rank: Victorious! You got there in the end!")
-                }
-
+            if guess == surrender_code {
+                println(f"\nGiving up? The secret number was: ${game.get_secret()}")
+                println("Better luck next time!")
                 playing = false
+            } else {
+                var outcome = game.check(guess)
+
+                -- Record guess into sized buffer via pointer indexing
+                if game.attempts <= 10 {
+                    hist_ptr[game.attempts - 1] = guess
+                }
+
+                if outcome == -1 {
+                    println(f"-> Too low! Try a higher number than ${guess}.\n")
+                    print_session_status(&game)
+                } else if outcome == 1 {
+                    println(f"-> Too high! Try a lower number than ${guess}.\n")
+                    print_session_status(&game)
+                } else {
+                    println(f"\n🎉 BINGO! You guessed the secret number in ${game.attempts} attempt(s)!")
+                    print_session_status(&game)
+
+                    -- Display guess history from the sized buffer
+                    print("Your guess history: ")
+                    var i: i32 = 0
+                    while i < game.attempts and i < 10 {
+                        let past_guess = hist_ptr[i]
+                        print(f"${past_guess} ")
+                        i = i + 1
+                    }
+                    println("")
+
+                    if game.attempts <= 5 {
+                        println("Rank: Master Mind! Outstanding intuition!")
+                    } else if game.attempts <= 8 {
+                        println("Rank: Expert Guesser! Great strategy!")
+                    } else {
+                        println("Rank: Victorious! You got there in the end!")
+                    }
+
+                    playing = false
+                }
             }
         }
     }
