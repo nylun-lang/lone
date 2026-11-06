@@ -14,6 +14,9 @@ Key components of the documentation stack:
 - **Local Search Engine**: Client-side full-text index without external dependencies.
 - **Syntax Highlighting**: Supports `lone`, `wat`, `bash`, `yaml`, `json`, `c`, and `go` code blocks.
 
+> [!IMPORTANT]
+> **Mandatory Content Standard**: Before writing or auditing documentation for any version, ensure the content adheres to the 4-Pillar Standard defined in [`WRITING_DOC_REQUIREMENT.md`](./WRITING_DOC_REQUIREMENT.md) (Getting Started, Language Reference, Advanced & Quirks, Debugging with `lone debug`).
+
 ---
 
 ## 2. Directory Architecture
@@ -21,6 +24,7 @@ Key components of the documentation stack:
 ```
 docs/
 ├── README.md                      # This authoring & maintenance guide
+├── WRITING_DOC_REQUIREMENT.md     # Mandatory 4-Pillar documentation requirements specification
 ├── package.json                   # VitePress dependencies and lifecycle scripts
 ├── bun.lock                       # Lockfile
 ├── scripts/
@@ -272,6 +276,7 @@ Run all documentation commands from within the `docs/` directory:
 
 Before submitting a pull request or committing changes to `docs/`:
 
+- [ ] **Content Standard Compliance**: Documentation covers all 4 pillars mandated in [`WRITING_DOC_REQUIREMENT.md`](./WRITING_DOC_REQUIREMENT.md) (Getting Started, Language Reference, Advanced Quirks, `lone debug`).
 - [ ] **Single Source of Truth**: All edits are made in `docs/docs/content/<sem-ver>/`, **NEVER** in `docs/docs/content/latest/`.
 - [ ] **Frontmatter Present**: All added or updated pages include `title` and `order`.
 - [ ] **Code Syntax Accuracy**: All ` ```lone ```` code snippets conform to the active version's grammar and invariants.

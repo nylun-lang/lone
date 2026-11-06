@@ -143,7 +143,7 @@ When developing a new feature or architectural refactor, follow this 5-stage pip
                        - Update dev/internals/ (if IR/subsystems changed)
                        - Write report in dev/sessions/YYYY-MM-DD/
                        - Update daily roll-up dev/sessions/YYYY-MM-DD.md
-                       - Sync docs/docs/content/ for release versions (see docs/README.md)
+                       - Sync docs/docs/content/ for release versions (see docs/README.md & docs/WRITING_DOC_REQUIREMENT.md)
 ```
 
 ---
