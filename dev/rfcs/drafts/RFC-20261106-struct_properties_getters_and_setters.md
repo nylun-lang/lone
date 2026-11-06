@@ -49,24 +49,26 @@ This design introduces several friction points:
 
 ## 3. Detailed Specification
 
-### 3.1 Directive Syntax & Declaration
+### 3.1 Directive Syntax: Dual Form Support (Block & Inline)
 
-Getters and setters are declared inside a struct declaration using the `@fa:struct_getter` and `@fa:struct_setter` compiler directive blocks:
+To maximize developer flexibility, both **block directive** and **inline statement / decorator** forms are fully supported:
 
+#### Form A: Block Directive (Multi-Property Grouping)
+Encloses one or more getter/setter declarations in a scoped block:
 ```lone
 pub type Game = struct {
     _attempts: i32,
     ro max_val: i32,
-    attempts: i32, -- Declares the public virtual property contract
+    attempts: i32, -- Optional explicit property header contract
 
-    -- Intercepts member read access `game.attempts`
+    -- Block Getter: intercepts `game.attempts`
     @fa:struct_getter {
         fn attempts(self: ref<ro Self>) i32 {
             return self._attempts
         }
     }
 
-    -- Intercepts member write access `game.attempts = val`
+    -- Block Setter: intercepts `game.attempts = val`
     @fa:struct_setter {
         fn attempts(self: ref<Self>, val: i32) void {
             if val >= 0 {
@@ -77,20 +79,55 @@ pub type Game = struct {
 }
 ```
 
-### 3.2 The Virtual Property Invariant (Memory Layout)
+#### Form B: Inline Statement / Decorator Form (Single-Property Conciseness)
+Decorates an individual method directly without block braces:
+```lone
+pub type Game = struct {
+    _attempts: i32,
+    ro max_val: i32,
 
-A property backed by `@fa:struct_getter` is **virtual**:
-1. **0-Byte Physical Allocation**: A field that has an associated getter does **not** allocate bytes in the struct layout. Its offset does not advance the struct frame offset counter.
-   $$\text{sizeof}(\text{Game}) = \text{sizeof}(\_attempts) + \text{sizeof}(max\_val) = 4 + 4 = 8\text{ bytes}$$
-   *(The virtual property `attempts` contributes 0 bytes).*
-2. **Aggregate Literal Exclusion**: In aggregate initialization syntax `Game::{ ... }`, virtual properties cannot be initialized because there is no memory slot to store them:
-   ```lone
-   -- Compile Error: 'attempts' is a virtual property and cannot be initialized in an aggregate literal;
-   -- initialize backing field '_attempts' instead.
-   var g = Game::{ ._attempts: 0, .max_val: 100, .attempts: 0 }
-   ```
+    -- Inline Getter (omitting redundant property header line)
+    @fa:struct_getter
+    pub fn attempts(self: ref<ro Self>) i32 {
+        return self._attempts
+    }
 
-### 3.3 Receiver Rules & Immutability
+    -- Inline Setter
+    @fa:struct_setter
+    pub fn attempts(self: ref<Self>, val: i32) void {
+        self._attempts = val
+    }
+}
+```
+
+### 3.2 The Anti-Nesting Invariant (Compile-Time Error)
+
+Directive nesting within struct property blocks is strictly prohibited:
+1. Nesting `@fa:struct_getter` inside `@fa:struct_getter` is a compile-time error (`syn/nested-struct-directive`).
+2. Nesting `@fa:struct_setter` inside `@fa:struct_getter` (or vice-versa) is a compile-time error (`syn/nested-struct-directive`).
+
+```lone
+-- FORBIDDEN (Compile error: syn/nested-struct-directive)
+@fa:struct_getter {
+    fn attempts(self: ref<ro Self>) i32 { return self._attempts }
+
+    @fa:struct_setter {  -- ERROR: cannot nest @fa:struct_setter inside @fa:struct_getter!
+        fn attempts(self: ref<Self>, val: i32) void { self._attempts = val }
+    }
+}
+```
+
+### 3.3 Declaration Freedom (Explicit Header vs Inferred Property)
+
+Developers have complete freedom in how virtual properties are declared in the struct:
+1. **Explicit Property Header**: Listing `attempts: i32` or `ro attempts: i32` in the struct field list clearly communicates the public API contract alongside other fields.
+2. **Inferred Property**: Omission of the field line is equally valid—the virtual property name and return type are inferred directly from the getter function signature.
+
+In both styles, the property is **virtual**:
+- **0-Byte Physical Allocation**: A field backed by `@fa:struct_getter` does **not** allocate linear memory (`sizeof` only measures physical backing fields).
+- **Aggregate Literal Exclusion**: Attempting to assign a virtual property in aggregate literal `Game::{ .attempts: 10 }` produces a compile error.
+
+### 3.4 Receiver Rules & Immutability
 
 #### Getter Receivers
 A getter method declared inside `@fa:struct_getter` must accept `self` as its first parameter and return a non-void type:
@@ -178,24 +215,9 @@ When lowering `expr.prop = val`:
 
 ---
 
-## 6. Open Considerations & Alternative Syntaxes
+## 6. Resolved Design Decisions
 
-### 6.1 Syntactic Variants
-1. **Block Directive (Proposed)**:
-   ```lone
-   @fa:struct_getter {
-       fn prop(self: ref<ro Self>) i32 { ... }
-   }
-   ```
-2. **Decorator Directive**:
-   ```lone
-   @fa:getter
-   pub fn prop(self: ref<ro Self>) i32 { ... }
-   ```
-3. **Keyword-Level Syntax**:
-   ```lone
-   pub get prop(self: ref<ro Self>) i32 { ... }
-   pub set prop(self: ref<Self>, val: i32) void { ... }
-   ```
-
-*Question for review*: Does `@fa:struct_getter` block syntax provide the right balance between explicit Falone engine control and readability, or is an attribute decorator `@fa:getter` preferred?
+1. **Explicit Long Names**: Retain `@fa:struct_getter` and `@fa:struct_setter` in full to maintain clear namespace identity and future compiler extensibility.
+2. **Dual Form Syntax**: Both block form (`@fa:struct_getter { ... }`) and inline statement/decorator form (`@fa:struct_getter fn ...`) are supported.
+3. **Anti-Nesting Rule**: Nesting of any `@fa:struct_...` directives inside one another is strictly forbidden and produces a compile error (`syn/nested-struct-directive`).
+4. **Header Line Freedom**: The property header line (e.g. `attempts: i32`) inside the struct field list is optional. Developers are free to specify it for explicit documentation or omit it in favor of direct getter declaration.

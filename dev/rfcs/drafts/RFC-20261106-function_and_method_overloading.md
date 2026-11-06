@@ -71,9 +71,10 @@ In Lone:
 
 ## 3. Detailed Specification
 
-### 3.1 Directive Syntax & Block Scoping
+### 3.1 Directive Syntax: Block Form (Preferred) & Inline Form
 
-Overloaded functions are explicitly enclosed within an `@fa:fn_overload` directive block:
+#### Form A: Block Directive (Primary / Preferred)
+Overloaded functions are enclosed within an `@fa:fn_overload` directive block. This is the canonical form because grouping overloads in a single block makes API contracts clear, prevents accidental name pollution across distant code, and aids tooling/doc generation:
 
 #### Struct Constructor Overloading (`__init__`)
 ```lone
@@ -98,6 +99,16 @@ pub type Game = struct {
         }
     }
 }
+```
+
+#### Form B: Inline Statement / Decorator Form (Incremental Overloads)
+Individual functions may also be decorated with `@fa:fn_overload` directly:
+```lone
+@fa:fn_overload
+pub fn format(val: i32) str { ... }
+
+@fa:fn_overload
+pub fn format(val: f32) str { ... }
 ```
 
 #### Inherent Method Overloading
@@ -182,7 +193,9 @@ For example:
 
 ## 6. Prohibitions & Invariants
 
-1. **No Return-Type-Only Overloading**:
+1. **Anti-Nesting Invariant**:
+   Nesting an `@fa:fn_overload` directive block inside another `@fa:fn_overload` directive block is strictly prohibited and triggers a compile-time error (`syn/nested-fn-overload`).
+2. **No Return-Type-Only Overloading**:
    ```lone
    -- FORBIDDEN (Compile-time error: type/overload-duplicate-signature)
    @fa:fn_overload {
@@ -191,7 +204,7 @@ For example:
    }
    ```
    *Rationale*: Call sites like `let x = parse("123")` or `drop parse("123")` cannot infer the expected type without complex bidirectional typing, introducing ambiguity.
-2. **Export Restrictions**:
+3. **Export Restrictions**:
    Exported WASI/C ABI functions (`pub fn main()`, `@fa:wasm` host exports) cannot be overloaded unless explicitly given unique link names.
-3. **No Unmarked Clashing**:
+4. **No Unmarked Clashing**:
    Declaring multiple functions with the same name without the `@fa:fn_overload` directive remains a strict compile error (`sym/duplicate-symbol`).
