@@ -3,14 +3,43 @@
 - **RFC**: `RFC-20261106-struct_properties_getters_and_setters`
 - **Title**: Struct Properties, Getters, and Setters via `@fa:struct_getter` & `@fa:struct_setter`
 - **Author**: Human & AI Pair
-- **Status**: Draft
+- **Status**: Rejected
 - **Created**: 2026-11-06
-- **Target Version**: v0.7.0
+- **Rejected**: 2026-11-06
+- **Target Version**: N/A (Banned)
 - **Related RFCs**:
   - [`RFC-20261104-struct_initialization_and_field_modifiers`](../accepted/RFC-20261104-struct_initialization_and_field_modifiers.md)
   - [`RFC-20261104-interface_data_contracts`](../accepted/RFC-20261104-interface_data_contracts.md)
   - [`RFC-20261105-reference_and_pointer_semantics`](../accepted/RFC-20261105-reference_and_pointer_semantics.md)
 - **Applies to**: `pkg2/lone-parser`, `pkg2/lone-analyzer`, `pkg2/lone-compiler-wir`, `dev/SPEC.md`
+
+---
+
+## Rejection Rationale
+
+This proposal was evaluated and **formally banned** on 2026-11-06 due to fundamental ergonomic, semantic, and systems-level inconsistencies:
+
+### 1. The Type Asymmetry & Mental Model Collapse
+If getters could return `Result<T>` (or if getters and setters operated with differing types), it introduced irreconcilable cognitive dissonance:
+```lone
+let Result::Ok(s) = game.attempts   -- wait, attempts is a Result?!
+...
+game.attempts = 3                    -- wait, now attempts is an i32?!
+```
+A property `x.prop` represents a single attribute. If reading it and writing it have different types or error semantics, developers are subjected to unpredictable mental friction.
+
+### 2. The Address-Taking (`&`) Inconsistency
+In a low-level WebAssembly systems language:
+- For physical struct fields: `&raw game.max_val` or `&game.max_val` is completely legal and returns a direct pointer to linear memory.
+- For virtual getter properties: `&game.attempts` is illegal (there is no memory address, only a temporary return register).
+Having `.` syntax look identical for fields and getters while breaking fundamental reference mechanics (`&`) destroys syntactic transparency.
+
+### 3. Violation of "No Hidden Control Flow"
+Hiding arbitrary function invocations, potential loops, heap allocations, and panics behind innocent dot access (`game.attempts`) violates Lone's core design tenet of predictable systems execution (mirroring the architectural choices of Rust, Zig, and Go).
+
+### 4. Superior Alternatives Exist
+- **Honest Inherent Methods**: If computation or failure can occur, using explicit function call syntax `game.attempts()` or `game.get_secret()` communicates intent honestly, without hidden surprises.
+- **Asymmetric Field Visibility**: Exposing fields with public read and struct-private write capability is far better achieved through explicit field modifiers (e.g. `ro(pub) attempts: i32`) where physical memory layout remains 100% transparent.
 
 ---
 
