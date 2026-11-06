@@ -3,28 +3,33 @@
 - **RFC**: `RFC-20261106-trait_implementation_labels`
 - **Title**: Trait Implementation Labels via `@fa:impl_label`
 - **Author**: Human & AI Pair
-- **Status**: Draft
+- **Status**: Accepted
 - **Created**: 2026-11-06
 - **Target Version**: v0.7.0
 - **Related RFCs**:
-  - [`RFC-20261104-interface_data_contracts`](../accepted/RFC-20261104-interface_data_contracts.md)
-  - [`RFC-20261106-symbol_documentation_directive`](../accepted/RFC-20261106-symbol_documentation_directive.md)
-- **Applies to**: `pkg/lone-parser-ast`, `pkg/lone-parser`, `pkg/lone-analyzer`, `pkg/lone-compiler-wir`, `dev/SPEC.md`
+  - [`RFC-20261104-interface_data_contracts`](./RFC-20261104-interface_data_contracts.md)
+  - [`RFC-20261106-symbol_documentation_directive`](./RFC-20261106-symbol_documentation_directive.md)
+- **Applies to**: `pkg/lone-lexer`, `pkg/lone-parser-ast`, `pkg/lone-parser`, `pkg/lone-analyzer`, `pkg/lone-compiler-wir`, `dev/SPEC.md`
 
 ---
 
 ## 1. Summary
 
-This RFC introduces **Trait Implementation Labels** via the `@fa:impl_label <string>` compiler directive.
+This RFC introduces **Trait Implementation Labels** via the `@fa:impl_label <string>` compiler directive, paired with the arrow specialization syntax `Type->label`.
 
 Key capabilities:
 1. **Alternative Trait Implementations**: Allows a single struct or type to define multiple distinct implementation strategies for the **exact same trait `TrT`** (e.g. buffered vs unbuffered I/O, synchronous vs asynchronous write, compact vs verbose formatting).
 2. **Strict Signature Invariance**: Every labeled implementation **must adhere 100% to the trait's declared method signatures**. No method signature divergence is permitted, ensuring complete stability and type safety.
-3. **Explicit Materialization Selection**: Callers select between the default implementation and labeled alternatives using explicit materialization syntax:
+3. **Mandatory Default Implementation**: A type **must** provide an unlabeled (default) implementation of `TrT` before or alongside any labeled implementation. A type cannot declare labeled variations in isolation.
+4. **Explicit Arrow Materialization (`Type->label`)**: Callers select between the default implementation and labeled alternatives using clean arrow specialization syntax:
    - Default (unlabeled): `TrT::|TargetType|`
-   - Labeled alternative: `TrT::|TargetType, "label"|`
-4. **Zero Call-Site Ambiguity**: Because Lone traits are pure contracts that do not inject methods into type namespaces (**Invariant IL4**), having multiple implementations never creates ambiguous member resolution.
-5. **Deterministic Wasm Symbol Mangling**: Labeled methods are deterministically mangled as `$TrTrait::method$TargetType$label` in WebAssembly, guaranteeing collision-free code generation.
+   - Labeled alternative: `TrT::|TargetType->label|`
+5. **Call-Site Generic Witness Specialization (`func<TargetType->label>(arg)`)**:
+   - Generic function authors write decoupled code using standard `TrT::|T|`.
+   - Callers select the implementation witness at the call site via `func<TargetType->label>(arg)`.
+   - Generic type parameters `T` are strictly forbidden from specifying labels in materialization (`TrT::|T->label|` is a compile error).
+6. **Zero Call-Site Ambiguity**: Because Lone traits are pure contracts that do not inject methods into type namespaces (**Invariant IL4**), having multiple implementations never creates ambiguous member resolution.
+7. **Deterministic Wasm Symbol Mangling**: Labeled methods are deterministically mangled as `$TrTrait::method$TargetType$label` in WebAssembly, compiling to static direct `call` instructions with zero vtable overhead.
 
 ---
 
@@ -74,7 +79,7 @@ pub trait TrWriter {
     fn write(self: ref<Self>, msg: str) void
 }
 
--- 1. Default (unlabeled) implementation: standard buffered writing
+-- 1. Default (unlabeled) implementation: standard buffered writing (MANDATORY)
 impl TrWriter for FileLogger {
     fn write(self: ref<FileLogger>, msg: str) void {
         self.buffer.append(msg)
@@ -97,9 +102,32 @@ impl TrWriter for FileLogger {
 
 ---
 
-## 4. Invariant Trait Contract & Anti-Divergence Rule
+## 4. Semantic Rules & Invariants
 
-### Rule 1: Strict Signature Matching
+### Rule 1: Mandatory Default Implementation
+A type **must** provide an unlabeled (default) implementation of `TrTrait` before or alongside any `@fa:impl_label` implementation:
+
+```lone
+@fa:impl_label "json"
+impl TrDisplay for User { ... } -- ERROR if no default impl TrDisplay for User exists!
+```
+
+**Diagnostic**:
+```text
+error[type/missing-default-trait-impl]: labeled implementation '@fa:impl_label "json"' requires a default implementation of 'TrDisplay' for 'User'
+  --> src/user.lone:15:1
+   |
+15 | @fa:impl_label "json"
+   | ^^^^^^^^^^^^^^^^^^^^^ type 'User' must provide an unlabeled default implementation before declaring labeled variations
+   = note: default implementations guarantee that 'User' unconditionally satisfies 'TrDisplay' in generic contexts
+```
+
+**Rationale**:
+- Guarantees that any type with labeled implementations **always satisfies the base trait unconditionally**.
+- Prevents fragmented types where conformance depends on whether a caller knows a private label.
+- Guarantees that generic libraries calling standard `TrTrait::|T|` will never encounter missing implementations.
+
+### Rule 2: Strict Signature Invariance (Anti-Divergence)
 Every method declared within a labeled `impl` block **must match the trait definition exactly**:
 - Identical method names.
 - Identical parameter counts and parameter types.
@@ -125,31 +153,24 @@ error[type/trait-signature-mismatch]: method 'write' in @fa:impl_label "bad" doe
    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected 2 parameters (self, str), got 3
 ```
 
-### Rule 2: Complete Implementation
+### Rule 3: Complete Implementation
 A labeled `impl` block must implement **all** required methods of the trait. Partial implementations are rejected (`type/incomplete-trait-impl`).
 
-### Rule 3: Unique Label per (Trait, Type) Pair
-A type cannot declare two implementations with the same label for the same trait:
-```lone
-@fa:impl_label "fast"
-impl TrMath for Calculator { ... }
-
-@fa:impl_label "fast" -- ERROR: duplicate label "fast"
-impl TrMath for Calculator { ... }
-```
+### Rule 4: Unique Label per (Trait, Type) Pair
+A type cannot declare two implementations with the same label for the same trait (`sym/duplicate-impl-label`).
 
 ---
 
 ## 5. Materialization Mechanics & Generic Interaction
 
-Callers select between the default implementation and labeled alternatives using explicit materialization syntax:
+Callers select between the default implementation and labeled alternatives using explicit arrow materialization syntax:
 
-### 5.1 Direct Concrete Materialization Syntax
+### 5.1 Direct Concrete Materialization (`TrTrait::|TargetType->label|`)
 
 | Target | Syntax | Description |
 | :--- | :--- | :--- |
 | **Default Implementation** | `TrTrait::\|TargetType\|` | Resolves the primary, unlabeled `impl TrTrait for TargetType`. |
-| **Labeled Implementation** | `TrTrait::\|TargetType:label\|` (or `\|TargetType, "label"\|`) | Resolves the alternative `impl` annotated with `@fa:impl_label "label"`. |
+| **Labeled Implementation** | `TrTrait::\|TargetType->label\|` | Resolves the alternative `impl` annotated with `@fa:impl_label "label"`. |
 
 ```lone
 pub fn main() void {
@@ -159,8 +180,8 @@ pub fn main() void {
     let default_writer = TrWriter::|FileLogger|
     default_writer.write(&logger, "Standard log entry\n")
 
-    -- 2. Use direct synchronous implementation:
-    let sync_writer = TrWriter::|FileLogger:direct_sync|
+    -- 2. Use direct synchronous implementation via arrow syntax:
+    let sync_writer = TrWriter::|FileLogger->direct_sync|
     sync_writer.write(&logger, "CRITICAL ERROR: flush immediately\n")
 }
 ```
@@ -180,12 +201,12 @@ fn process_output<T where { T satisfies TrDisplay }>(item: T) void {
 }
 ```
 
-#### Rule 4: Generic Type Parameters CANNOT Permit Label Materialization
+#### Rule 5: Generic Type Parameters CANNOT Permit Label Materialization
 Inside a generic function body, attempting to qualify a generic type parameter `T` with a label during materialization is a **strict compile-time error** (`type/generic-parameter-label-forbidden`):
 
 ```lone
 fn bad_generic<T where { T satisfies TrDisplay }>(item: T) void {
-    let d = TrDisplay::|T:json| -- COMPILE ERROR!
+    let d = TrDisplay::|T->json| -- COMPILE ERROR!
 }
 ```
 
@@ -194,19 +215,19 @@ fn bad_generic<T where { T satisfies TrDisplay }>(item: T) void {
 error[type/generic-parameter-label-forbidden]: cannot materialize trait with label on generic type parameter 'T'
   --> src/render.lone:12:13
    |
-12 |     let d = TrDisplay::|T:json|
-   |             ^^^^^^^^^^^^^^^^^^^ generic parameter 'T' must use unlabeled materialization TrDisplay::|T|
+12 |     let d = TrDisplay::|T->json|
+   |             ^^^^^^^^^^^^^^^^^^^^ generic parameter 'T' must use unlabeled materialization TrDisplay::|T|
    = note: generic code cannot assume external types implement specific labels; callers select labels at the call site
 ```
 
 **Rationale**:
 - Generic function authors cannot know what custom labels application developers define on their structs.
-- Hardcoding a label like `T:json` inside generic code would couple the function to arbitrary label names and break generic substitution whenever a type without that label is supplied.
+- Hardcoding a label like `T->json` inside generic code would couple the function to arbitrary label names and break generic substitution whenever a type without that label is supplied.
 - Generic functions must stay 100% decoupled and write standard `TrTrait::|T|`.
 
 ---
 
-### 5.3 Call-Site Witness Specialization (`func<TargetType:label>(arg)`)
+### 5.3 Call-Site Witness Specialization (`func<TargetType->label>(arg)`)
 
 How does an application developer execute a generic function using a labeled implementation?
 
@@ -219,19 +240,19 @@ let user = User::("Alice", 101)
 process_output<User>(user)
 
 -- 2. Labeled call: specializes T to User using the "json" witness:
-process_output<User:json>(user)
+process_output<User->json>(user)
 ```
 
 #### Zero-Cost Value Representation
-- `User:json` has the **exact same memory layout, size, and alignment** as `User`.
+- `User->json` has the **exact same memory layout, size, and alignment** as `User`.
 - The value passed is raw `user` (no wrapper allocations, no conversions).
-- The `:json` qualifier exists purely as a compile-time witness selector for trait resolution.
+- The `->json` qualifier exists purely as a compile-time witness selector for trait resolution.
 
 #### Monomorphization & Code Generation
 When the compiler monomorphizes `process_output<T>`:
 - `process_output<User>(user)` generates `$process_output$User`:
   - `TrDisplay::|T|` compiles to static call `call $TrDisplay::display$User`.
-- `process_output<User:json>(user)` generates `$process_output$User$json`:
+- `process_output<User->json>(user)` generates `$process_output$User$json`:
   - `TrDisplay::|T|` compiles to static call `call $TrDisplay::display$User$json`!
 
 Both compile to direct, static WebAssembly `call` instructions with zero vtables and zero dispatch penalty.
@@ -249,7 +270,7 @@ fn persist_and_log<T where { T satisfies TrDisplay, T satisfies TrSerializable }
 }
 ```
 
-If the caller invokes `persist_and_log<User:json>(user)`:
+If the caller invokes `persist_and_log<User->json>(user)`:
 1. **Matching Trait**: For `TrDisplay`, `User` defines `@fa:impl_label "json"` $\rightarrow$ uses `"json"` implementation.
 2. **Non-Matching Trait**: For `TrSerializable`, `User` defines no `"json"` label $\rightarrow$ **gracefully falls back to default unlabeled implementation**.
 3. **Missing Trait**: If neither a labeled nor a default implementation exists $\rightarrow$ compile error (`type/trait-not-satisfied`).
@@ -287,7 +308,7 @@ To ensure collision-free function names in WebAssembly Text (`.wat`) and binary 
 | :--- | :---: | :---: | :---: | :---: |
 | **Rust Newtype Wrapper** | High (wrapper struct + conversions) | None (diverted type) | Enforced | Zero |
 | **Haskell Named Instances** | Medium | High (in generic contexts) | Enforced | None |
-| **Lone `@fa:impl_label`** | **Lowest (Single directive)** | **Zero (Explicit Materialization)** | **Strictly Enforced** | **Zero (Direct static call)** |
+| **Lone `@fa:impl_label` (`T->label`)** | **Lowest (Single directive)** | **Zero (Explicit Materialization)** | **Strictly Enforced** | **Zero (Direct static call)** |
 
 ---
 
@@ -295,4 +316,5 @@ To ensure collision-free function names in WebAssembly Text (`.wat`) and binary 
 
 1. **Eliminates Boilerplate**: Eliminates synthetic wrapper types (`SyncLogger`, `JsonUser`) whose sole purpose is satisfying the single-impl restriction.
 2. **Contract Stability**: Guarantees that all implementations strictly honor the trait contract without method signature divergence.
-3. **Transparent Ergonomics**: Reuses Lone's explicit `TrTrait::|Target, "label"|` materialization cleanly.
+3. **Guaranteed Base Conformance**: Mandatory default implementation guarantees that all types unconditionally satisfy the trait contract across all generic code.
+4. **Decoupled Generics**: Generic code writes simple `TrT::|T|`, while callers retain call-site power (`foo<User->json>`).
