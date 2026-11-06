@@ -11,6 +11,7 @@ This directory contains the living language specification, formal RFCs, Architec
 | Path | Purpose |
 | :--- | :--- |
 | [**`dev/POLICY.md`**](./POLICY.md) | **Operating Policy & Collaboration Rules** (Mandatory guide for humans and AI agents). |
+| [**`docs/README.md`**](../docs/README.md) | **Documentation Guide** (How to write, version, and build VitePress documentation). |
 | [**`dev/SPEC.md`**](./SPEC.md) | **Living Language Specification (v0.5.0-beta)** (Single source of truth for active features). |
 | [**`dev/adr/`**](./adr/) | **Architectural Decision Records** (Immutable decisions on compiler architecture). |
 | [**`dev/rfcs/`**](./rfcs/) | **Language Proposals & RFCs** (`drafts/`, `accepted/`, `rejected/`). |

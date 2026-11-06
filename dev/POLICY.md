@@ -136,14 +136,14 @@ When developing a new feature or architectural refactor, follow this 5-stage pip
 [3. Consensus]         User aligns -> Move to dev/rfcs/accepted/ (or rejected/)
        │                              Create dev/adr/ if architecturally significant
        ▼
-[4. Implementation]    Code in pkg2/, tests in test2/, verify go test ./...
+[4. Implementation]    Code in pkg/, tests in test/, verify go test ./...
        │
        ▼
 [5. Documentation]     - Update dev/SPEC.md
                        - Update dev/internals/ (if IR/subsystems changed)
                        - Write report in dev/sessions/YYYY-MM-DD/
                        - Update daily roll-up dev/sessions/YYYY-MM-DD.md
-                       - Sync docs/docs/content/ for release versions
+                       - Sync docs/docs/content/ for release versions (see docs/README.md)
 ```
 
 ---

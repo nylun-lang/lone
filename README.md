@@ -144,7 +144,8 @@ go build -o lone ./cmd/lone
 
 Full documentation is available under `docs/`:
 - **Language Specification**: [`dev/SPEC.md`](./dev/SPEC.md)
-- **Documentation Website**: Run `npm run docs:dev` inside `docs/` to browse the interactive VitePress documentation.
+- **Documentation Website**: Run `npm run dev` inside `docs/` to browse the interactive VitePress documentation.
+- **Documentation Authoring Guide**: See [`docs/README.md`](./docs/README.md) for how to write, version, and build docs.
 - **Internal RFCs & Architecture**: Check [`dev/rfcs/`](./dev/rfcs/) and [`dev/internals/`](./dev/internals/).
 
 ---
