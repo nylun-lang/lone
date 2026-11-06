@@ -208,6 +208,51 @@ pub import .Vector3 from .internal_vectors
 
 ---
 
+### 4.5 Qualified Symbol Access across Tripartite Categories (`v`, `fn`, `type`)
+
+When a namespace or module is imported under an alias (`import :foo:bar as foo`), it encapsulates three distinct symbol categories:
+- **`v` (Values / Globals)**: Constants (`const`) and variables (`var`, `let`).
+- **`fn` (Functions)**: Top-level module functions.
+- **`type` (Types)**: Structs, tagged union enums, interfaces, and type aliases.
+
+#### Unified Member Access Operator: Dot (`.`)
+Lone uses the uniform member access operator `.` across all three symbol categories:
+
+```lone
+import :database:sql as sql
+
+-- 1. Value/Constant access (v)
+let max_conn = sql.MAX_CONNECTIONS
+
+-- 2. Function invocation (fn)
+let pool = sql.create_pool(max_conn)
+
+-- 3. Type annotation & Constructor (type)
+let user: sql.User = sql.User::("Alice", 30)
+let status: sql.ConnState = sql.ConnState::Connected
+```
+
+#### Why Dot (`.`) is Preferred over Colon (`:`) or Double-Colon (`::`):
+1. **Single Colon (`:`) Hazard**:
+   Using single colon for member access (`foo:symbol`) causes severe syntactic ambiguities:
+   - Type annotations: `let u: foo:User` contains conflicting colons.
+   - Struct field initializers: `Point { x: foo:val }` creates ambiguous parsing between field name `x:` and member expression `foo:val`.
+   - Keyword clauses: `while: [cond]` and `as` bindings.
+2. **Double Colon (`::`) Clutter**:
+   Lone reserves `::` specifically for type-internal constructs:
+   - Struct constructors: `Type::(...)`
+   - Enum variant payloads: `Enum::Variant(...)`
+   - Trait materialization: `TrTrait::|T|`
+   If namespaces used `::`, constructors would require awkward double-colons: `foo::User::("Alice")`.
+3. **The Dot Advantage**:
+   With dot notation, the lexical separation between namespace resolution and constructor invocation is clear, elegant, and unambiguous:
+   $$\mathbf{alias} \;\;.\;\; \mathbf{Type} \;\;::\;\; (\dots)$$
+   - `sql.User::("Alice")`: resolve type `sql.User`, then invoke its constructor `::(...)`.
+   - `sql.Status::Active`: resolve enum `sql.Status`, then access variant `::Active`.
+   - `fn query(user: sql.User) sql.Result<sql.Row>`: clean type annotations.
+
+---
+
 ## 5. Concrete End-to-End Walkthrough
 
 ### 5.1 Package Layout (`src/math/`)
