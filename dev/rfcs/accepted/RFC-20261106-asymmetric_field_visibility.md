@@ -3,8 +3,9 @@
 - **RFC**: `RFC-20261106-asymmetric_field_visibility`
 - **Title**: Asymmetric Field Visibility via `ro(pub)` (Public Read, Struct-Private Write)
 - **Author**: Human & AI Pair
-- **Status**: Draft
+- **Status**: Accepted
 - **Created**: 2026-11-06
+- **Accepted**: 2026-11-06
 - **Target Version**: v0.7.0
 - **Related RFCs**:
   - [`RFC-20261104-struct_initialization_and_field_modifiers`](../accepted/RFC-20261104-struct_initialization_and_field_modifiers.md)
