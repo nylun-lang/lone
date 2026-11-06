@@ -75,10 +75,12 @@ const (
 	SymbolKindProperty    SymbolKind = 7
 	SymbolKindField       SymbolKind = 8
 	SymbolKindConstructor SymbolKind = 9
+	SymbolKindEnum        SymbolKind = 10
 	SymbolKindInterface   SymbolKind = 11
 	SymbolKindFunction    SymbolKind = 12
 	SymbolKindVariable    SymbolKind = 13
 	SymbolKindConstant    SymbolKind = 14
+	SymbolKindEnumMember  SymbolKind = 22
 	SymbolKindStruct      SymbolKind = 23
 )
 
@@ -167,6 +169,12 @@ type DidChangeTextDocumentParams struct {
 	ContentChanges []struct {
 		Text string `json:"text"`
 	} `json:"contentChanges"`
+}
+
+type DidCloseTextDocumentParams struct {
+	TextDocument struct {
+		URI string `json:"uri"`
+	} `json:"textDocument"`
 }
 
 type DocumentSymbolParams struct {

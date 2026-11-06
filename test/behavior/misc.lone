@@ -1,4 +1,0 @@
-var x: int = 1
-var y: comptime ?string = none
-var z = true
-var content: comptime ro ?list<int>

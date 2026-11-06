@@ -1,92 +1,119 @@
 package lonecompiler_test
 
 import (
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	lonecompiler "lone/pkg/lone-compiler"
 )
 
-func TestCompilerEndToEndWasi(t *testing.T) {
+func runWat(t *testing.T, wat string) string {
+	t.Helper()
+	tmpDir := t.TempDir()
+	watPath := filepath.Join(tmpDir, "prog.wat")
+	if err := os.WriteFile(watPath, []byte(wat), 0644); err != nil {
+		t.Fatalf("failed to write temp wat: %v", err)
+	}
+
+	cmd := exec.Command("wasmtime", watPath)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("wasmtime execution failed: %v\noutput:\n%s\nWAT:\n%s", err, string(out), wat)
+	}
+	return string(out)
+}
+
+func TestCompileHelloLoneFile(t *testing.T) {
+	comp := lonecompiler.NewCompiler(lonecompiler.DefaultConfig())
+	res, err := comp.CompileFile("../../test/behavior/hello.lone")
+	if err != nil {
+		t.Fatalf("CompileFile failed: %v", err)
+	}
+
+	if !strings.Contains(res.WatOutput, "(func $main") {
+		t.Errorf("expected $main in wat output, got:\n%s", res.WatOutput)
+	}
+
+	got := runWat(t, res.WatOutput)
+	want := "Hello from Lone!\n"
+	if got != want {
+		t.Errorf("unexpected stdout from wasmtime:\ngot:  %q\nwant: %q", got, want)
+	}
+}
+
+func TestCompileSourceControlFlow(t *testing.T) {
+	code := `
+fn compute_loop(n: int) int {
+	var total = 0
+	var i = 0
+	while i < n {
+		total = total + i
+		i = i + 1
+	}
+	return total
+}
+
+fn main() void {
+	var result = compute_loop(5)
+	#print("Done computing loop!\n")
+}
+`
+	comp := lonecompiler.NewCompiler(lonecompiler.DefaultConfig())
+	res, err := comp.CompileSource("loop_test.lone", []byte(code))
+	if err != nil {
+		t.Fatalf("CompileSource failed: %v", err)
+	}
+
+	got := runWat(t, res.WatOutput)
+	want := "Done computing loop!\n"
+	if got != want {
+		t.Errorf("unexpected stdout:\ngot:  %q\nwant: %q", got, want)
+	}
+}
+
+func TestCompilePostConditionLoop(t *testing.T) {
 	code := `
 fn main() void {
-    #print("Hello from pkg2 Compiler!\n")
+	var x = 3
+	loop {
+		x = x - 1
+	} while: [x > 0]
+	#print("Post-condition loop completed!\n")
 }
 `
-	comp := lonecompiler.NewCompiler(lonecompiler.Config{
-		Target:      lonecompiler.TargetWasi,
-		Optimize:    true,
-		WithAdapter: "node",
-	})
-
-	res, err := comp.CompileSource("main.lone", []byte(code))
+	comp := lonecompiler.NewCompiler(lonecompiler.DefaultConfig())
+	res, err := comp.CompileSource("post_loop.lone", []byte(code))
 	if err != nil {
-		t.Fatalf("expected successful compilation, got error: %v", err)
+		t.Fatalf("CompileSource failed: %v", err)
 	}
 
-	if res.WatOutput == "" {
-		t.Fatalf("expected non-empty WAT output")
-	}
-
-	if !strings.Contains(res.WatOutput, "(func $main (export \"_start\") (export \"main\")") {
-		t.Errorf("expected exported main entrypoint in WAT, got:\n%s", res.WatOutput)
-	}
-
-	if !strings.Contains(res.WatOutput, "call $__lone_rt_print") {
-		t.Errorf("expected call to inlined #print, got:\n%s", res.WatOutput)
-	}
-
-	if res.AdapterGlue == "" {
-		t.Errorf("expected non-empty node adapter glue")
-	}
-
-	if !strings.Contains(res.AdapterGlue, "createEnv") {
-		t.Errorf("expected createEnv in node adapter glue")
+	got := runWat(t, res.WatOutput)
+	want := "Post-condition loop completed!\n"
+	if got != want {
+		t.Errorf("unexpected stdout:\ngot:  %q\nwant: %q", got, want)
 	}
 }
 
-func TestCompilerEndToEndWeb(t *testing.T) {
+func TestCompileScopedHeaderIf(t *testing.T) {
 	code := `
 fn main() void {
-    #print("Web target test\n")
+	if: [let x = 42] x == 42 {
+		#print("Scoped header let binding matched!\n")
+	}
 }
 `
-	comp := lonecompiler.NewCompiler(lonecompiler.Config{
-		Target:      lonecompiler.TargetWeb,
-		Optimize:    true,
-		WithAdapter: "browser",
-	})
-
-	res, err := comp.CompileSource("web.lone", []byte(code))
+	comp := lonecompiler.NewCompiler(lonecompiler.DefaultConfig())
+	res, err := comp.CompileSource("header_if.lone", []byte(code))
 	if err != nil {
-		t.Fatalf("expected successful web compilation, got error: %v", err)
+		t.Fatalf("CompileSource failed: %v", err)
 	}
 
-	if !strings.Contains(res.WatOutput, "(import \"env\" \"print\"") {
-		t.Errorf("expected env.print import in web target WAT, got:\n%s", res.WatOutput)
-	}
-
-	if !strings.Contains(res.AdapterGlue, "export function createEnv") {
-		t.Errorf("expected browser export function in adapter glue")
-	}
-}
-
-func TestCompilerEmitMir(t *testing.T) {
-	code := `
-fn multiply(a: i32, b: i32) i32 {
-    return a * b
-}
-`
-	comp := lonecompiler.NewCompiler(lonecompiler.Config{
-		EmitMir: true,
-	})
-
-	res, err := comp.CompileSource("mul.lone", []byte(code))
-	if err != nil {
-		t.Fatalf("failed to compile MIR: %v", err)
-	}
-
-	if !strings.Contains(res.WatOutput, "fn @multiply") {
-		t.Errorf("expected MIR formatted function, got:\n%s", res.WatOutput)
+	got := runWat(t, res.WatOutput)
+	want := "Scoped header let binding matched!\n"
+	if got != want {
+		t.Errorf("unexpected stdout:\ngot:  %q\nwant: %q", got, want)
 	}
 }

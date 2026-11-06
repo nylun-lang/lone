@@ -2,1056 +2,1338 @@ package loneanalyzer
 
 import (
 	"fmt"
-	ir "lone/pkg/lone-parser-ast"
-	loneruntime "lone/pkg/lone-runtime"
+	loneast "lone/pkg/lone-parser-ast"
+	"strconv"
+	"strings"
+	"unicode"
 )
 
-// TypeEvaluator analyzes an AST, infers types, and produces a concrete Typed IR (TProgram).
+// Generic templates
+type GenericTypeTemplate struct {
+	Name        string
+	TypeParams  []loneast.TypeParam
+	Constraints []loneast.GenericConstraint
+	Decl        *loneast.TYPE_DEC
+}
+
+type GenericFnTemplate struct {
+	Name        string
+	TypeParams  []loneast.TypeParam
+	Constraints []loneast.GenericConstraint
+	Decl        *loneast.FN_DEC
+}
+
+// TypeEvaluator performs type checking, symbol resolution, and immutability validation.
 type TypeEvaluator struct {
-	stack                *ScopeStack
-	diagnostics          []Diagnostic
-	enforceConsumeOrDrop bool
-	inlineWasmAuthorized bool
-	currentSelf          Type
-	modules              map[string]map[string]*Symbol            // moduleID -> symbolName -> Symbol
-	methodImpls          map[string]map[string]*Symbol            // typeName -> methodName -> Symbol
-	traitImpls           map[string]map[string]map[string]*Symbol // traitName -> targetTypeName -> methodName -> Symbol
+	stack           *ScopeStack
+	diags           []Diagnostic
+	structs         map[string]*StructType
+	traits          map[string]*TraitType
+	interfaces      map[string]*InterfaceType
+	enums           map[string]*EnumType
+	traitImpls      map[string]map[string]*loneast.IMPL_DEC
+	genericTypes    map[string]*GenericTypeTemplate
+	genericFns      map[string]*GenericFnTemplate
+	instantiatedFns   map[string]*TFnDec
+	inferredErrors    map[string][]Type
+	currentTypeParams map[string]Type
+	currentSelfType   Type
+	currentFnReturn   Type
+	currentFnName     string
+	extraDecls        []TNode
 }
 
-// NewTypeEvaluator creates a new TypeEvaluator for a given file.
-func NewTypeEvaluator(fileName string, enforceConsumeOrDrop bool) *TypeEvaluator {
-	return &TypeEvaluator{
-		stack:                NewScopeStack(fileName),
-		diagnostics:          make([]Diagnostic, 0),
-		enforceConsumeOrDrop: enforceConsumeOrDrop,
-		modules:              make(map[string]map[string]*Symbol),
-		methodImpls:          make(map[string]map[string]*Symbol),
-		traitImpls:           make(map[string]map[string]map[string]*Symbol),
+func NewTypeEvaluator() *TypeEvaluator {
+	te := &TypeEvaluator{
+		stack:             NewScopeStack(),
+		structs:           make(map[string]*StructType),
+		traits:            make(map[string]*TraitType),
+		interfaces:        make(map[string]*InterfaceType),
+		enums:             make(map[string]*EnumType),
+		traitImpls:        make(map[string]map[string]*loneast.IMPL_DEC),
+		genericTypes:      make(map[string]*GenericTypeTemplate),
+		genericFns:        make(map[string]*GenericFnTemplate),
+		instantiatedFns:   make(map[string]*TFnDec),
+		inferredErrors:    make(map[string][]Type),
+		currentTypeParams: make(map[string]Type),
 	}
+	te.initBuiltins()
+	return te
 }
 
-// Diagnostics returns all diagnostics gathered during type evaluation.
-func (te *TypeEvaluator) Diagnostics() []Diagnostic {
-	return te.diagnostics
+func (te *TypeEvaluator) Structs() map[string]*StructType {
+	return te.structs
 }
 
-// Stack returns the ScopeStack used during type evaluation.
-func (te *TypeEvaluator) Stack() *ScopeStack {
-	return te.stack
+func (te *TypeEvaluator) Interfaces() map[string]*InterfaceType {
+	return te.interfaces
 }
 
-// TraitImpls returns the map of trait implementations: traitName -> targetTypeName -> methodName -> Symbol.
-func (te *TypeEvaluator) TraitImpls() map[string]map[string]map[string]*Symbol {
+func (te *TypeEvaluator) Enums() map[string]*EnumType {
+	return te.enums
+}
+
+func (te *TypeEvaluator) Traits() map[string]*TraitType {
+	return te.traits
+}
+
+func (te *TypeEvaluator) TraitImpls() map[string]map[string]*loneast.IMPL_DEC {
 	return te.traitImpls
 }
 
-// MethodImpls returns the map of method implementations: typeName -> methodName -> Symbol.
-func (te *TypeEvaluator) MethodImpls() map[string]map[string]*Symbol {
-	return te.methodImpls
+func (te *TypeEvaluator) initBuiltins() {
+	// Built-in Error enum
+	errorEnum := &EnumType{
+		Name:       "Error",
+		VariantMap: make(map[string]*EnumVariantInfo),
+		TotalSize:  8,
+		TotalAlign: 4,
+	}
+	vGeneric := EnumVariantInfo{
+		Name:       "Generic",
+		Tag:        0,
+		Fields:     []StructFieldInfo{{Name: "msg", Type: TypeStr, Offset: 4}},
+		FieldMap:   map[string]StructFieldInfo{"msg": {Name: "msg", Type: TypeStr, Offset: 4}},
+		TotalSize:  8,
+		TotalAlign: 4,
+	}
+	vCode := EnumVariantInfo{
+		Name:       "Code",
+		Tag:        1,
+		Fields:     []StructFieldInfo{{Name: "code", Type: TypeI32, Offset: 4}},
+		FieldMap:   map[string]StructFieldInfo{"code": {Name: "code", Type: TypeI32, Offset: 4}},
+		TotalSize:  8,
+		TotalAlign: 4,
+	}
+	vNotFound := EnumVariantInfo{
+		Name:       "NotFound",
+		Tag:        2,
+		Fields:     nil,
+		FieldMap:   make(map[string]StructFieldInfo),
+		TotalSize:  4,
+		TotalAlign: 4,
+	}
+	errorEnum.Variants = []EnumVariantInfo{vGeneric, vCode, vNotFound}
+	errorEnum.VariantMap["Generic"] = &errorEnum.Variants[0]
+	errorEnum.VariantMap["Code"] = &errorEnum.Variants[1]
+	errorEnum.VariantMap["NotFound"] = &errorEnum.Variants[2]
+	te.enums["Error"] = errorEnum
+	_ = te.stack.Define(&Symbol{Name: "Error", Kind: SymbolType, Type: errorEnum})
+
+	// Built-in Result<V, U = Error where { U is Error }> generic template
+	te.genericTypes["Result"] = &GenericTypeTemplate{
+		Name: "Result",
+		TypeParams: []loneast.TypeParam{
+			{Name: "V"},
+			{
+				Name: "U",
+				Default: &loneast.TYPE_REF{
+					Kind:  loneast.TYPE_BASE,
+					Value: &loneast.TypeBase{Name: "Error"},
+				},
+			},
+		},
+		Constraints: []loneast.GenericConstraint{
+			{
+				TypeParam: "U",
+				Op:        loneast.ConstraintIs,
+				Target: loneast.TYPE_REF{
+					Kind:  loneast.TYPE_BASE,
+					Value: &loneast.TypeBase{Name: "Error"},
+				},
+			},
+		},
+		Decl: &loneast.TYPE_DEC{
+			Name: "Result",
+			Kind: loneast.TYPE_DEC_ENUM,
+			Variants: []loneast.EnumVariant{
+				{
+					Name: "Ok",
+					Fields: []loneast.StructField{
+						{
+							Name: "val",
+							Type: loneast.TYPE_REF{
+								Kind:  loneast.TYPE_BASE,
+								Value: &loneast.TypeBase{Name: "V"},
+							},
+						},
+					},
+					Tag: 0,
+				},
+				{
+					Name: "Err",
+					Fields: []loneast.StructField{
+						{
+							Name: "err",
+							Type: loneast.TYPE_REF{
+								Kind:  loneast.TYPE_BASE,
+								Value: &loneast.TypeBase{Name: "U"},
+							},
+						},
+					},
+					Tag: 1,
+				},
+			},
+		},
+	}
+
+	// Built-in TrDisplay trait for string interpolation and display
+	trDisplay := &TraitType{
+		Name: "TrDisplay",
+		Methods: map[string]*FnType{
+			"fmt": {
+				Params: []FnParamInfo{
+					{Name: "self", Type: TypeAny},
+					{Name: "buf", Type: TypeAny},
+				},
+				Return: TypeVoid,
+			},
+		},
+	}
+	te.traits["TrDisplay"] = trDisplay
+	_ = te.stack.Define(&Symbol{Name: "TrDisplay", Kind: SymbolType, Type: trDisplay})
 }
 
-// Modules returns the map of loaded module symbols: moduleID -> symbolName -> Symbol.
-func (te *TypeEvaluator) Modules() map[string]map[string]*Symbol {
-	return te.modules
+func (te *TypeEvaluator) Diagnostics() []Diagnostic {
+	return te.diags
 }
 
-func (te *TypeEvaluator) addDiag(sev Severity, pos ir.Position, rule, msg string) {
-	te.diagnostics = append(te.diagnostics, Diagnostic{
-		Message:  msg,
+func (te *TypeEvaluator) addDiag(sev Severity, span loneast.Span, rule, msg string) {
+	te.diags = append(te.diags, Diagnostic{
 		Severity: sev,
-		Pos:      pos,
+		Span:     span,
 		Rule:     rule,
+		Message:  msg,
 	})
 }
 
-func (te *TypeEvaluator) resolveTypeSymbol(name string) Type {
-	if name == "Self" && te.currentSelf != nil {
-		return te.currentSelf
-	}
-	sym := te.stack.Resolve(name)
-	if sym != nil && sym.Kind == SymbolType {
-		return sym.Type
-	}
-	return nil
-}
-
-func (te *TypeEvaluator) parseType(tr *ir.TYPE_REF) Type {
-	return ParseTypeRefWithResolver(tr, te.resolveTypeSymbol, te.currentSelf)
-}
-
-func (te *TypeEvaluator) parseTypeWithSelf(tr *ir.TYPE_REF, selfType Type) Type {
-	return ParseTypeRefWithResolver(tr, te.resolveTypeSymbol, selfType)
-}
-
-func (te *TypeEvaluator) parseHostTypeString(s string) Type {
-	t := ParseTypeString(s)
-	return te.bindCustomTypes(t)
-}
-
-func (te *TypeEvaluator) bindCustomTypes(t Type) Type {
-	switch v := t.(type) {
-	case *CustomType:
-		if resolved := te.resolveTypeSymbol(v.Name); resolved != nil {
-			return resolved
-		}
-	case *PtrType:
-		v.Elem = te.bindCustomTypes(v.Elem)
-	case *RefType:
-		v.Elem = te.bindCustomTypes(v.Elem)
-	case *ListType:
-		v.ItemType = te.bindCustomTypes(v.ItemType)
-	}
-	return t
-}
-
-// Evaluate performs type analysis over top-level AST declarations.
-func (te *TypeEvaluator) Evaluate(rawDecls []any) *TProgram {
-	decls := toDeclSlice(rawDecls)
-	program := &TProgram{
-		Decls: make([]TNode, 0),
-	}
-
-	var entryDecls []any
-	for _, raw := range decls {
-		unwrapped := unwrapTuple(raw)
-		switch m := unwrapped.(type) {
-		case ir.ModuleScopeDecl:
-			te.evaluateModuleScope(&m, program)
-		case *ir.ModuleScopeDecl:
-			te.evaluateModuleScope(m, program)
-		default:
-			entryDecls = append(entryDecls, raw)
+// EvaluateProgram executes a full semantic evaluation pass on a slice of AST declarations.
+func (te *TypeEvaluator) EvaluateProgram(decls []any) *TProgram {
+	// Pass 1: Hoist structs, traits, and aliases
+	for _, decl := range decls {
+		if tdec, ok := decl.(loneast.TYPE_DEC); ok {
+			te.hoistTypeDec(&tdec)
+		} else if ptdec, ok := decl.(*loneast.TYPE_DEC); ok {
+			te.hoistTypeDec(ptdec)
 		}
 	}
 
-	te.evaluateDeclsInCurrentScope(entryDecls, program)
-	return program
-}
-
-func unwrapTuple(node any) any {
-	if tuple, ok := node.([]any); ok && len(tuple) == 2 {
-		return tuple[1]
-	}
-	return node
-}
-
-func (te *TypeEvaluator) evaluateModuleScope(mod *ir.ModuleScopeDecl, program *TProgram) {
-	prevStack := te.stack
-	prevWasm := te.inlineWasmAuthorized
-
-	te.stack = NewScopeStack(mod.FilePath)
-	te.inlineWasmAuthorized = false
-
-	te.evaluateDeclsInCurrentScope(mod.Decls, program)
-
-	exports := make(map[string]*Symbol)
-	for symName := range mod.Exports {
-		if sym := te.stack.Root().LookupLocal(symName); sym != nil {
-			exports[symName] = sym
+	// Pass 2: Hoist function signatures, impl blocks, global variables, and host capability directives
+	for _, decl := range decls {
+		switch d := decl.(type) {
+		case loneast.FN_DEC:
+			te.hoistFn(&d)
+		case *loneast.FN_DEC:
+			te.hoistFn(d)
+		case loneast.BIND_DEC:
+			te.hoistVar(&d)
+		case *loneast.BIND_DEC:
+			te.hoistVar(d)
+		case loneast.WasmDirective:
+			te.hoistWasmDirective(&d)
+		case *loneast.WasmDirective:
+			te.hoistWasmDirective(d)
+		case loneast.ImportDecl:
+			te.hoistImport(&d)
+		case *loneast.ImportDecl:
+			te.hoistImport(d)
+		case loneast.IMPL_DEC:
+			te.hoistImpl(&d)
+		case *loneast.IMPL_DEC:
+			te.hoistImpl(d)
 		}
 	}
-	te.modules[mod.ModuleID] = exports
 
-	te.stack = prevStack
-	te.inlineWasmAuthorized = prevWasm
-}
-
-func (te *TypeEvaluator) evaluateDeclsInCurrentScope(decls []any, program *TProgram) {
-	// Pass 2a-1: Pre-declare type names & imported symbols so cross-referencing types resolve
-	for _, raw := range decls {
-		te.predeclareTypesAndImports(unwrapTuple(raw))
-	}
-
-	// Pass 2a-2: Populate struct fields/layouts, trait signatures, impls, functions, and globals
-	for _, raw := range decls {
-		te.hoistTopLevel(unwrapTuple(raw))
-	}
-
-	// Pass 2b: Analyze bodies & expressions
-	te.inlineWasmAuthorized = false
-	for _, raw := range decls {
-		nodes := te.analyzeTopLevel(unwrapTuple(raw))
-		program.Decls = append(program.Decls, nodes...)
-	}
-}
-
-func (te *TypeEvaluator) predeclareTypesAndImports(node any) {
-	if node == nil {
-		return
-	}
-	switch n := node.(type) {
-	case ir.ResolvedImportDecl:
-		te.bindResolvedImport(&n)
-	case *ir.ResolvedImportDecl:
-		te.bindResolvedImport(n)
-	case ir.TYPE_DEC:
-		te.predeclareTypeDec(&n)
-	case *ir.TYPE_DEC:
-		te.predeclareTypeDec(n)
-	}
-}
-
-func (te *TypeEvaluator) bindResolvedImport(imp *ir.ResolvedImportDecl) {
-	modExports := te.modules[imp.ModuleID]
-	if imp.Alias != "" {
-		exportsCopy := make(map[string]*Symbol)
-		for k, v := range modExports {
-			exportsCopy[k] = v
+	// Pass 3: Analyze bodies
+	var tDecls []TNode
+	for _, decl := range decls {
+		td := te.analyzeTopLevel(decl)
+		if td != nil {
+			tDecls = append(tDecls, td)
 		}
-		_ = te.stack.Define(&Symbol{
-			Name: imp.Alias,
-			Kind: SymbolVar,
-			Type: &ModuleAliasType{
-				Alias:   imp.Alias,
-				Source:  imp.Source,
-				Exports: exportsCopy,
-			},
-			Node: imp,
-		})
+	}
+	// Append monomorphized function declarations
+	for _, extra := range te.extraDecls {
+		tDecls = append(tDecls, extra)
+	}
+
+	return &TProgram{Decls: tDecls}
+}
+
+// =====================
+// HOISTING
+// =====================
+
+func (te *TypeEvaluator) hoistTypeDec(t *loneast.TYPE_DEC) {
+	if len(t.TypeParams) > 0 {
+		te.genericTypes[t.Name] = &GenericTypeTemplate{
+			Name:        t.Name,
+			TypeParams:  t.TypeParams,
+			Constraints: t.Constraints,
+			Decl:        t,
+		}
 		return
 	}
 
-	for _, symName := range imp.Symbols {
-		if modExports == nil {
-			continue
+	// Validate Trait Naming Convention: Tr + PascalCase
+	if t.Kind == loneast.TYPE_DEC_TRAIT {
+		if !isTrNaming(t.Name) {
+			te.addDiag(SeverityError, t.Span_, "convention/trait-naming",
+				fmt.Sprintf("trait %q must begin with 'Tr' followed by an uppercase letter (e.g. 'Tr%s')", t.Name, t.Name))
 		}
-		orig, ok := modExports[symName]
-		if !ok || orig == nil {
-			continue
+	} else {
+		// Non-trait types must NOT start with Tr + uppercase
+		if isTrNaming(t.Name) {
+			te.addDiag(SeverityError, t.Span_, "convention/non-trait-naming",
+				fmt.Sprintf("non-trait type %q must not begin with 'Tr' prefix reserved for traits", t.Name))
 		}
-		copied := *orig
-		copied.Name = symName
-		if orig.MangledName == "" {
-			copied.MangledName = orig.Name
-		}
-		_ = te.stack.Define(&copied)
-	}
-}
-
-func (te *TypeEvaluator) predeclareTypeDec(td *ir.TYPE_DEC) {
-	switch td.Kind {
-	case ir.TYPE_DEC_STRUCT:
-		st := &StructType{
-			Name:    td.Name,
-			Methods: make(map[string]*FnType),
-		}
-		_ = te.stack.Define(&Symbol{
-			Name: td.Name,
-			Kind: SymbolType,
-			Type: st,
-			Node: td,
-		})
-	case ir.TYPE_DEC_TRAIT:
-		tr := &TraitType{
-			Name:       td.Name,
-			TypeParams: td.TypeParams,
-			Methods:    make(map[string]*FnType),
-		}
-		_ = te.stack.Define(&Symbol{
-			Name: td.Name,
-			Kind: SymbolType,
-			Type: tr,
-			Node: td,
-		})
-	case ir.TYPE_DEC_ALIAS:
-		_ = te.stack.Define(&Symbol{
-			Name: td.Name,
-			Kind: SymbolType,
-			Type: &CustomType{Name: td.Name},
-			Node: td,
-		})
-	}
-}
-
-func (te *TypeEvaluator) hoistTopLevel(node any) {
-	if node == nil {
-		return
 	}
 
-	switch n := node.(type) {
-	case ir.WasmDirective:
-		if n.Inline {
-			te.inlineWasmAuthorized = true
-		} else {
-			for _, imp := range n.Imports {
-				te.hoistRawImport(&imp, true)
+	// Validate Interface Naming Convention: Ifc + PascalCase
+	if t.Kind == loneast.TYPE_DEC_INTERFACE {
+		if !isIfcNaming(t.Name) {
+			te.addDiag(SeverityError, t.Span_, "naming/interface",
+				fmt.Sprintf("interface %q must begin with 'Ifc' followed by an uppercase letter (e.g. 'Ifc%s')", t.Name, t.Name))
+		}
+	} else {
+		// Non-interface types must NOT start with Ifc + uppercase
+		if isIfcNaming(t.Name) {
+			te.addDiag(SeverityError, t.Span_, "naming/interface",
+				fmt.Sprintf("non-interface type %q must not begin with 'Ifc' prefix reserved for interfaces", t.Name))
+		}
+	}
+
+	if t.Kind == loneast.TYPE_DEC_INTERFACE {
+		ifc := &InterfaceType{
+			Name:     t.Name,
+			FieldMap: make(map[string]StructFieldInfo),
+		}
+
+		// Expand embedded interfaces
+		for _, embName := range t.Embedded {
+			embIfc, ok := te.interfaces[embName]
+			if !ok {
+				te.addDiag(SeverityError, t.Span_, "type/undefined-interface",
+					fmt.Sprintf("undefined interface %q embedded in %q", embName, t.Name))
+				continue
 			}
-		}
-	case *ir.WasmDirective:
-		if n.Inline {
-			te.inlineWasmAuthorized = true
-		} else {
-			for _, imp := range n.Imports {
-				te.hoistRawImport(&imp, true)
-			}
-		}
-	case ir.ImportDecl:
-		te.hoistRawImport(&n, te.inlineWasmAuthorized)
-	case *ir.ImportDecl:
-		te.hoistRawImport(n, te.inlineWasmAuthorized)
-	case ir.HostImportDecl:
-		te.hoistHostImport(&n)
-	case *ir.HostImportDecl:
-		te.hoistHostImport(n)
-	case ir.TYPE_DEC:
-		te.hoistTypeDec(&n)
-	case *ir.TYPE_DEC:
-		te.hoistTypeDec(n)
-	case ir.IMPL_DEC:
-		te.hoistImplDec(&n)
-	case *ir.IMPL_DEC:
-		te.hoistImplDec(n)
-	case ir.FN_DEC:
-		te.hoistFn(&n)
-	case *ir.FN_DEC:
-		te.hoistFn(n)
-	case ir.BIND_DEC:
-		te.hoistVar(&n)
-	case *ir.BIND_DEC:
-		te.hoistVar(n)
-	}
-}
-
-func (te *TypeEvaluator) hoistRawImport(imp *ir.ImportDecl, wasmAuthorized bool) {
-	if !loneruntime.IsHostNamespace(imp.Source) {
-		return
-	}
-	if !wasmAuthorized {
-		return
-	}
-	ns, ok := loneruntime.LookupHostNamespace(imp.Source)
-	if !ok {
-		return
-	}
-	if imp.Alias != "" {
-		exports := make(map[string]*Symbol)
-		for symName, spec := range ns {
-			fnType := te.hostSpecToFnType(spec)
-			exports[symName] = &Symbol{
-				Name:        symName,
-				MangledName: spec.Name,
-				Kind:        SymbolFn,
-				Type:        fnType,
-			}
-		}
-		_ = te.stack.Define(&Symbol{
-			Name: imp.Alias,
-			Kind: SymbolVar,
-			Type: &ModuleAliasType{
-				Alias:   imp.Alias,
-				Source:  imp.Source,
-				Exports: exports,
-			},
-			Node: imp,
-		})
-		return
-	}
-	for _, sym := range imp.Symbols {
-		if spec, ok := ns[sym]; ok {
-			_ = te.stack.Define(&Symbol{
-				Name:        sym,
-				MangledName: spec.Name,
-				Kind:        SymbolFn,
-				Type:        te.hostSpecToFnType(spec),
-				Node:        imp,
-			})
-		}
-	}
-}
-
-func (te *TypeEvaluator) hostSpecToFnType(spec loneruntime.HostFuncSpec) *FnType {
-	var params []FnParamType
-	for _, p := range spec.Params {
-		params = append(params, FnParamType{
-			Name: p.Name,
-			Type: te.parseHostTypeString(p.LoneType),
-		})
-	}
-	return &FnType{
-		Params:     params,
-		ReturnType: te.parseHostTypeString(spec.ReturnLoneType),
-	}
-}
-
-func (te *TypeEvaluator) hoistHostImport(h *ir.HostImportDecl) {
-	var params []FnParamType
-	for _, p := range h.Params {
-		params = append(params, FnParamType{
-			Name: p.Name,
-			Type: te.parseHostTypeString(p.LoneType),
-		})
-	}
-	fnType := &FnType{
-		Params:     params,
-		ReturnType: te.parseHostTypeString(h.ReturnLoneType),
-	}
-	_ = te.stack.Define(&Symbol{
-		Name:        h.LocalName,
-		MangledName: h.LocalName,
-		Kind:        SymbolFn,
-		Type:        fnType,
-		Node:        h,
-	})
-}
-
-func (te *TypeEvaluator) hoistTypeDec(td *ir.TYPE_DEC) {
-	sym := te.stack.Resolve(td.Name)
-	if sym == nil {
-		return
-	}
-
-	switch td.Kind {
-	case ir.TYPE_DEC_ALIAS:
-		if td.AliasType != nil {
-			sym.Type = te.parseType(td.AliasType)
-		}
-
-	case ir.TYPE_DEC_STRUCT:
-		st, ok := sym.Type.(*StructType)
-		if !ok {
-			return
-		}
-		st.Fields = make([]StructFieldInfo, 0, len(td.Fields))
-		for _, f := range td.Fields {
-			fType := te.parseTypeWithSelf(&f.Type, st)
-			st.Fields = append(st.Fields, StructFieldInfo{
-				Name: f.Name,
-				Type: fType,
-			})
-		}
-		st.ComputeLayout()
-
-		if te.methodImpls[st.Name] == nil {
-			te.methodImpls[st.Name] = make(map[string]*Symbol)
-		}
-		for i := range td.Methods {
-			m := &td.Methods[i]
-			fnType := te.buildFnType(m.Params, m.ReturnType, st)
-			st.Methods[m.Name] = fnType
-			mangled := fmt.Sprintf("%s__%s", st.Name, m.Name)
-			mSym := &Symbol{
-				Name:        m.Name,
-				MangledName: mangled,
-				Kind:        SymbolFn,
-				Type:        fnType,
-				Node:        m,
-			}
-			te.methodImpls[st.Name][m.Name] = mSym
-		}
-
-	case ir.TYPE_DEC_TRAIT:
-		tr, ok := sym.Type.(*TraitType)
-		if !ok {
-			return
-		}
-		selfPlaceholder := &CustomType{Name: "Self"}
-		for _, sig := range td.TraitSigs {
-			fnType := te.buildFnType(sig.Params, sig.ReturnType, selfPlaceholder)
-			tr.Methods[sig.Name] = fnType
-		}
-	}
-}
-
-func (te *TypeEvaluator) hoistImplDec(im *ir.IMPL_DEC) {
-	targetType := te.parseType(&im.TargetType)
-	targetName := targetType.String()
-
-	if te.methodImpls[targetName] == nil {
-		te.methodImpls[targetName] = make(map[string]*Symbol)
-	}
-
-	if im.TraitName == "" {
-		// Inherent impl block: impl Target { ... }
-		for i := range im.Methods {
-			m := &im.Methods[i]
-			fnType := te.buildFnType(m.Params, m.ReturnType, targetType)
-			mangled := fmt.Sprintf("%s__%s", targetName, m.Name)
-			mSym := &Symbol{
-				Name:        m.Name,
-				MangledName: mangled,
-				Kind:        SymbolFn,
-				Type:        fnType,
-				Node:        m,
-			}
-			te.methodImpls[targetName][m.Name] = mSym
-			if st, ok := targetType.(*StructType); ok {
-				st.Methods[m.Name] = fnType
-			}
-		}
-		return
-	}
-
-	// Trait impl block: impl Trait on Target { ... }
-	traitSym := te.stack.Resolve(im.TraitName)
-	if traitSym == nil || traitSym.Kind != SymbolType {
-		te.addDiag(SeverityError, im.Pos, "type/undefined-trait",
-			fmt.Sprintf("undefined trait %q in impl block", im.TraitName))
-		return
-	}
-	traitType, ok := traitSym.Type.(*TraitType)
-	if !ok {
-		te.addDiag(SeverityError, im.Pos, "type/not-a-trait",
-			fmt.Sprintf("type %q is not a trait", im.TraitName))
-		return
-	}
-
-	if te.traitImpls[traitType.Name] == nil {
-		te.traitImpls[traitType.Name] = make(map[string]map[string]*Symbol)
-	}
-	if te.traitImpls[traitType.Name][targetName] == nil {
-		te.traitImpls[traitType.Name][targetName] = make(map[string]*Symbol)
-	}
-
-	implemented := make(map[string]bool)
-	for i := range im.Methods {
-		m := &im.Methods[i]
-		if _, exists := traitType.Methods[m.Name]; !exists {
-			te.addDiag(SeverityError, m.Pos, "type/unknown-trait-method",
-				fmt.Sprintf("method %q is not part of trait %q", m.Name, traitType.Name))
-			continue
-		}
-		implemented[m.Name] = true
-		fnType := te.buildFnType(m.Params, m.ReturnType, targetType)
-		mangled := fmt.Sprintf("%s__%s__%s", traitType.Name, targetName, m.Name)
-		mSym := &Symbol{
-			Name:        m.Name,
-			MangledName: mangled,
-			Kind:        SymbolFn,
-			Type:        fnType,
-			Node:        m,
-		}
-		te.traitImpls[traitType.Name][targetName][m.Name] = mSym
-		if _, hasInherent := te.methodImpls[targetName][m.Name]; !hasInherent {
-			te.methodImpls[targetName][m.Name] = mSym
-		}
-	}
-
-	for reqMethod := range traitType.Methods {
-		if !implemented[reqMethod] {
-			te.addDiag(SeverityError, im.Pos, "type/incomplete-trait-impl",
-				fmt.Sprintf("impl of trait %q on %q is missing method %q", traitType.Name, targetName, reqMethod))
-		}
-	}
-}
-
-func (te *TypeEvaluator) buildFnType(rawParams []ir.FnParam, rawRet *ir.TYPE_REF, selfType Type) *FnType {
-	var params []FnParamType
-	for _, p := range rawParams {
-		params = append(params, FnParamType{
-			Name: p.Name,
-			Type: te.parseTypeWithSelf(&p.Type, selfType),
-		})
-	}
-	var retType Type = TypeVoid
-	if rawRet != nil {
-		retType = te.parseTypeWithSelf(rawRet, selfType)
-	}
-	return &FnType{
-		Params:     params,
-		ReturnType: retType,
-	}
-}
-
-func (te *TypeEvaluator) hoistFn(fn *ir.FN_DEC) {
-	fnType := te.buildFnType(fn.Params, fn.ReturnType, nil)
-	sym := &Symbol{
-		Name:        fn.Name,
-		MangledName: fn.Name,
-		Kind:        SymbolFn,
-		Type:        fnType,
-		Node:        fn,
-	}
-	_ = te.stack.Define(sym)
-}
-
-func (te *TypeEvaluator) hoistVar(b *ir.BIND_DEC) {
-	declaredType := te.parseType(&b.Type)
-	sym := &Symbol{
-		Name: b.Name,
-		Kind: SymbolVar,
-		Type: declaredType,
-		Node: b,
-	}
-	_ = te.stack.Define(sym)
-}
-
-func (te *TypeEvaluator) analyzeTopLevel(node any) []TNode {
-	if node == nil {
-		return nil
-	}
-
-	switch n := node.(type) {
-	case ir.WasmDirective:
-		return te.analyzeWasmDirective(&n)
-	case *ir.WasmDirective:
-		return te.analyzeWasmDirective(n)
-
-	case ir.ImportDecl:
-		return te.analyzeRawImport(&n)
-	case *ir.ImportDecl:
-		return te.analyzeRawImport(n)
-
-	case ir.ResolvedImportDecl, *ir.ResolvedImportDecl:
-		return nil
-
-	case ir.HostImportDecl:
-		return []TNode{te.analyzeHostImport(&n)}
-	case *ir.HostImportDecl:
-		return []TNode{te.analyzeHostImport(n)}
-
-	case ir.TYPE_DEC:
-		return te.analyzeTypeDec(&n)
-	case *ir.TYPE_DEC:
-		return te.analyzeTypeDec(n)
-
-	case ir.IMPL_DEC:
-		return te.analyzeImplDec(&n)
-	case *ir.IMPL_DEC:
-		return te.analyzeImplDec(n)
-
-	case ir.FN_DEC:
-		return []TNode{te.analyzeFnDecWithMangled(&n, n.Name, nil)}
-	case *ir.FN_DEC:
-		return []TNode{te.analyzeFnDecWithMangled(n, n.Name, nil)}
-
-	case ir.BIND_DEC:
-		return []TNode{te.analyzeVarDec(&n)}
-	case *ir.BIND_DEC:
-		return []TNode{te.analyzeVarDec(n)}
-
-	case ir.DropStmt:
-		tExpr := te.EvalExpr(n.Expr)
-		return []TNode{&TDropStmt{Expr: tExpr, Pos_: n.Pos}}
-	case *ir.DropStmt:
-		tExpr := te.EvalExpr(n.Expr)
-		return []TNode{&TDropStmt{Expr: tExpr, Pos_: n.Pos}}
-
-	default:
-		if expr, ok := node.(ir.Expr); ok {
-			tExpr := te.EvalExpr(expr)
-			if te.enforceConsumeOrDrop {
-				typ := tExpr.ExprType()
-				if typ != TypeVoid && typ != TypeNone && typ != TypeUnknown {
-					te.addDiag(SeverityError, tExpr.Pos(), "type/unused-result",
-						fmt.Sprintf("result of expression of type %q is not consumed; use 'drop' to discard it", typ.String()))
+			for _, ef := range embIfc.Fields {
+				if existing, exists := ifc.FieldMap[ef.Name]; exists {
+					if !existing.Type.Equals(ef.Type) || existing.IsReadOnly != ef.IsReadOnly {
+						te.addDiag(SeverityError, t.Span_, "type/interface-embedding-collision",
+							fmt.Sprintf("embedded interfaces declare conflicting definitions for field %q", ef.Name))
+					}
+				} else {
+					ifc.Fields = append(ifc.Fields, ef)
+					ifc.FieldMap[ef.Name] = ef
 				}
 			}
-			return []TNode{&TExprStmt{Expr: tExpr, Pos_: tExpr.Pos()}}
 		}
+
+		for _, f := range t.Fields {
+			if strings.HasPrefix(f.Name, "_") {
+				te.addDiag(SeverityError, f.Span_, "type/interface-private-field",
+					fmt.Sprintf("interface %q cannot declare private field %q", t.Name, f.Name))
+				continue
+			}
+			fType := te.resolveType(f.Type)
+			fInfo := StructFieldInfo{
+				Name:       f.Name,
+				Type:       fType,
+				IsReadOnly: f.IsReadOnly || f.IsRoPub,
+				IsRoPub:    f.IsRoPub,
+			}
+			if existing, exists := ifc.FieldMap[f.Name]; exists {
+				if !existing.Type.Equals(fType) || existing.IsReadOnly != f.IsReadOnly {
+					te.addDiag(SeverityError, f.Span_, "type/interface-embedding-collision",
+						fmt.Sprintf("field %q conflicts with embedded interface definition", f.Name))
+				}
+			} else {
+				ifc.Fields = append(ifc.Fields, fInfo)
+				ifc.FieldMap[f.Name] = fInfo
+			}
+		}
+
+		te.interfaces[t.Name] = ifc
+		_ = te.stack.Define(&Symbol{Name: t.Name, Kind: SymbolType, Type: ifc, Node: t})
+		return
+	}
+
+	if t.Kind == loneast.TYPE_DEC_STRUCT {
+		st := &StructType{
+			Name:     t.Name,
+			FieldMap: make(map[string]StructFieldInfo),
+			Methods:  make(map[string]*FnType),
+		}
+		te.structs[t.Name] = st
+		_ = te.stack.Define(&Symbol{Name: t.Name, Kind: SymbolType, Type: st, Node: t})
+		oldSelf := te.currentSelfType
+		te.currentSelfType = st
+		defer func() { te.currentSelfType = oldSelf }()
+
+		offset := 0
+		maxAlign := 1
+		for _, f := range t.Fields {
+			fType := te.resolveType(f.Type)
+			sz := TypeSize(fType)
+			al := TypeAlign(fType)
+			if al > maxAlign {
+				maxAlign = al
+			}
+			// Align offset
+			if al > 0 && offset%al != 0 {
+				offset += al - (offset % al)
+			}
+			isPriv := strings.HasPrefix(f.Name, "_")
+			if isPriv && f.IsRoPub {
+				te.addDiag(SeverityError, f.Span_, "syn/redundant-field-modifier",
+					fmt.Sprintf("private field %q cannot have 'ro(pub)' modifier", f.Name))
+			}
+			info := StructFieldInfo{
+				Name:       f.Name,
+				Type:       fType,
+				Offset:     offset,
+				IsReadOnly: f.IsReadOnly,
+				IsRoPub:    f.IsRoPub,
+				IsPrivate:  isPriv,
+			}
+			st.Fields = append(st.Fields, info)
+			st.FieldMap[f.Name] = info
+			offset += sz
+		}
+
+		if maxAlign > 0 && offset%maxAlign != 0 {
+			offset += maxAlign - (offset % maxAlign)
+		}
+		st.TotalSize = offset
+		st.TotalAlign = maxAlign
+
+		for _, m := range t.Methods {
+			var mParams []FnParamInfo
+			for _, p := range m.Params {
+				mParams = append(mParams, FnParamInfo{Name: p.Name, Type: te.resolveType(p.Type)})
+			}
+			mRet := Type(TypeVoid)
+			if m.ReturnType != nil {
+				mRet = te.resolveType(*m.ReturnType)
+			}
+			st.Methods[m.Name] = &FnType{Params: mParams, Return: mRet}
+		}
+
+		hasRoPrivate := false
+		for _, f := range st.Fields {
+			if f.IsReadOnly && f.IsPrivate {
+				hasRoPrivate = true
+				break
+			}
+		}
+		if hasRoPrivate {
+			if _, hasInit := st.Methods["__init__"]; !hasInit {
+				te.addDiag(SeverityError, t.Span_, "type/missing-init-for-ro-private-field",
+					fmt.Sprintf("struct %q declares read-only private field(s) but provides no '__init__' constructor", t.Name))
+			}
+		}
+
+	}
+
+	if t.Kind == loneast.TYPE_DEC_TRAIT {
+		tr := &TraitType{
+			Name:    t.Name,
+			Methods: make(map[string]*FnType),
+		}
+		for _, sig := range t.TraitSigs {
+			var params []FnParamInfo
+			for _, p := range sig.Params {
+				pType := te.resolveType(p.Type)
+				params = append(params, FnParamInfo{Name: p.Name, Type: pType})
+			}
+			retType := Type(TypeVoid)
+			if sig.ReturnType != nil {
+				retType = te.resolveType(*sig.ReturnType)
+			}
+			tr.Methods[sig.Name] = &FnType{Params: params, Return: retType}
+		}
+		te.traits[t.Name] = tr
+		_ = te.stack.Define(&Symbol{Name: t.Name, Kind: SymbolType, Type: tr, Node: t})
+	}
+
+	if t.Kind == loneast.TYPE_DEC_ENUM {
+		et := &EnumType{
+			Name:       t.Name,
+			VariantMap: make(map[string]*EnumVariantInfo),
+		}
+
+		maxPayloadSize := 0
+		maxAlign := 4 // tag is i32, so align is at least 4
+
+		for tag, v := range t.Variants {
+			var fields []StructFieldInfo
+			fieldMap := make(map[string]StructFieldInfo)
+			vOffset := 4 // Tag is at offset 0 (4 bytes), payload starts at 4
+			vMaxAlign := 1
+
+			for _, f := range v.Fields {
+				fType := te.resolveType(f.Type)
+				sz := TypeSize(fType)
+				al := TypeAlign(fType)
+				if al > vMaxAlign {
+					vMaxAlign = al
+				}
+				if al > maxAlign {
+					maxAlign = al
+				}
+				if al > 0 && vOffset%al != 0 {
+					vOffset += al - (vOffset % al)
+				}
+				info := StructFieldInfo{Name: f.Name, Type: fType, Offset: vOffset}
+				fields = append(fields, info)
+				fieldMap[f.Name] = info
+				vOffset += sz
+			}
+
+			payloadSize := vOffset - 4
+			if payloadSize > maxPayloadSize {
+				maxPayloadSize = payloadSize
+			}
+
+			vInfo := EnumVariantInfo{
+				Name:       v.Name,
+				Tag:        tag,
+				Fields:     fields,
+				FieldMap:   fieldMap,
+				TotalSize:  vOffset,
+				TotalAlign: vMaxAlign,
+			}
+			et.Variants = append(et.Variants, vInfo)
+			et.VariantMap[v.Name] = &et.Variants[len(et.Variants)-1]
+		}
+
+		totalSize := 4 + maxPayloadSize
+		if maxAlign > 0 && totalSize%maxAlign != 0 {
+			totalSize += maxAlign - (totalSize % maxAlign)
+		}
+		et.TotalSize = totalSize
+		et.TotalAlign = maxAlign
+
+		te.enums[t.Name] = et
+		_ = te.stack.Define(&Symbol{Name: t.Name, Kind: SymbolType, Type: et, Node: t})
+	}
+}
+
+func (te *TypeEvaluator) hoistFn(f *loneast.FN_DEC) {
+	if len(f.TypeParams) > 0 {
+		te.genericFns[f.Name] = &GenericFnTemplate{
+			Name:        f.Name,
+			TypeParams:  f.TypeParams,
+			Constraints: f.Constraints,
+			Decl:        f,
+		}
+		return
+	}
+
+	var params []FnParamInfo
+	for _, p := range f.Params {
+		pType := te.resolveType(p.Type)
+		params = append(params, FnParamInfo{Name: p.Name, Type: pType})
+	}
+	retType := Type(TypeVoid)
+	if f.ReturnType != nil {
+		retType = te.resolveType(*f.ReturnType)
+	}
+	fnType := &FnType{Params: params, Return: retType}
+	_ = te.stack.Define(&Symbol{Name: f.Name, Kind: SymbolFn, Type: fnType, Node: f})
+}
+
+func (te *TypeEvaluator) hoistVar(b *loneast.BIND_DEC) {
+	varType := te.resolveType(b.Type)
+	if len(b.Names) > 0 {
+		for _, name := range b.Names {
+			_ = te.stack.Define(&Symbol{
+				Name:      name,
+				Kind:      SymbolVar,
+				Type:      varType,
+				IsMutable: b.IsMutable,
+				Node:      b,
+			})
+		}
+		return
+	}
+	_ = te.stack.Define(&Symbol{
+		Name:      b.Name,
+		Kind:      SymbolVar,
+		Type:      varType,
+		IsMutable: b.IsMutable,
+		Node:      b,
+	})
+}
+
+func (te *TypeEvaluator) hoistWasmDirective(wd *loneast.WasmDirective) {
+	if wd == nil {
+		return
+	}
+	for _, imp := range wd.Imports {
+		if imp.Source == ":wasi:snapshot_preview1" {
+			for _, sym := range imp.Symbols {
+				symName := strings.TrimPrefix(sym, ".")
+				switch symName {
+				case "fd_write":
+					_ = te.stack.Define(&Symbol{
+						Name: symName,
+						Kind: SymbolFn,
+						Type: &FnType{
+							Params: []FnParamInfo{
+								{Name: "fd", Type: TypeI32},
+								{Name: "iovs", Type: &PtrType{Elem: TypeAny}},
+								{Name: "iovs_len", Type: TypeI32},
+								{Name: "nwritten", Type: &PtrType{Elem: TypeI32}},
+							},
+							Return: TypeI32,
+						},
+					})
+				case "fd_read":
+					_ = te.stack.Define(&Symbol{
+						Name: symName,
+						Kind: SymbolFn,
+						Type: &FnType{
+							Params: []FnParamInfo{
+								{Name: "fd", Type: TypeI32},
+								{Name: "iovs", Type: &PtrType{Elem: TypeAny}},
+								{Name: "iovs_len", Type: TypeI32},
+								{Name: "nread", Type: &PtrType{Elem: TypeI32}},
+							},
+							Return: TypeI32,
+						},
+					})
+				case "fd_close":
+					_ = te.stack.Define(&Symbol{
+						Name: symName,
+						Kind: SymbolFn,
+						Type: &FnType{
+							Params: []FnParamInfo{
+								{Name: "fd", Type: TypeI32},
+							},
+							Return: TypeI32,
+						},
+					})
+				case "proc_exit":
+					_ = te.stack.Define(&Symbol{
+						Name: symName,
+						Kind: SymbolFn,
+						Type: &FnType{
+							Params: []FnParamInfo{
+								{Name: "code", Type: TypeI32},
+							},
+							Return: TypeVoid,
+						},
+					})
+				case "random_get":
+					_ = te.stack.Define(&Symbol{
+						Name: symName,
+						Kind: SymbolFn,
+						Type: &FnType{
+							Params: []FnParamInfo{
+								{Name: "buf", Type: &PtrType{Elem: TypeAny}},
+								{Name: "buf_len", Type: TypeI32},
+							},
+							Return: TypeI32,
+						},
+					})
+				}
+			}
+		}
+	}
+}
+
+func (te *TypeEvaluator) hoistImport(imp *loneast.ImportDecl) {
+	if imp == nil {
+		return
+	}
+	if imp.Source == ":std:sys" {
+		for _, sym := range imp.Symbols {
+			symName := strings.TrimPrefix(sym, ".")
+			switch symName {
+			case "STDIN_FD", "STDOUT_FD", "STDERR_FD":
+				_ = te.stack.Define(&Symbol{Name: symName, Kind: SymbolVar, Type: TypeI32, IsMutable: false})
+			case "sys_write":
+				_ = te.stack.Define(&Symbol{
+					Name: symName,
+					Kind: SymbolFn,
+					Type: &FnType{
+						Params: []FnParamInfo{
+							{Name: "fd", Type: TypeI32},
+							{Name: "buf", Type: &PtrType{Elem: TypeU8}},
+							{Name: "len", Type: TypeI32},
+						},
+						Return: TypeI32,
+					},
+				})
+			case "sys_read":
+				_ = te.stack.Define(&Symbol{
+					Name: symName,
+					Kind: SymbolFn,
+					Type: &FnType{
+						Params: []FnParamInfo{
+							{Name: "fd", Type: TypeI32},
+							{Name: "buf", Type: &PtrType{Elem: TypeU8}},
+							{Name: "max_len", Type: TypeI32},
+						},
+						Return: TypeI32,
+					},
+				})
+			case "sys_random":
+				_ = te.stack.Define(&Symbol{
+					Name: symName,
+					Kind: SymbolFn,
+					Type: &FnType{
+						Params: []FnParamInfo{
+							{Name: "buf", Type: &PtrType{Elem: TypeAny}},
+							{Name: "len", Type: TypeI32},
+						},
+						Return: TypeI32,
+					},
+				})
+			case "sys_close":
+				_ = te.stack.Define(&Symbol{
+					Name: symName,
+					Kind: SymbolFn,
+					Type: &FnType{
+						Params: []FnParamInfo{{Name: "fd", Type: TypeI32}},
+						Return: TypeI32,
+					},
+				})
+			case "sys_exit":
+				_ = te.stack.Define(&Symbol{
+					Name: symName,
+					Kind: SymbolFn,
+					Type: &FnType{
+						Params: []FnParamInfo{{Name: "code", Type: TypeI32}},
+						Return: TypeVoid,
+					},
+				})
+			}
+		}
+	}
+}
+
+func (te *TypeEvaluator) hoistImpl(imp *loneast.IMPL_DEC) {
+	if imp == nil {
+		return
+	}
+	targetType := te.resolveType(imp.TargetType)
+	if te.traitImpls[imp.TraitName] == nil {
+		te.traitImpls[imp.TraitName] = make(map[string]*loneast.IMPL_DEC)
+	}
+	te.traitImpls[imp.TraitName][targetType.String()] = imp
+	if st, ok := targetType.(*StructType); ok {
+		for _, m := range imp.Methods {
+			var mParams []FnParamInfo
+			for _, p := range m.Params {
+				pType := te.resolveType(p.Type)
+				if p.Name == "self" && (pType == TypeInfer || pType == TypeUnknown) {
+					pType = targetType
+				}
+				mParams = append(mParams, FnParamInfo{Name: p.Name, Type: pType})
+			}
+			mRet := Type(TypeVoid)
+			if m.ReturnType != nil {
+				mRet = te.resolveType(*m.ReturnType)
+			}
+			st.Methods[m.Name] = &FnType{Params: mParams, Return: mRet}
+		}
+	}
+}
+
+func (te *TypeEvaluator) analyzeTypeDecNode(d *loneast.TYPE_DEC) TNode {
+	if st, ok := te.structs[d.Name]; ok {
+		oldSelf := te.currentSelfType
+		te.currentSelfType = st
+		var tMethods []*TFnDec
+		for _, m := range d.Methods {
+			mCopy := m
+			if !strings.Contains(mCopy.Name, ".") {
+				mCopy.Name = d.Name + "." + mCopy.Name
+			}
+			tMethod := te.analyzeFnDec(&mCopy)
+			tMethods = append(tMethods, tMethod)
+		}
+		te.currentSelfType = oldSelf
+		return &TStructDec{Name: d.Name, Type: st, Methods: tMethods, Span_: d.Span_}
+	}
+	if tr, ok := te.traits[d.Name]; ok {
+		return &TTraitDec{Name: d.Name, Type: tr, Span_: d.Span_}
+	}
+	if et, ok := te.enums[d.Name]; ok {
+		return &TEnumDec{Name: d.Name, Type: et, Span_: d.Span_}
 	}
 	return nil
 }
 
-func (te *TypeEvaluator) analyzeWasmDirective(wd *ir.WasmDirective) []TNode {
-	if wd.Inline {
-		te.inlineWasmAuthorized = true
-		return nil
-	}
-	var nodes []TNode
-	for _, imp := range wd.Imports {
-		nodes = append(nodes, te.analyzeAuthorizedHostImport(&imp)...)
-	}
-	return nodes
-}
+// =====================
+// ANALYSIS
+// =====================
 
-func (te *TypeEvaluator) analyzeRawImport(imp *ir.ImportDecl) []TNode {
-	if loneruntime.IsHostNamespace(imp.Source) {
-		if !te.inlineWasmAuthorized {
-			te.addDiag(SeverityError, imp.Pos, "capability/unauthorized-host-import",
-				fmt.Sprintf("unauthorized host capability import from %q: wrap host imports in an explicit @fa:wasm directive", imp.Source))
+func (te *TypeEvaluator) analyzeTopLevel(decl any) TNode {
+	switch d := decl.(type) {
+	case loneast.BIND_DEC:
+		return te.analyzeVarDec(&d)
+	case *loneast.BIND_DEC:
+		return te.analyzeVarDec(d)
+
+	case loneast.FN_DEC:
+		if len(d.TypeParams) > 0 {
 			return nil
 		}
-		return te.analyzeAuthorizedHostImport(imp)
-	}
-	return []TNode{&TImportDecl{
-		Symbols:     imp.Symbols,
-		Source:      imp.Source,
-		IsNamespace: imp.IsNamespace,
-		Alias:       imp.Alias,
-		Pos_:        imp.Pos,
-	}}
-}
+		return te.analyzeFnDec(&d)
+	case *loneast.FN_DEC:
+		if len(d.TypeParams) > 0 {
+			return nil
+		}
+		return te.analyzeFnDec(d)
 
-func (te *TypeEvaluator) analyzeAuthorizedHostImport(imp *ir.ImportDecl) []TNode {
-	if !loneruntime.IsHostNamespace(imp.Source) {
-		return []TNode{&TImportDecl{
-			Symbols:     imp.Symbols,
-			Source:      imp.Source,
-			IsNamespace: imp.IsNamespace,
-			Alias:       imp.Alias,
-			Pos_:        imp.Pos,
-		}}
-	}
-	ns, ok := loneruntime.LookupHostNamespace(imp.Source)
-	if !ok {
-		te.addDiag(SeverityError, imp.Pos, "import/unknown-host-namespace",
-			fmt.Sprintf("unknown host capability namespace %q", imp.Source))
+	case loneast.TYPE_DEC:
+		return te.analyzeTypeDecNode(&d)
+	case *loneast.TYPE_DEC:
+		return te.analyzeTypeDecNode(d)
+
+	case loneast.IMPL_DEC:
+		return te.analyzeImplDec(&d)
+	case *loneast.IMPL_DEC:
+		return te.analyzeImplDec(d)
+
+	case loneast.IfStmt:
+		return te.analyzeIfStmt(&d, TypeVoid)
+	case *loneast.IfStmt:
+		return te.analyzeIfStmt(d, TypeVoid)
+
+	case loneast.PackedIfStmt:
+		return te.analyzePackedIfStmt(&d, TypeVoid)
+	case *loneast.PackedIfStmt:
+		return te.analyzePackedIfStmt(d, TypeVoid)
+
+	case loneast.WhileStmt:
+		return te.analyzeWhileStmt(&d, TypeVoid)
+	case *loneast.WhileStmt:
+		return te.analyzeWhileStmt(d, TypeVoid)
+
+	case loneast.LoopStmt:
+		return te.analyzeLoopStmt(&d, TypeVoid)
+	case *loneast.LoopStmt:
+		return te.analyzeLoopStmt(d, TypeVoid)
+
+	case loneast.ForStmt:
+		return te.analyzeForStmt(&d, TypeVoid)
+	case *loneast.ForStmt:
+		return te.analyzeForStmt(d, TypeVoid)
+
+	case loneast.AssignStmt:
+		return te.analyzeAssignStmt(&d)
+	case *loneast.AssignStmt:
+		return te.analyzeAssignStmt(d)
+
+	case loneast.DropStmt:
+		expr := te.EvalExpr(d.Expr)
+		return &TDropStmt{Expr: expr, Span_: d.Span_}
+	case *loneast.DropStmt:
+		expr := te.EvalExpr(d.Expr)
+		return &TDropStmt{Expr: expr, Span_: d.Span_}
+
+	case loneast.LabelDec:
+		return te.analyzeLabelDec(&d, TypeVoid)
+	case *loneast.LabelDec:
+		return te.analyzeLabelDec(d, TypeVoid)
+
+	default:
 		return nil
 	}
-	var out []TNode
-	if imp.Alias != "" {
-		for symName, spec := range ns {
-			out = append(out, te.hostSpecToTHostImport(spec, symName, imp.Pos))
+}
+
+func (te *TypeEvaluator) analyzeVarDec(b *loneast.BIND_DEC) *TVarDec {
+	if b.Pattern != nil {
+		tVal := te.EvalExpr(b.Value)
+		var vInfo *EnumVariantInfo
+		var bindings []*TVarDec
+
+		if vp, ok := b.Pattern.(loneast.VariantPattern); ok {
+			et, isEnum := tVal.ExprType().(*EnumType)
+			if !isEnum {
+				te.addDiag(SeverityError, b.Pattern.NodeSpan(), "type/invalid-pattern",
+					fmt.Sprintf("cannot destructure non-enum type %q", tVal.ExprType().String()))
+			} else {
+				if vp.TypeName != "" && vp.TypeName != et.Name && !strings.HasPrefix(et.Name, vp.TypeName+"<") {
+					te.addDiag(SeverityError, b.Pattern.NodeSpan(), "type/enum-type-mismatch",
+						fmt.Sprintf("variant %q belongs to enum %q, but value is %q", vp.Variant, vp.TypeName, et.Name))
+				}
+				v, found := et.Variant(vp.Variant)
+				if !found {
+					te.addDiag(SeverityError, b.Pattern.NodeSpan(), "type/unknown-variant",
+						fmt.Sprintf("enum %q has no variant %q", et.Name, vp.Variant))
+				} else {
+					vInfo = v
+					if len(vp.Bindings) != len(v.Fields) {
+						te.addDiag(SeverityError, b.Pattern.NodeSpan(), "type/pattern-arity-mismatch",
+							fmt.Sprintf("variant %q has %d fields, but pattern binds %d variables",
+								vp.Variant, len(v.Fields), len(vp.Bindings)))
+					} else {
+						for i, bName := range vp.Bindings {
+							fInfo := v.Fields[i]
+							if bName != "_" {
+								sym := &Symbol{
+									Name:      bName,
+									Kind:      SymbolVar,
+									Type:      fInfo.Type,
+									IsMutable: b.IsMutable,
+								}
+								_ = te.stack.Define(sym)
+								bindings = append(bindings, &TVarDec{
+									Name:      bName,
+									IsMutable: b.IsMutable,
+									Type:      fInfo.Type,
+									Value:     nil,
+									Span_:     b.Pattern.NodeSpan(),
+								})
+							}
+						}
+					}
+				}
+			}
+		} else if tp, ok := b.Pattern.(loneast.TuplePattern); ok {
+			tupType, isTuple := tVal.ExprType().(*TupleType)
+			if !isTuple {
+				te.addDiag(SeverityError, b.Pattern.NodeSpan(), "type/invalid-pattern",
+					fmt.Sprintf("cannot destructure non-tuple type %q", tVal.ExprType().String()))
+			} else {
+				if len(tp.Elements) != len(tupType.Elements) {
+					te.addDiag(SeverityError, b.Pattern.NodeSpan(), "type/tuple-arity-mismatch",
+						fmt.Sprintf("tuple has %d elements, but pattern binds %d variables",
+							len(tupType.Elements), len(tp.Elements)))
+				} else {
+					for i, elemPat := range tp.Elements {
+						elemType := tupType.Elements[i]
+						bName := ""
+						if vp, ok := elemPat.(loneast.VariantPattern); ok {
+							bName = vp.Variant
+						} else if _, ok := elemPat.(loneast.WildcardPattern); ok {
+							bName = "_"
+						}
+						if bName != "" && bName != "_" {
+							sym := &Symbol{
+								Name:      bName,
+								Kind:      SymbolVar,
+								Type:      elemType,
+								IsMutable: b.IsMutable,
+							}
+							_ = te.stack.Define(sym)
+							bindings = append(bindings, &TVarDec{
+								Name:      bName,
+								IsMutable: b.IsMutable,
+								Type:      elemType,
+								Value:     nil,
+								Span_:     elemPat.NodeSpan(),
+							})
+						}
+					}
+				}
+			}
 		}
-		return out
-	}
-	for _, sym := range imp.Symbols {
-		spec, ok := ns[sym]
-		if !ok {
-			te.addDiag(SeverityError, imp.Pos, "import/undefined-symbol",
-				fmt.Sprintf("host capability %q does not exist in namespace %q", sym, imp.Source))
-			continue
-		}
-		out = append(out, te.hostSpecToTHostImport(spec, sym, imp.Pos))
-	}
-	return out
-}
 
-func (te *TypeEvaluator) hostSpecToTHostImport(spec loneruntime.HostFuncSpec, localName string, pos ir.Position) *THostImport {
-	var tParams []TFnParam
-	var wasmParams []string
-	for _, p := range spec.Params {
-		tParams = append(tParams, TFnParam{
-			Name: p.Name,
-			Type: te.parseHostTypeString(p.LoneType),
-			Pos_: pos,
-		})
-		wasmParams = append(wasmParams, p.WasmType)
-	}
-	return &THostImport{
-		Namespace:      spec.Namespace,
-		WasmModule:     spec.WasmModule,
-		WasmName:       spec.Name,
-		LocalName:      localName,
-		Params:         tParams,
-		ReturnType:     te.parseHostTypeString(spec.ReturnLoneType),
-		WasmParams:     wasmParams,
-		ReturnWasmType: spec.ReturnWasmType,
-		Pos_:           pos,
-	}
-}
-
-func (te *TypeEvaluator) analyzeHostImport(h *ir.HostImportDecl) *THostImport {
-	var tParams []TFnParam
-	var wasmParams []string
-	for _, p := range h.Params {
-		tParams = append(tParams, TFnParam{
-			Name: p.Name,
-			Type: te.parseHostTypeString(p.LoneType),
-			Pos_: h.Pos,
-		})
-		wasmParams = append(wasmParams, p.WasmType)
-	}
-	return &THostImport{
-		Namespace:      h.Namespace,
-		WasmModule:     h.WasmModule,
-		WasmName:       h.WasmName,
-		LocalName:      h.LocalName,
-		Params:         tParams,
-		ReturnType:     te.parseHostTypeString(h.ReturnLoneType),
-		WasmParams:     wasmParams,
-		ReturnWasmType: h.ReturnWasmType,
-		Pos_:           h.Pos,
-	}
-}
-
-func (te *TypeEvaluator) analyzeTypeDec(td *ir.TYPE_DEC) []TNode {
-	sym := te.stack.Resolve(td.Name)
-	var typ Type = TypeUnknown
-	if sym != nil {
-		typ = sym.Type
-	}
-	nodes := []TNode{&TTypeDec{
-		Name: td.Name,
-		Typ:  typ,
-		Pos_: td.Pos,
-	}}
-
-	if td.Kind == ir.TYPE_DEC_STRUCT {
-		for i := range td.Methods {
-			m := &td.Methods[i]
-			mangled := fmt.Sprintf("%s__%s", td.Name, m.Name)
-			nodes = append(nodes, te.analyzeFnDecWithMangled(m, mangled, typ))
+		return &TVarDec{
+			Name:      b.Name,
+			Variant:   vInfo,
+			TargetVal: tVal,
+			Bindings:  bindings,
+			IsMutable: b.IsMutable,
+			Type:      tVal.ExprType(),
+			Value:     tVal,
+			Span_:     b.Span_,
 		}
 	}
-	return nodes
-}
 
-func (te *TypeEvaluator) analyzeImplDec(im *ir.IMPL_DEC) []TNode {
-	targetType := te.parseType(&im.TargetType)
-	targetName := targetType.String()
+	declaredType := te.resolveType(b.Type)
+	tVal := te.EvalExpr(b.Value)
 
-	var nodes []TNode
-	for i := range im.Methods {
-		m := &im.Methods[i]
-		mangled := fmt.Sprintf("%s__%s", targetName, m.Name)
-		if im.TraitName != "" {
-			mangled = fmt.Sprintf("%s__%s__%s", im.TraitName, targetName, m.Name)
+	resolvedType := declaredType
+	if declaredType.Equals(TypeInfer) || declaredType.Equals(TypeUnknown) {
+		if tVal != nil && tVal.ExprType() != TypeUnknown {
+			resolvedType = tVal.ExprType()
+		} else {
+			resolvedType = TypeUnknown
 		}
-		nodes = append(nodes, te.analyzeFnDecWithMangled(m, mangled, targetType))
+	} else if tVal != nil && tVal.ExprType() != TypeUnknown && !tVal.ExprType().Equals(TypeInfer) {
+		// Type mismatch check
+		if !tVal.ExprType().AssignableTo(declaredType) {
+			te.addDiag(SeverityError, b.Span_, "type/mismatch",
+				fmt.Sprintf("cannot assign value of type %q to binding %q of type %q",
+					tVal.ExprType().String(), b.Name, declaredType.String()))
+		}
 	}
-	return nodes
+
+	if len(b.Names) > 0 {
+		var bindings []*TVarDec
+		for _, name := range b.Names {
+			if existing := te.stack.LookupLocal(name); existing != nil {
+				existing.Type = resolvedType
+				existing.IsMutable = b.IsMutable
+			} else {
+				sym := &Symbol{
+					Name:      name,
+					Kind:      SymbolVar,
+					Type:      resolvedType,
+					IsMutable: b.IsMutable,
+					Node:      b,
+				}
+				_ = te.stack.Define(sym)
+			}
+			tVar := &TVarDec{
+				Name:         name,
+				IsMutable:    b.IsMutable,
+				AddressTaken: false,
+				Type:         resolvedType,
+				Value:        tVal,
+				Span_:        b.Span_,
+			}
+			if sym := te.stack.LookupLocal(name); sym != nil {
+				sym.Node = tVar
+				tVar.AddressTaken = sym.AddressTaken
+			}
+			bindings = append(bindings, tVar)
+		}
+		return &TVarDec{
+			Name:      b.Names[0],
+			Bindings:  bindings,
+			IsMutable: b.IsMutable,
+			Type:      resolvedType,
+			Value:     tVal,
+			Span_:     b.Span_,
+		}
+	}
+
+	if existing := te.stack.LookupLocal(b.Name); existing != nil {
+		existing.Type = resolvedType
+		existing.IsMutable = b.IsMutable
+	} else {
+		sym := &Symbol{
+			Name:      b.Name,
+			Kind:      SymbolVar,
+			Type:      resolvedType,
+			IsMutable: b.IsMutable,
+			Node:      b,
+		}
+		_ = te.stack.Define(sym)
+	}
+
+	tVar := &TVarDec{
+		Name:         b.Name,
+		IsMutable:    b.IsMutable,
+		AddressTaken: false,
+		Type:         resolvedType,
+		Value:        tVal,
+		Span_:        b.Span_,
+	}
+	if sym := te.stack.LookupLocal(b.Name); sym != nil {
+		sym.Node = tVar
+		tVar.AddressTaken = sym.AddressTaken
+	}
+	return tVar
 }
 
-func (te *TypeEvaluator) analyzeFnDecWithMangled(fn *ir.FN_DEC, loweredName string, selfType Type) *TFnDec {
-	prevSelf := te.currentSelf
-	te.currentSelf = selfType
-	defer func() { te.currentSelf = prevSelf }()
-
-	var retType Type = TypeVoid
-	if fn.ReturnType != nil {
-		retType = te.parseType(fn.ReturnType)
-	}
-
-	te.stack.Push(ScopeFunction, loweredName)
+func (te *TypeEvaluator) analyzeFnDec(f *loneast.FN_DEC) *TFnDec {
+	te.stack.Push(ScopeFunction)
 	defer te.stack.Pop()
 
-	tParams := make([]TFnParam, len(fn.Params))
-	for i, p := range fn.Params {
-		pType := te.parseType(&p.Type)
-		tParams[i] = TFnParam{
-			Name: p.Name,
-			Type: pType,
-			Pos_: p.Type.Pos,
-		}
-		_ = te.stack.Define(&Symbol{
-			Name:     p.Name,
-			Kind:     SymbolVar,
-			Type:     pType,
-			Node:     p,
-			DeclNode: &tParams[i],
-		})
+	for name, typ := range te.currentTypeParams {
+		_ = te.stack.Define(&Symbol{Name: name, Kind: SymbolType, Type: typ})
 	}
 
-	hasReturn := false
-	tBody := te.analyzeBlock(&fn.Body, retType, &hasReturn)
+	oldFnName := te.currentFnName
+	te.currentFnName = f.Name
+	defer func() { te.currentFnName = oldFnName }()
 
-	if retType != TypeVoid && retType != TypeNone && retType != TypeUnknown && !hasReturn {
-		te.addDiag(SeverityError, fn.Pos, "type/missing-return",
-			fmt.Sprintf("function %q expects return type %q but contains no return statement", fn.Name, retType.String()))
+	var tParams []TFnParam
+	for _, p := range f.Params {
+		pType := te.resolveType(p.Type)
+		if p.Name == "self" && (pType == TypeUnknown || pType == TypeInfer || p.Type.Value == nil) {
+			if te.currentSelfType != nil {
+				pType = te.currentSelfType
+			}
+		}
+		_ = te.stack.Define(&Symbol{Name: p.Name, Kind: SymbolVar, Type: pType, IsMutable: false})
+		tParams = append(tParams, TFnParam{Name: p.Name, Type: pType, Span_: p.Span_})
+	}
+
+	retType := Type(TypeVoid)
+	if f.ReturnType != nil {
+		retType = te.resolveType(*f.ReturnType)
+	}
+
+	oldFnRet := te.currentFnReturn
+	te.currentFnReturn = retType
+	defer func() { te.currentFnReturn = oldFnRet }()
+
+	body := te.analyzeBlock(&f.Body, retType)
+
+	// Resolve 'infer' in return type if present (e.g. Result<V, infer>)
+	if strings.Contains(retType.String(), "infer") {
+		errs := te.inferredErrors[f.Name]
+		var inferredErr Type = te.enums["Error"]
+		if len(errs) == 1 {
+			inferredErr = errs[0]
+		} else if len(errs) > 1 {
+			same := true
+			for i := 1; i < len(errs); i++ {
+				if !errs[i].Equals(errs[0]) {
+					same = false
+					break
+				}
+			}
+			if same {
+				inferredErr = errs[0]
+			} else {
+				inferredErr = te.enums["Error"]
+			}
+		}
+		if et, ok := retType.(*EnumType); ok && strings.HasPrefix(et.Name, "Result<") {
+			okV, _ := et.Variant("Ok")
+			var okType Type = TypeVoid
+			if len(okV.Fields) > 0 {
+				okType = okV.Fields[0].Type
+			}
+			if tmpl, ok := te.genericTypes["Result"]; ok {
+				concreteRes := te.instantiateGenericType(tmpl, []loneast.TYPE_REF{
+					{Kind: loneast.TYPE_BASE, Value: &loneast.TypeBase{Name: okType.String()}},
+					{Kind: loneast.TYPE_BASE, Value: &loneast.TypeBase{Name: inferredErr.String()}},
+				})
+				retType = concreteRes
+			}
+		}
 	}
 
 	return &TFnDec{
-		Name:       loweredName,
+		Name:       f.Name,
 		Params:     tParams,
 		ReturnType: retType,
-		Body:       tBody,
-		Pos_:       fn.Pos,
+		Body:       body,
+		Span_:      f.Span_,
 	}
 }
 
-func (te *TypeEvaluator) analyzeVarDec(b *ir.BIND_DEC) *TVarDec {
-	declaredType := te.parseType(&b.Type)
-	tVal := te.EvalExpr(b.Value)
+func (te *TypeEvaluator) analyzeImplDec(i *loneast.IMPL_DEC) *TImplDec {
+	targetType := te.resolveType(i.TargetType)
+	oldSelf := te.currentSelfType
+	te.currentSelfType = targetType
+	defer func() { te.currentSelfType = oldSelf }()
 
-	isUninit := false
-	if lit, ok := tVal.(*TLiteralExpr); ok && lit.Kind == ir.LITERAL_UNINITIALIZED {
-		isUninit = true
-	}
+	var tMethods []*TFnDec
 
-	resolvedType := declaredType
-	if declaredType == TypeInfer || declaredType == TypeUnknown {
-		resolvedType = tVal.ExprType()
-	} else if isUninit {
-		if lit, ok := tVal.(*TLiteralExpr); ok {
-			lit.Typ = declaredType
+	for _, m := range i.Methods {
+		mCopy := m
+		if !strings.Contains(mCopy.Name, ".") {
+			mCopy.Name = targetType.String() + "." + mCopy.Name
 		}
-	} else if !tVal.ExprType().AssignableTo(declaredType) {
-		te.addDiag(SeverityError, b.Pos, "type/assignment-mismatch",
-			fmt.Sprintf("cannot assign value of type %q to variable %q of type %q",
-				tVal.ExprType().String(), b.Name, declaredType.String()))
+		tMethod := te.analyzeFnDec(&mCopy)
+		tMethods = append(tMethods, tMethod)
 	}
 
-	// If an anonymous object literal `{ .a: 1 }` is assigned to a declared StructType, upgrade it to TStructLitExpr
-	if st, ok := resolvedType.(*StructType); ok {
-		if objExpr, ok := tVal.(*TObjectExpr); ok {
-			tVal = &TStructLitExpr{
-				StructType: st,
-				Fields:     objExpr.Fields,
-				Pos_:       objExpr.Pos_,
-			}
-		}
-	}
-
-	tv := &TVarDec{
-		Name:  b.Name,
-		Type:  resolvedType,
-		Value: tVal,
-		Pos_:  b.Pos,
-	}
-
-	// Update symbol in current scope
-	if sym := te.stack.Current().LookupLocal(b.Name); sym != nil {
-		sym.Type = resolvedType
-		sym.DeclNode = tv
-	} else {
-		_ = te.stack.Define(&Symbol{
-			Name:     b.Name,
-			Kind:     SymbolVar,
-			Type:     resolvedType,
-			Node:     b,
-			DeclNode: tv,
-		})
-	}
-
-	return tv
-}
-
-type narrowingInfo struct {
-	varName      string
-	narrowedType Type
-}
-
-func (te *TypeEvaluator) applyNarrowing(n *narrowingInfo) {
-	if n == nil {
-		return
-	}
-	if origSym := te.stack.Resolve(n.varName); origSym != nil {
-		narrowedSym := &Symbol{
-			Name:         origSym.Name,
-			MangledName:  origSym.MangledName,
-			Kind:         origSym.Kind,
-			Type:         n.narrowedType,
-			Node:         origSym.Node,
-			DeclNode:     origSym.DeclNode,
-			AddressTaken: origSym.AddressTaken,
-		}
-		_ = te.stack.Define(narrowedSym)
+	return &TImplDec{
+		TraitName:  i.TraitName,
+		TargetType: targetType,
+		Methods:    tMethods,
+		Span_:      i.Span_,
 	}
 }
 
-func (te *TypeEvaluator) analyzeBlockWithNarrowing(b *ir.Block, expectedReturn Type, hasReturn *bool, narrowings ...*narrowingInfo) TBlock {
-	te.stack.Push(ScopeBlock, "")
+func (te *TypeEvaluator) analyzeBlock(b *loneast.Block, expectedRet Type) TBlock {
+	te.stack.Push(ScopeBlock)
 	defer te.stack.Pop()
 
-	for _, n := range narrowings {
-		te.applyNarrowing(n)
-	}
-
-	tBlock := TBlock{
-		Stmts: make([]TStmt, 0),
-		Pos_:  b.Pos,
-		Typ:   TypeVoid,
-	}
-
-	for _, rawStmt := range b.Stmts {
-		stmt := te.analyzeStmt(rawStmt, expectedReturn, hasReturn)
-		if stmt != nil {
-			tBlock.Stmts = append(tBlock.Stmts, stmt)
-			if brk, ok := stmt.(*TBreakStmt); ok && brk.Value != nil {
-				tBlock.Typ = brk.Value.ExprType()
+	var stmts []TStmt
+	blockType := Type(TypeVoid)
+	for _, s := range b.Stmts {
+		tStmt := te.analyzeStmt(s, expectedRet)
+		if tStmt != nil {
+			stmts = append(stmts, tStmt)
+			if brk, ok := tStmt.(*TBreakStmt); ok && brk.Value != nil {
+				blockType = brk.Value.ExprType()
+			} else if expr, ok := tStmt.(TExpr); ok {
+				blockType = expr.ExprType()
 			}
 		}
 	}
 
-	return tBlock
-}
-
-func (te *TypeEvaluator) analyzeBlock(b *ir.Block, expectedReturn Type, hasReturn *bool) TBlock {
-	return te.analyzeBlockWithNarrowing(b, expectedReturn, hasReturn)
-}
-
-func (te *TypeEvaluator) analyzeStmt(raw any, expectedReturn Type, hasReturn *bool) TStmt {
-	if raw == nil {
-		return nil
+	return TBlock{
+		Stmts: stmts,
+		Typ:   blockType,
+		Span_: b.Span_,
 	}
+}
 
+func (te *TypeEvaluator) analyzeStmt(raw any, expectedRet Type) TStmt {
 	switch s := raw.(type) {
-	case ir.BIND_DEC:
+	case loneast.BIND_DEC:
 		return te.analyzeVarDec(&s)
-	case *ir.BIND_DEC:
+	case *loneast.BIND_DEC:
 		return te.analyzeVarDec(s)
 
-	case ir.AssignStmt:
+	case loneast.AssignStmt:
 		return te.analyzeAssignStmt(&s)
-	case *ir.AssignStmt:
+	case *loneast.AssignStmt:
 		return te.analyzeAssignStmt(s)
 
-	case ir.ReturnStmt:
-		return te.analyzeReturnStmt(&s, expectedReturn, hasReturn)
-	case *ir.ReturnStmt:
-		return te.analyzeReturnStmt(s, expectedReturn, hasReturn)
+	case loneast.ReturnStmt:
+		var tVal TExpr
+		if s.Value != nil {
+			tVal = te.EvalExpr(s.Value)
+			if expectedRet != TypeVoid && !tVal.ExprType().AssignableTo(expectedRet) {
+				te.addDiag(SeverityError, s.Span_, "type/return-mismatch",
+					fmt.Sprintf("cannot return value of type %q from function expecting %q",
+						tVal.ExprType().String(), expectedRet.String()))
+			}
+		}
+		return &TReturnStmt{Value: tVal, Span_: s.Span_}
 
-	case ir.DropStmt:
-		tExpr := te.EvalExpr(s.Expr)
-		return &TDropStmt{Expr: tExpr, Pos_: s.Pos}
-	case *ir.DropStmt:
-		tExpr := te.EvalExpr(s.Expr)
-		return &TDropStmt{Expr: tExpr, Pos_: s.Pos}
-
-	case ir.BreakStmt:
+	case loneast.BreakStmt:
 		var tVal TExpr
 		if s.Value != nil {
 			tVal = te.EvalExpr(s.Value)
 		}
-		return &TBreakStmt{Label: s.Label, Value: tVal, Pos_: s.Pos}
-	case *ir.BreakStmt:
-		var tVal TExpr
-		if s.Value != nil {
-			tVal = te.EvalExpr(s.Value)
-		}
-		return &TBreakStmt{Label: s.Label, Value: tVal, Pos_: s.Pos}
+		return &TBreakStmt{Label: s.Label, Value: tVal, Span_: s.Span_}
 
-	case ir.IfStmt:
-		return te.analyzeIfStmt(&s, expectedReturn, hasReturn)
-	case *ir.IfStmt:
-		return te.analyzeIfStmt(s, expectedReturn, hasReturn)
+	case loneast.DropStmt:
+		tExpr := te.EvalExpr(s.Expr)
+		return &TDropStmt{Expr: tExpr, Span_: s.Span_}
 
-	case ir.WhileStmt:
-		tCond := te.EvalExpr(s.Cond)
-		tBody := te.analyzeBlock(&s.Body, expectedReturn, hasReturn)
-		return &TWhileStmt{Cond: tCond, Body: tBody, Pos_: s.Pos}
-	case *ir.WhileStmt:
-		tCond := te.EvalExpr(s.Cond)
-		tBody := te.analyzeBlock(&s.Body, expectedReturn, hasReturn)
-		return &TWhileStmt{Cond: tCond, Body: tBody, Pos_: s.Pos}
+	case loneast.IfStmt:
+		return te.analyzeIfStmt(&s, expectedRet)
+	case *loneast.IfStmt:
+		return te.analyzeIfStmt(s, expectedRet)
 
-	case ir.DoWhileStmt:
-		return te.analyzeDoWhileStmt(&s, expectedReturn, hasReturn)
-	case *ir.DoWhileStmt:
-		return te.analyzeDoWhileStmt(s, expectedReturn, hasReturn)
+	case loneast.PackedIfStmt:
+		return te.analyzePackedIfStmt(&s, expectedRet)
+	case *loneast.PackedIfStmt:
+		return te.analyzePackedIfStmt(s, expectedRet)
 
-	case ir.ForStmt:
-		return te.analyzeForStmt(&s, expectedReturn, hasReturn)
-	case *ir.ForStmt:
-		return te.analyzeForStmt(s, expectedReturn, hasReturn)
+	case loneast.WhileStmt:
+		return te.analyzeWhileStmt(&s, expectedRet)
+	case *loneast.WhileStmt:
+		return te.analyzeWhileStmt(s, expectedRet)
 
-	case ir.LabelDec:
-		tBody := te.analyzeBlock(&s.Body, expectedReturn, hasReturn)
-		return &TLabelDec{Name: s.Name, Body: tBody, Pos_: s.Pos, Typ: TypeVoid}
+	case loneast.LoopStmt:
+		return te.analyzeLoopStmt(&s, expectedRet)
+	case *loneast.LoopStmt:
+		return te.analyzeLoopStmt(s, expectedRet)
+
+	case loneast.ForStmt:
+		return te.analyzeForStmt(&s, expectedRet)
+	case *loneast.ForStmt:
+		return te.analyzeForStmt(s, expectedRet)
+
+	case loneast.LabelDec:
+		return te.analyzeLabelDec(&s, expectedRet)
+	case *loneast.LabelDec:
+		return te.analyzeLabelDec(s, expectedRet)
+
+	case loneast.Expr:
+		return te.EvalExpr(s)
 
 	default:
-		if expr, ok := raw.(ir.Expr); ok {
-			tExpr := te.EvalExpr(expr)
-			if te.enforceConsumeOrDrop {
-				typ := tExpr.ExprType()
-				if typ != TypeVoid && typ != TypeNone && typ != TypeUnknown {
-					te.addDiag(SeverityError, tExpr.Pos(), "type/unused-result",
-						fmt.Sprintf("result of expression of type %q is not consumed; use 'drop' to discard it", typ.String()))
-				}
-			}
-			return &TExprStmt{Expr: tExpr, Pos_: tExpr.Pos()}
-		}
+		return nil
 	}
-
-	return nil
 }
 
-func (te *TypeEvaluator) analyzeAssignStmt(a *ir.AssignStmt) *TAssignStmt {
+// analyzeAssignStmt enforces IL1 mutability invariant: cannot reassign immutable 'let' bindings.
+func (te *TypeEvaluator) analyzeAssignStmt(a *loneast.AssignStmt) *TAssignStmt {
 	tTarget := te.EvalExpr(a.Target)
 	tVal := te.EvalExpr(a.Value)
 
-	if !te.isLValue(tTarget) {
-		te.addDiag(SeverityError, a.Pos, "type/invalid-lvalue",
-			"left-hand side of assignment must be a variable, dereference, field, or index expression")
-	} else if te.isReadOnlyTarget(tTarget) {
-		te.addDiag(SeverityError, a.Pos, "type/readonly-mutation",
-			"cannot mutate value through a read-only (ro) reference or pointer")
+	// Check if target is a variable reference and whether it is immutable
+	if vref, ok := tTarget.(*TVarRefExpr); ok {
+		sym := te.stack.Lookup(vref.Name)
+		if sym != nil && !sym.IsMutable {
+			te.addDiag(SeverityError, a.Span_, "type/immutable-reassignment",
+				fmt.Sprintf("cannot reassign immutable binding %q declared with 'let'; use 'var' if mutation is intended", sym.Name))
+		}
+	}
+
+	// Check if target is a member access (struct field) and whether it is read-only or on an immutable binding
+	if mem, ok := tTarget.(*TMemberAccessExpr); ok {
+		var targetStruct *StructType
+		var isReadOnlyRef bool
+		if st, ok := mem.Base.ExprType().(*StructType); ok {
+			targetStruct = st
+		} else if refT, ok := mem.Base.ExprType().(*RefType); ok {
+			if st, ok := refT.Elem.(*StructType); ok {
+				targetStruct = st
+			}
+			if refT.ReadOnly {
+				isReadOnlyRef = true
+			}
+		} else if ptrT, ok := mem.Base.ExprType().(*PtrType); ok {
+			if st, ok := ptrT.Elem.(*StructType); ok {
+				targetStruct = st
+			}
+			if ptrT.ReadOnly {
+				isReadOnlyRef = true
+			}
+		}
+
+		if isReadOnlyRef {
+			te.addDiag(SeverityError, a.Span_, "type/immutable-reference-write",
+				fmt.Sprintf("cannot write through read-only reference %q", mem.Base.ExprType().String()))
+		}
+
+		if targetStruct != nil {
+			if fInfo, exists := targetStruct.Field(mem.Field); exists {
+				if fInfo.IsReadOnly {
+					te.addDiag(SeverityError, a.Span_, "type/immutable-field-write",
+						fmt.Sprintf("cannot assign to read-only field %q on struct %q; 'ro' fields are immutable after construction", mem.Field, targetStruct.Name))
+				}
+				if fInfo.IsRoPub {
+					if te.currentSelfType == nil || !te.currentSelfType.Equals(targetStruct) {
+						te.addDiag(SeverityError, a.Span_, "type/asymmetric-field-write",
+							fmt.Sprintf("field %q on struct %q is read-only outside its declaring struct", mem.Field, targetStruct.Name))
+					}
+				}
+			}
+		}
+
+		// Only direct struct values on immutable bindings prevent field writes
+		if _, isDirectStruct := mem.Base.ExprType().(*StructType); isDirectStruct {
+			if vref, ok := mem.Base.(*TVarRefExpr); ok {
+				sym := te.stack.Lookup(vref.Name)
+				if sym != nil && !sym.IsMutable {
+					te.addDiag(SeverityError, a.Span_, "type/immutable-reassignment",
+						fmt.Sprintf("cannot mutate field %q on immutable binding %q", mem.Field, sym.Name))
+				}
+			}
+		}
+	}
+
+	// Check if target is a dereference: *r = val or *p = val
+	if un, ok := tTarget.(*TUnaryExpr); ok && un.Op == loneast.UNARY_OP_DEREF {
+		if refT, ok := un.Expr.ExprType().(*RefType); ok && refT.ReadOnly {
+			te.addDiag(SeverityError, a.Span_, "type/immutable-reference-write",
+				fmt.Sprintf("cannot write through read-only reference %q", refT.String()))
+		}
+		if ptrT, ok := un.Expr.ExprType().(*PtrType); ok && ptrT.ReadOnly {
+			te.addDiag(SeverityError, a.Span_, "type/immutable-pointer-write",
+				fmt.Sprintf("cannot write through read-only pointer %q", ptrT.String()))
+		}
+	}
+
+	// Check if target is an index into a buffer: p[i] = val
+	if idx, ok := tTarget.(*TIndexExpr); ok {
+		if ptrT, ok := idx.Base.ExprType().(*PtrType); ok && ptrT.ReadOnly {
+			te.addDiag(SeverityError, a.Span_, "type/immutable-pointer-write",
+				fmt.Sprintf("cannot write to read-only buffer through %q", ptrT.String()))
+		}
+		if refT, ok := idx.Base.ExprType().(*RefType); ok && refT.ReadOnly {
+			te.addDiag(SeverityError, a.Span_, "type/immutable-reference-write",
+				fmt.Sprintf("cannot write to read-only buffer through %q", refT.String()))
+		}
 	}
 
 	if tTarget.ExprType() != TypeUnknown && tVal.ExprType() != TypeUnknown {
 		if !tVal.ExprType().AssignableTo(tTarget.ExprType()) {
-			te.addDiag(SeverityError, a.Pos, "type/assignment-mismatch",
+			te.addDiag(SeverityError, a.Span_, "type/assignment-mismatch",
 				fmt.Sprintf("cannot assign value of type %q to target of type %q",
 					tVal.ExprType().String(), tTarget.ExprType().String()))
 		}
@@ -1060,1095 +1342,2014 @@ func (te *TypeEvaluator) analyzeAssignStmt(a *ir.AssignStmt) *TAssignStmt {
 	return &TAssignStmt{
 		Target: tTarget,
 		Value:  tVal,
-		Pos_:   a.Pos,
+		Span_:  a.Span_,
 	}
 }
 
-func (te *TypeEvaluator) analyzeDoWhileStmt(s *ir.DoWhileStmt, expectedReturn Type, hasReturn *bool) *TDoWhileStmt {
-	te.stack.Push(ScopeBlock, "")
-	defer te.stack.Pop()
-
-	tBlock := TBlock{
-		Stmts: make([]TStmt, 0),
-		Pos_:  s.Body.Pos,
-		Typ:   TypeVoid,
+// analyzeIfStmt handles standard if with optional scoped header bindings: if: [let x = 0] x != 9 { ... }
+func (te *TypeEvaluator) analyzeIfStmt(i *loneast.IfStmt, expectedRet Type) *TIfStmt {
+	hasHeader := len(i.Header) > 0
+	if hasHeader {
+		te.stack.Push(ScopeHeader)
 	}
 
-	for _, rawStmt := range s.Body.Stmts {
-		stmt := te.analyzeStmt(rawStmt, expectedReturn, hasReturn)
-		if stmt != nil {
-			tBlock.Stmts = append(tBlock.Stmts, stmt)
-			if brk, ok := stmt.(*TBreakStmt); ok && brk.Value != nil {
-				tBlock.Typ = brk.Value.ExprType()
-			}
-		}
+	var tHeaders []*TVarDec
+	for _, h := range i.Header {
+		tVar := te.analyzeVarDec(&h)
+		tHeaders = append(tHeaders, tVar)
 	}
 
-	// Condition is evaluated in the same scope, so body variables are accessible!
-	tCond := te.EvalExpr(s.Cond)
-	if tCond.ExprType() != TypeBool && tCond.ExprType() != TypeUnknown {
-		te.addDiag(SeverityError, tCond.Pos(), "type/condition-type",
-			fmt.Sprintf("loop while condition must be bool, got %q", tCond.ExprType().String()))
-	}
-
-	return &TDoWhileStmt{
-		Body: tBlock,
-		Cond: tCond,
-		Pos_: s.Pos,
-	}
-}
-
-func (te *TypeEvaluator) analyzeForStmt(f *ir.ForStmt, expectedReturn Type, hasReturn *bool) TStmt {
-	tIter := te.EvalExpr(f.Iter)
-	iterType := tIter.ExprType()
-
-	st := unwrapStructType(iterType)
-	var iterExpr ir.Expr = f.Iter
-
-	if st != nil {
-		hasIterMethod := te.lookupMethod(st.Name, "iterator") != nil
-		hasDirectNext := te.lookupMethod(st.Name, "has_next") != nil && te.lookupMethod(st.Name, "next") != nil
-
-		if hasIterMethod {
-			iterExpr = ir.PostFixExpr{
-				Base: f.Iter,
-				Suffix: []ir.Suffix{
-					ir.SuffixMemberAccess{Name: "iterator", Pos: f.Pos},
-					ir.SuffixCall{Args: nil, Pos: f.Pos},
-				},
-			}
-		} else if !hasDirectNext && iterType != TypeUnknown && iterType != TypeAny {
-			te.addDiag(SeverityError, tIter.Pos(), "type/not-iterable",
-				fmt.Sprintf("type %q is not iterable (missing 'iterator()' or 'has_next()'/'next()' methods)", st.Name))
-		}
-	} else if iterType != TypeUnknown && iterType != TypeAny {
-		te.addDiag(SeverityError, tIter.Pos(), "type/not-iterable",
-			fmt.Sprintf("type %q is not iterable (must implement IteratorTrait or IterableTrait)", iterType.String()))
-	}
-
-	itVarName := fmt.Sprintf("__it_%d_%d", f.Pos.Line, f.Pos.Col)
-
-	bindIt := ir.BIND_DEC{
-		Name:  itVarName,
-		Value: iterExpr,
-		Pos:   f.Pos,
-	}
-
-	condExpr := ir.PostFixExpr{
-		Base: ir.NameRef{Name: itVarName, Pos: f.Pos},
-		Suffix: []ir.Suffix{
-			ir.SuffixMemberAccess{Name: "has_next", Pos: f.Pos},
-			ir.SuffixCall{Args: nil, Pos: f.Pos},
-		},
-	}
-
-	nextExpr := ir.PostFixExpr{
-		Base: ir.NameRef{Name: itVarName, Pos: f.Pos},
-		Suffix: []ir.Suffix{
-			ir.SuffixMemberAccess{Name: "next", Pos: f.Pos},
-			ir.SuffixCall{Args: nil, Pos: f.Pos},
-		},
-	}
-
-	bindLoopVar := ir.BIND_DEC{
-		Name:  f.VarName,
-		Value: nextExpr,
-		Pos:   f.Pos,
-	}
-
-	whileBodyStmts := make([]any, 0, len(f.Body.Stmts)+1)
-	whileBodyStmts = append(whileBodyStmts, bindLoopVar)
-	whileBodyStmts = append(whileBodyStmts, f.Body.Stmts...)
-
-	whileStmt := ir.WhileStmt{
-		Cond: condExpr,
-		Body: ir.Block{
-			Stmts: whileBodyStmts,
-			Pos:   f.Body.Pos,
-		},
-		Pos: f.Pos,
-	}
-
-	forBlock := ir.Block{
-		Stmts: []any{
-			bindIt,
-			whileStmt,
-		},
-		Pos: f.Pos,
-	}
-
-	tBlock := te.analyzeBlock(&forBlock, expectedReturn, hasReturn)
-	return &tBlock
-}
-
-func (te *TypeEvaluator) analyzeIfStmt(s *ir.IfStmt, expectedReturn Type, hasReturn *bool) *TIfStmt {
-	tCond := te.EvalExpr(s.Cond)
-	thenNarrowing := te.extractNarrowing(s.Cond, true)
-	elseNarrowing := te.extractNarrowing(s.Cond, false)
-
-	tThen := te.analyzeBlockWithNarrowing(&s.Then, expectedReturn, hasReturn, thenNarrowing)
-	var tElse *TBlock
-	if s.Else != nil {
-		if elseBlock, ok := s.Else.(ir.Block); ok {
-			eb := te.analyzeBlockWithNarrowing(&elseBlock, expectedReturn, hasReturn, elseNarrowing)
-			tElse = &eb
-		} else if ebPtr, ok := s.Else.(*ir.Block); ok && ebPtr != nil {
-			eb := te.analyzeBlockWithNarrowing(ebPtr, expectedReturn, hasReturn, elseNarrowing)
-			tElse = &eb
-		} else if elseIf, ok := s.Else.(ir.IfStmt); ok {
-			te.stack.Push(ScopeBlock, "")
-			if elseNarrowing != nil {
-				te.applyNarrowing(elseNarrowing)
-			}
-			stmt := te.analyzeStmt(elseIf, expectedReturn, hasReturn)
-			te.stack.Pop()
-			if ts, ok := stmt.(TStmt); ok {
-				var typ Type = TypeVoid
-				if tIf, ok := ts.(*TIfStmt); ok {
-					typ = tIf.Typ
-				}
-				eb := TBlock{Stmts: []TStmt{ts}, Pos_: elseIf.Pos, Typ: typ}
-				tElse = &eb
-			}
-		} else if elseIfPtr, ok := s.Else.(*ir.IfStmt); ok && elseIfPtr != nil {
-			te.stack.Push(ScopeBlock, "")
-			if elseNarrowing != nil {
-				te.applyNarrowing(elseNarrowing)
-			}
-			stmt := te.analyzeStmt(*elseIfPtr, expectedReturn, hasReturn)
-			te.stack.Pop()
-			if ts, ok := stmt.(TStmt); ok {
-				var typ Type = TypeVoid
-				if tIf, ok := ts.(*TIfStmt); ok {
-					typ = tIf.Typ
-				}
-				eb := TBlock{Stmts: []TStmt{ts}, Pos_: elseIfPtr.Pos, Typ: typ}
-				tElse = &eb
-			}
-		}
-	}
-	resTyp := tThen.Typ
-	if tElse != nil && tElse.Typ != TypeVoid && resTyp == TypeVoid {
-		resTyp = tElse.Typ
-	}
-	return &TIfStmt{Cond: tCond, Then: tThen, Else: tElse, Pos_: s.Pos, Typ: resTyp}
-}
-
-func unwrapVarName(expr ir.Expr) string {
-	if expr == nil {
-		return ""
-	}
-	switch e := expr.(type) {
-	case ir.NameRef:
-		return e.Name
-	case *ir.NameRef:
-		return e.Name
-	case ir.PostFixExpr:
-		if len(e.Suffix) == 0 {
-			return unwrapVarName(e.Base)
-		}
-	case *ir.PostFixExpr:
-		if len(e.Suffix) == 0 {
-			return unwrapVarName(e.Base)
-		}
-	}
-	return ""
-}
-
-func (te *TypeEvaluator) extractNarrowing(cond ir.Expr, positive bool) *narrowingInfo {
-	if cond == nil {
-		return nil
-	}
-
-	switch c := cond.(type) {
-	case ir.IsExpr:
-		return te.resolveIsNarrowing(&c, positive)
-	case *ir.IsExpr:
-		return te.resolveIsNarrowing(c, positive)
-
-	case ir.UnaryExpr:
-		if c.Op == ir.UNARY_OP_NOT || c.Op == "!" {
-			return te.extractNarrowing(c.Expr, !positive)
-		}
-	case *ir.UnaryExpr:
-		if c.Op == ir.UNARY_OP_NOT || c.Op == "!" {
-			return te.extractNarrowing(c.Expr, !positive)
-		}
-
-	case ir.PostFixExpr:
-		if len(c.Suffix) == 0 {
-			return te.extractNarrowing(c.Base, positive)
-		}
-	case *ir.PostFixExpr:
-		if len(c.Suffix) == 0 {
-			return te.extractNarrowing(c.Base, positive)
-		}
-	}
-
-	return nil
-}
-
-func (te *TypeEvaluator) resolveIsNarrowing(is *ir.IsExpr, positive bool) *narrowingInfo {
-	varName := unwrapVarName(is.Expr)
-	if varName == "" {
-		return nil
-	}
-
-	sym := te.stack.Resolve(varName)
-	if sym == nil {
-		return nil
-	}
-
-	effectivePositive := positive
-	if is.Negated {
-		effectivePositive = !effectivePositive
-	}
-
-	targetType := te.parseType(&is.TargetType)
-
-	if effectivePositive {
-		if targetType == TypeNone {
-			return &narrowingInfo{
-				varName:      varName,
-				narrowedType: TypeNone,
-			}
-		}
-		return &narrowingInfo{
-			varName:      varName,
-			narrowedType: targetType,
+	var tCond TExpr
+	if i.Cond != nil {
+		tCond = te.EvalExpr(i.Cond)
+		if !tCond.ExprType().Equals(TypeBool) && tCond.ExprType() != TypeUnknown {
+			te.addDiag(SeverityError, i.Cond.NodeSpan(), "type/condition-not-bool",
+				fmt.Sprintf("if condition must be boolean, got %q", tCond.ExprType().String()))
 		}
 	} else {
-		if targetType == TypeNone {
-			if opt, ok := sym.Type.(*OptionalType); ok {
-				return &narrowingInfo{
-					varName:      varName,
-					narrowedType: opt.Inner,
-				}
-			}
-		}
-		if opt, ok := sym.Type.(*OptionalType); ok {
-			if opt.Inner.Equals(targetType) || targetType.AssignableTo(opt.Inner) {
-				return &narrowingInfo{
-					varName:      varName,
-					narrowedType: TypeNone,
-				}
-			}
+		tCond = &TLiteralExpr{Kind: loneast.LiteralBool, Value: true, Typ: TypeBool, Span_: i.Span_}
+	}
+
+	tThen := te.analyzeBlock(&i.Then, expectedRet)
+
+	var tElse TStmt
+	if i.Else != nil {
+		switch el := i.Else.(type) {
+		case loneast.Block:
+			b := te.analyzeBlock(&el, expectedRet)
+			tElse = &b
+		case *loneast.Block:
+			b := te.analyzeBlock(el, expectedRet)
+			tElse = &b
+		case loneast.IfStmt:
+			tElse = te.analyzeIfStmt(&el, expectedRet)
+		case *loneast.IfStmt:
+			tElse = te.analyzeIfStmt(el, expectedRet)
 		}
 	}
 
-	return nil
-}
+	if hasHeader {
+		te.stack.Pop()
+	}
 
-func (te *TypeEvaluator) evalIsExpr(is *ir.IsExpr) *TIsExpr {
-	tExpr := te.EvalExpr(is.Expr)
-	targetType := te.parseType(&is.TargetType)
-	return &TIsExpr{
-		Expr:       tExpr,
-		TargetType: targetType,
-		Negated:    is.Negated,
-		Typ:        TypeBool,
-		Pos_:       is.Pos,
+	return &TIfStmt{
+		Header: tHeaders,
+		Cond:   tCond,
+		Then:   tThen,
+		Else:   tElse,
+		Span_:  i.Span_,
 	}
 }
 
-func (te *TypeEvaluator) isLValue(e TExpr) bool {
-	switch u := e.(type) {
-	case *TVarRefExpr, *TIndexExpr, *TMemberExpr:
-		return true
-	case *TUnaryExpr:
-		return u.Op == ir.UNARY_OP_DEREF
+// analyzePackedIfStmt handles packed if with optional scoped header bindings: if: [let x = 0, let y = 7] { ... }
+func (te *TypeEvaluator) analyzePackedIfStmt(p *loneast.PackedIfStmt, expectedRet Type) *TPackedIfStmt {
+	hasHeader := len(p.Header) > 0
+	if hasHeader {
+		te.stack.Push(ScopeHeader)
+	}
+
+	var tHeaders []*TVarDec
+	for _, h := range p.Header {
+		tVar := te.analyzeVarDec(&h)
+		tHeaders = append(tHeaders, tVar)
+	}
+
+	var tArms []TPackedIfArm
+	for _, arm := range p.Arms {
+		var tCond TExpr
+		if arm.Cond != nil {
+			tCond = te.EvalExpr(arm.Cond)
+			if !tCond.ExprType().Equals(TypeBool) && tCond.ExprType() != TypeUnknown {
+				te.addDiag(SeverityError, arm.Cond.NodeSpan(), "type/condition-not-bool",
+					fmt.Sprintf("packed if arm condition must be boolean, got %q", tCond.ExprType().String()))
+			}
+		}
+		var tBody TStmt
+		if blk, ok := arm.Body.(loneast.Block); ok {
+			b := te.analyzeBlock(&blk, expectedRet)
+			tBody = &b
+		} else if pblk, ok := arm.Body.(*loneast.Block); ok {
+			b := te.analyzeBlock(pblk, expectedRet)
+			tBody = &b
+		} else {
+			tBody = te.analyzeStmt(arm.Body, expectedRet)
+		}
+		tArms = append(tArms, TPackedIfArm{
+			Cond:  tCond,
+			Body:  tBody,
+			Span_: arm.Span_,
+		})
+	}
+
+	if hasHeader {
+		te.stack.Pop()
+	}
+
+	return &TPackedIfStmt{
+		Header: tHeaders,
+		Arms:   tArms,
+		Span_:  p.Span_,
+	}
+}
+
+func (te *TypeEvaluator) analyzeWhileStmt(w *loneast.WhileStmt, expectedRet Type) *TWhileStmt {
+	tCond := te.EvalExpr(w.Cond)
+	tBody := te.analyzeBlock(&w.Body, expectedRet)
+	return &TWhileStmt{Cond: tCond, Body: tBody, Span_: w.Span_}
+}
+
+// analyzeLoopStmt handles infinite loops and post-condition loops: loop { ... } while: [cond]
+func (te *TypeEvaluator) analyzeLoopStmt(l *loneast.LoopStmt, expectedRet Type) *TLoopStmt {
+	te.stack.Push(ScopeLoop)
+	defer te.stack.Pop()
+
+	var stmts []TStmt
+	for _, s := range l.Body.Stmts {
+		tStmt := te.analyzeStmt(s, expectedRet)
+		if tStmt != nil {
+			stmts = append(stmts, tStmt)
+		}
+	}
+	tBody := TBlock{Stmts: stmts, Typ: TypeVoid, Span_: l.Body.Span_}
+
+	var tWhileCond TExpr
+	if l.WhileCond != nil {
+		// Post-condition has access to loop-scoped variables!
+		tWhileCond = te.EvalExpr(l.WhileCond)
+		if !tWhileCond.ExprType().Equals(TypeBool) && tWhileCond.ExprType() != TypeUnknown {
+			te.addDiag(SeverityError, l.WhileCond.NodeSpan(), "type/condition-not-bool",
+				fmt.Sprintf("post-condition loop condition must be boolean, got %q", tWhileCond.ExprType().String()))
+		}
+	}
+
+	return &TLoopStmt{
+		Body:      tBody,
+		WhileCond: tWhileCond,
+		Span_:     l.Span_,
+	}
+}
+
+func (te *TypeEvaluator) analyzeForStmt(f *loneast.ForStmt, expectedRet Type) *TForStmt {
+	tIter := te.EvalExpr(f.Iter)
+
+	te.stack.Push(ScopeBlock)
+	defer te.stack.Pop()
+
+	elemType := Type(TypeI32) // default fallback
+	if lt, ok := tIter.ExprType().(*ListType); ok {
+		elemType = lt.Elem
+	}
+	_ = te.stack.Define(&Symbol{Name: f.VarName, Kind: SymbolVar, Type: elemType, IsMutable: false})
+
+	var stmts []TStmt
+	for _, s := range f.Body.Stmts {
+		tStmt := te.analyzeStmt(s, expectedRet)
+		if tStmt != nil {
+			stmts = append(stmts, tStmt)
+		}
+	}
+	tBody := TBlock{Stmts: stmts, Typ: TypeVoid, Span_: f.Body.Span_}
+
+	return &TForStmt{
+		VarName: f.VarName,
+		Iter:    tIter,
+		Body:    tBody,
+		Span_:   f.Span_,
+	}
+}
+
+func (te *TypeEvaluator) analyzeLabelDec(l *loneast.LabelDec, expectedRet Type) *TLabelDec {
+	body := te.analyzeBlock(&l.Body, expectedRet)
+	return &TLabelDec{
+		Name:  l.Name,
+		Body:  body,
+		Typ:   body.Typ,
+		Span_: l.Span_,
+	}
+}
+
+// =====================
+// EXPRESSION EVALUATION
+// =====================
+
+func (te *TypeEvaluator) EvalExpr(e loneast.Expr) TExpr {
+	if e == nil {
+		return nil
+	}
+
+	switch expr := e.(type) {
+	case loneast.Literal:
+		return te.evalLiteral(expr)
+
+	case loneast.ListLiteral:
+		return te.evalListLiteral(expr)
+
+	case loneast.ObjectLiteral:
+		return te.evalObjectLiteral(expr)
+
+	case loneast.NameRef:
+		sym := te.stack.Lookup(expr.Name)
+		if sym != nil {
+			return &TVarRefExpr{Name: expr.Name, Typ: sym.Type, Span_: expr.Span_}
+		}
+		if et, ok := te.enums[expr.Name]; ok {
+			return &TVarRefExpr{Name: expr.Name, Typ: et, Span_: expr.Span_}
+		}
+		if st, ok := te.structs[expr.Name]; ok {
+			return &TVarRefExpr{Name: expr.Name, Typ: st, Span_: expr.Span_}
+		}
+		if tr, ok := te.traits[expr.Name]; ok {
+			return &TVarRefExpr{Name: expr.Name, Typ: tr, Span_: expr.Span_}
+		}
+		if _, ok := te.genericTypes[expr.Name]; ok {
+			return &TVarRefExpr{Name: expr.Name, Typ: TypeUnknown, Span_: expr.Span_}
+		}
+		if _, ok := te.genericFns[expr.Name]; ok {
+			return &TVarRefExpr{Name: expr.Name, Typ: TypeUnknown, Span_: expr.Span_}
+		}
+		te.addDiag(SeverityError, expr.Span_, "type/undefined-identifier",
+			fmt.Sprintf("undefined identifier %q", expr.Name))
+		return &TVarRefExpr{Name: expr.Name, Typ: TypeUnknown, Span_: expr.Span_}
+
+	case loneast.BinaryExpr:
+		return te.evalBinaryExpr(expr)
+
+	case loneast.UnaryExpr:
+		return te.evalUnaryExpr(expr)
+
+	case loneast.CastExpr:
+		return te.evalCastExpr(expr)
+
+	case loneast.IsExpr:
+		return te.evalIsExpr(expr)
+
+	case loneast.PostFixExpr:
+		return te.evalPostfixExpr(expr)
+
+	case loneast.LabelDec:
+		return te.analyzeLabelDec(&expr, TypeUnknown)
+	case *loneast.LabelDec:
+		return te.analyzeLabelDec(expr, TypeUnknown)
+
+	case loneast.MatchExpr:
+		return te.evalMatchExpr(expr)
+	case *loneast.MatchExpr:
+		return te.evalMatchExpr(*expr)
+
+	case loneast.MustExpr:
+		return te.evalMustExpr(expr)
+	case *loneast.MustExpr:
+		return te.evalMustExpr(*expr)
+
+	case loneast.TryExpr:
+		return te.evalTryExpr(expr)
+	case *loneast.TryExpr:
+		return te.evalTryExpr(*expr)
+
+	case loneast.TupleExpr:
+		return te.evalTupleExpr(expr)
+	case *loneast.TupleExpr:
+		return te.evalTupleExpr(*expr)
+
+	case loneast.AnonFnExpr:
+		return te.evalAnonFnExpr(expr)
+	case *loneast.AnonFnExpr:
+		return te.evalAnonFnExpr(*expr)
+
+	case loneast.InterpolatedStringExpr:
+		return te.evalInterpolatedStringExpr(expr)
+	case *loneast.InterpolatedStringExpr:
+		return te.evalInterpolatedStringExpr(*expr)
+
 	default:
-		return false
+		return nil
 	}
 }
 
-func (te *TypeEvaluator) isReadOnlyTarget(e TExpr) bool {
-	switch u := e.(type) {
+func (te *TypeEvaluator) evalTupleExpr(t loneast.TupleExpr) TExpr {
+	var elements []TExpr
+	var elementTypes []Type
+	for _, elem := range t.Elements {
+		telem := te.EvalExpr(elem)
+		if telem != nil {
+			elements = append(elements, telem)
+			elementTypes = append(elementTypes, telem.ExprType())
+		} else {
+			elementTypes = append(elementTypes, TypeUnknown)
+		}
+	}
+	tupType := NewTupleType(elementTypes)
+	return &TTupleExpr{
+		Elements: elements,
+		Typ:      tupType,
+		Span_:    t.Span_,
+	}
+}
+
+func (te *TypeEvaluator) evalAnonFnExpr(a loneast.AnonFnExpr) TExpr {
+	te.stack.Push(ScopeFunction)
+	defer te.stack.Pop()
+
+	var fnParams []FnParamInfo
+	var tParams []*TFnParam
+	for _, p := range a.Params {
+		pType := te.resolveType(p.Type)
+		fnParams = append(fnParams, FnParamInfo{Name: p.Name, Type: pType})
+		sym := &Symbol{Name: p.Name, Kind: SymbolVar, Type: pType, IsMutable: false}
+		_ = te.stack.Define(sym)
+		tParams = append(tParams, &TFnParam{Name: p.Name, Type: pType, Span_: p.Span_})
+	}
+
+	retType := Type(TypeVoid)
+	if a.ReturnType != nil {
+		retType = te.resolveType(*a.ReturnType)
+	}
+
+	body := te.analyzeBlock(&a.Body, retType)
+	te.checkClosureCaptures(&body, a.Span_)
+
+	fnType := &FnType{Params: fnParams, Return: retType}
+	anonName := fmt.Sprintf("anon_fn_%d", len(te.extraDecls)+1)
+	anonExpr := &TAnonFnExpr{
+		Name:       anonName,
+		Params:     tParams,
+		ReturnType: retType,
+		Body:       &body,
+		Typ:        fnType,
+		Span_:      a.Span_,
+	}
+
+	// Register generated function in extraDecls
+	fnDec := &TFnDec{
+		Name:       anonName,
+		Params:     make([]TFnParam, len(tParams)),
+		ReturnType: retType,
+		Body:       body,
+		Span_:      a.Span_,
+	}
+	for i, tp := range tParams {
+		fnDec.Params[i] = *tp
+	}
+	te.extraDecls = append(te.extraDecls, fnDec)
+
+	return anonExpr
+}
+
+func (te *TypeEvaluator) checkClosureCaptures(block *TBlock, closureSpan loneast.Span) {
+	for _, stmt := range block.Stmts {
+		te.walkStmtForClosureCaptures(stmt, closureSpan)
+	}
+}
+
+func (te *TypeEvaluator) walkStmtForClosureCaptures(stmt TStmt, closureSpan loneast.Span) {
+	if stmt == nil {
+		return
+	}
+	switch s := stmt.(type) {
+	case *TVarDec:
+		if s.Value != nil {
+			te.walkExprForClosureCaptures(s.Value, closureSpan)
+		}
+	case *TAssignStmt:
+		te.walkExprForClosureCaptures(s.Target, closureSpan)
+		te.walkExprForClosureCaptures(s.Value, closureSpan)
+	case *TReturnStmt:
+		if s.Value != nil {
+			te.walkExprForClosureCaptures(s.Value, closureSpan)
+		}
+	case *TDropStmt:
+		te.walkExprForClosureCaptures(s.Expr, closureSpan)
+	case TExpr:
+		te.walkExprForClosureCaptures(s, closureSpan)
+	}
+}
+
+func (te *TypeEvaluator) walkExprForClosureCaptures(expr TExpr, closureSpan loneast.Span) {
+	if expr == nil {
+		return
+	}
+	switch e := expr.(type) {
 	case *TUnaryExpr:
-		if u.Op == ir.UNARY_OP_DEREF {
-			if pt, ok := u.Expr.ExprType().(*PtrType); ok && pt.ReadOnly {
-				return true
+		if e.Op == loneast.UNARY_OP_REF || e.Op == loneast.UNARY_OP_RAW_REF {
+			if vref, ok := e.Expr.(*TVarRefExpr); ok {
+				sym := te.stack.Lookup(vref.Name)
+				if sym != nil && te.stack.LookupLocal(vref.Name) == nil {
+					te.addDiag(SeverityError, e.Span_, "closure/escaping-reference-capture",
+						fmt.Sprintf("closure captures local stack variable %q by reference; escaping closures must capture by value or use #alloc", vref.Name))
+				}
 			}
-			if rt, ok := u.Expr.ExprType().(*RefType); ok && rt.ReadOnly {
-				return true
-			}
 		}
-	case *TMemberExpr:
-		if pt, ok := u.Base.ExprType().(*PtrType); ok && pt.ReadOnly {
+		te.walkExprForClosureCaptures(e.Expr, closureSpan)
+	case *TBinaryExpr:
+		te.walkExprForClosureCaptures(e.Left, closureSpan)
+		te.walkExprForClosureCaptures(e.Right, closureSpan)
+	case *TCallExpr:
+		te.walkExprForClosureCaptures(e.Callee, closureSpan)
+		for _, arg := range e.Args {
+			te.walkExprForClosureCaptures(arg, closureSpan)
+		}
+	case *TMemberAccessExpr:
+		te.walkExprForClosureCaptures(e.Base, closureSpan)
+	case *TTupleExpr:
+		for _, elem := range e.Elements {
+			te.walkExprForClosureCaptures(elem, closureSpan)
+		}
+	case *TInterpolatedStringExpr:
+		for _, part := range e.Parts {
+			te.walkExprForClosureCaptures(part, closureSpan)
+		}
+	}
+}
+
+func (te *TypeEvaluator) isDisplayable(t Type) bool {
+	if t == nil || t == TypeUnknown {
+		return true
+	}
+	if refT, ok := t.(*RefType); ok {
+		t = refT.Elem
+	}
+	// Primitives
+	if t == TypeStr || t == TypeI32 || t == TypeI64 || t == TypeU32 || t == TypeU64 ||
+		t == TypeF32 || t == TypeF64 || t == TypeBool || t == TypeChar {
+		return true
+	}
+	if _, ok := t.(*PtrType); ok {
+		return true
+	}
+	// Check TrDisplay trait implementation
+	if te.traitImpls["TrDisplay"] != nil {
+		if te.traitImpls["TrDisplay"][t.String()] != nil {
 			return true
 		}
-		if rt, ok := u.Base.ExprType().(*RefType); ok && rt.ReadOnly {
-			return true
-		}
-		return te.isReadOnlyTarget(u.Base)
-	case *TIndexExpr:
-		if pt, ok := u.Base.ExprType().(*PtrType); ok && pt.ReadOnly {
-			return true
-		}
-		if u.Base.ExprType().Equals(TypeStr) {
-			return true // string literals/values are immutable through indexing
-		}
-		return te.isReadOnlyTarget(u.Base)
 	}
 	return false
 }
 
-func (te *TypeEvaluator) markAddressTaken(e TExpr) {
-	switch v := e.(type) {
-	case *TVarRefExpr:
-		sym := te.stack.Resolve(v.Name)
-		if sym != nil {
-			sym.AddressTaken = true
-			switch decl := sym.DeclNode.(type) {
-			case *TVarDec:
-				decl.AddressTaken = true
-			case *TFnParam:
-				decl.AddressTaken = true
-			}
+func (te *TypeEvaluator) evalInterpolatedStringExpr(s loneast.InterpolatedStringExpr) TExpr {
+	var parts []TExpr
+	for _, part := range s.Parts {
+		tpart := te.EvalExpr(part)
+		if tpart == nil {
+			continue
 		}
-	case *TMemberExpr:
-		te.markAddressTaken(v.Base)
-	case *TIndexExpr:
-		if _, isList := v.Base.ExprType().(*ListType); isList {
-			te.markAddressTaken(v.Base)
+		parts = append(parts, tpart)
+
+		pt := tpart.ExprType()
+		if !te.isDisplayable(pt) {
+			te.addDiag(SeverityError, part.NodeSpan(), "type/missing-trait-impl",
+				fmt.Sprintf("type %q does not implement trait \"TrDisplay\"", pt.String()))
 		}
+	}
+
+	return &TInterpolatedStringExpr{
+		Parts: parts,
+		Typ:   TypeStr,
+		Span_: s.Span_,
 	}
 }
 
-func (te *TypeEvaluator) analyzeReturnStmt(ret *ir.ReturnStmt, expectedReturn Type, hasReturn *bool) *TReturnStmt {
-	if hasReturn != nil {
-		*hasReturn = true
-	}
-
-	var tVal TExpr
-	var actualType Type = TypeVoid
-	if ret.Value != nil {
-		tVal = te.EvalExpr(ret.Value)
-		actualType = tVal.ExprType()
-	}
-
-	if expectedReturn != nil && expectedReturn != TypeInfer && expectedReturn != TypeUnknown {
-		if !actualType.AssignableTo(expectedReturn) {
-			te.addDiag(SeverityError, ret.Pos, "type/return-mismatch",
-				fmt.Sprintf("expected return type %q, got %q", expectedReturn.String(), actualType.String()))
-		} else if st, ok := expectedReturn.(*StructType); ok {
-			if objExpr, ok := tVal.(*TObjectExpr); ok {
-				tVal = &TStructLitExpr{
-					StructType: st,
-					Fields:     objExpr.Fields,
-					Pos_:       objExpr.Pos_,
-				}
-			}
-		}
-	}
-
-	return &TReturnStmt{
-		Value: tVal,
-		Pos_:  ret.Pos,
-	}
-}
-
-// EvalExpr evaluates an ir.Expr and returns its typed counterpart TExpr with concrete Type.
-func (te *TypeEvaluator) EvalExpr(raw ir.Expr) TExpr {
-	if raw == nil {
-		return &TLiteralExpr{Kind: ir.LITERAL_UNINITIALIZED, Typ: TypeUnknown}
-	}
-
-	switch e := raw.(type) {
-	case ir.Literal:
-		return te.evalLiteral(&e)
-	case *ir.Literal:
-		return te.evalLiteral(e)
-
-	case ir.NameRef:
-		return te.evalNameRef(&e)
-	case *ir.NameRef:
-		return te.evalNameRef(e)
-
-	case ir.BinaryExpr:
-		return te.evalBinaryExpr(&e)
-	case *ir.BinaryExpr:
-		return te.evalBinaryExpr(e)
-
-	case ir.UnaryExpr:
-		return te.evalUnaryExpr(&e)
-	case *ir.UnaryExpr:
-		return te.evalUnaryExpr(e)
-
-	case ir.PostFixExpr:
-		return te.evalPostFixExpr(&e)
-	case *ir.PostFixExpr:
-		return te.evalPostFixExpr(e)
-
-	case ir.ObjectLiteral:
-		return te.evalObjectLiteral(&e)
-	case *ir.ObjectLiteral:
-		return te.evalObjectLiteral(e)
-
-	case ir.ListLiteral:
-		return te.evalListLiteral(&e)
-	case *ir.ListLiteral:
-		return te.evalListLiteral(e)
-
-	case ir.DropStmt:
-		inner := te.EvalExpr(e.Expr)
-		return &TDropStmt{Expr: inner, Pos_: e.Pos}
-	case *ir.DropStmt:
-		inner := te.EvalExpr(e.Expr)
-		return &TDropStmt{Expr: inner, Pos_: e.Pos}
-
-	case ir.LabelDec:
-		tBody := te.analyzeBlock(&e.Body, nil, nil)
-		return &TLabelDec{Name: e.Name, Body: tBody, Pos_: e.Pos, Typ: tBody.Typ}
-	case *ir.LabelDec:
-		tBody := te.analyzeBlock(&e.Body, nil, nil)
-		return &TLabelDec{Name: e.Name, Body: tBody, Pos_: e.Pos, Typ: tBody.Typ}
-
-	case ir.BreakStmt:
-		var tVal TExpr
-		if e.Value != nil {
-			tVal = te.EvalExpr(e.Value)
-		}
-		return &TBreakStmt{Label: e.Label, Value: tVal, Pos_: e.Pos}
-	case *ir.BreakStmt:
-		var tVal TExpr
-		if e.Value != nil {
-			tVal = te.EvalExpr(e.Value)
-		}
-		return &TBreakStmt{Label: e.Label, Value: tVal, Pos_: e.Pos}
-
-	case ir.IfStmt:
-		stmt := te.analyzeStmt(e, nil, nil)
-		if ifStmt, ok := stmt.(*TIfStmt); ok {
-			return ifStmt
-		}
-		return &TLiteralExpr{Kind: ir.LITERAL_UNINITIALIZED, Typ: TypeUnknown, Pos_: e.Pos}
-	case *ir.IfStmt:
-		stmt := te.analyzeStmt(*e, nil, nil)
-		if ifStmt, ok := stmt.(*TIfStmt); ok {
-			return ifStmt
-		}
-		return &TLiteralExpr{Kind: ir.LITERAL_UNINITIALIZED, Typ: TypeUnknown, Pos_: e.Pos}
-
-	case ir.WhileStmt:
-		stmt := te.analyzeStmt(e, nil, nil)
-		if ws, ok := stmt.(*TWhileStmt); ok {
-			return ws
-		}
-		return &TLiteralExpr{Kind: ir.LITERAL_UNINITIALIZED, Typ: TypeVoid, Pos_: e.Pos}
-	case *ir.WhileStmt:
-		stmt := te.analyzeStmt(*e, nil, nil)
-		if ws, ok := stmt.(*TWhileStmt); ok {
-			return ws
-		}
-		return &TLiteralExpr{Kind: ir.LITERAL_UNINITIALIZED, Typ: TypeVoid, Pos_: e.Pos}
-
-	case ir.DoWhileStmt:
-		stmt := te.analyzeStmt(e, nil, nil)
-		if ds, ok := stmt.(*TDoWhileStmt); ok {
-			return ds
-		}
-		return &TLiteralExpr{Kind: ir.LITERAL_UNINITIALIZED, Typ: TypeVoid, Pos_: e.Pos}
-	case *ir.DoWhileStmt:
-		stmt := te.analyzeStmt(*e, nil, nil)
-		if ds, ok := stmt.(*TDoWhileStmt); ok {
-			return ds
-		}
-		return &TLiteralExpr{Kind: ir.LITERAL_UNINITIALIZED, Typ: TypeVoid, Pos_: e.Pos}
-
-	case ir.ForStmt:
-		stmt := te.analyzeStmt(e, nil, nil)
-		if tb, ok := stmt.(*TBlock); ok {
-			return tb
-		}
-		return &TLiteralExpr{Kind: ir.LITERAL_UNINITIALIZED, Typ: TypeVoid, Pos_: e.Pos}
-	case *ir.ForStmt:
-		stmt := te.analyzeStmt(*e, nil, nil)
-		if tb, ok := stmt.(*TBlock); ok {
-			return tb
-		}
-		return &TLiteralExpr{Kind: ir.LITERAL_UNINITIALIZED, Typ: TypeVoid, Pos_: e.Pos}
-
-	case ir.IsExpr:
-		return te.evalIsExpr(&e)
-	case *ir.IsExpr:
-		return te.evalIsExpr(e)
-
+func (te *TypeEvaluator) evalLiteral(l loneast.Literal) TExpr {
+	switch l.Kind {
+	case loneast.LiteralInt:
+		return &TLiteralExpr{Kind: l.Kind, Value: l.Value, Typ: TypeI32, Span_: l.Span_}
+	case loneast.LiteralFloat:
+		return &TLiteralExpr{Kind: l.Kind, Value: l.Value, Typ: TypeF32, Span_: l.Span_}
+	case loneast.LiteralString:
+		return &TLiteralExpr{Kind: l.Kind, Value: l.Value, Typ: TypeStr, Span_: l.Span_}
+	case loneast.LiteralChar:
+		return &TLiteralExpr{Kind: l.Kind, Value: l.Value, Typ: TypeChar, Span_: l.Span_}
+	case loneast.LiteralBool:
+		return &TLiteralExpr{Kind: l.Kind, Value: l.Value, Typ: TypeBool, Span_: l.Span_}
+	case loneast.LiteralNone:
+		return &TLiteralExpr{Kind: l.Kind, Value: nil, Typ: TypeNone, Span_: l.Span_}
+	case loneast.LiteralUninitialized:
+		return &TLiteralExpr{Kind: l.Kind, Value: nil, Typ: TypeInfer, Span_: l.Span_}
 	default:
-		return &TLiteralExpr{Kind: ir.LITERAL_UNINITIALIZED, Typ: TypeUnknown}
+		return &TLiteralExpr{Kind: l.Kind, Value: l.Value, Typ: TypeUnknown, Span_: l.Span_}
 	}
 }
 
-func (te *TypeEvaluator) evalLiteral(lit *ir.Literal) *TLiteralExpr {
-	var typ Type = TypeUnknown
-	switch lit.Kind {
-	case ir.LITERAL_INT:
-		typ = TypeI32
-	case ir.LITERAL_FLOAT:
-		typ = TypeF64
-	case ir.LITERAL_STRING:
-		typ = TypeStr
-	case ir.LITERAL_BOOL:
-		typ = TypeBool
-	case ir.LITERAL_NONE:
-		typ = TypeNone
-	case ir.LITERAL_UNINITIALIZED, ir.LITERAL_DYNAMIC_SIZE:
-		typ = TypeUnknown
+func (te *TypeEvaluator) evalListLiteral(l loneast.ListLiteral) TExpr {
+	var elemType Type = TypeAny
+	var tElems []TExpr
+	for _, el := range l.Elements {
+		tElem := te.EvalExpr(el)
+		tElems = append(tElems, tElem)
+		if elemType == TypeAny {
+			elemType = tElem.ExprType()
+		}
 	}
-
 	return &TLiteralExpr{
-		Kind:  lit.Kind,
-		Value: lit.Value,
-		Typ:   typ,
-		Pos_:  lit.Pos,
+		Kind:  loneast.LiteralInt,
+		Value: tElems,
+		Typ:   &ListType{Elem: elemType, Fixed: true, Size: len(l.Elements)},
+		Span_: l.Span_,
 	}
 }
 
-func (te *TypeEvaluator) evalNameRef(nr *ir.NameRef) *TVarRefExpr {
-	if nr.Name == "Self" && te.currentSelf != nil {
-		return &TVarRefExpr{Name: nr.Name, Typ: te.currentSelf, Pos_: nr.Pos}
+func (te *TypeEvaluator) evalObjectLiteral(o loneast.ObjectLiteral) TExpr {
+	return &TLiteralExpr{
+		Kind:  loneast.LiteralInt,
+		Value: o.Fields,
+		Typ:   TypeAny,
+		Span_: o.Span_,
 	}
-	sym := te.stack.Resolve(nr.Name)
-	if sym == nil {
-		if IsIntrinsic(nr.Name) || nr.Name == "#refGrab" {
-			return &TVarRefExpr{Name: nr.Name, Typ: TypeAny, Pos_: nr.Pos}
-		}
-		te.addDiag(SeverityError, nr.Pos, "type/undefined-identifier",
-			fmt.Sprintf("undefined identifier %q", nr.Name))
-		return &TVarRefExpr{Name: nr.Name, Typ: TypeUnknown, Pos_: nr.Pos}
-	}
-	refName := nr.Name
-	if sym.MangledName != "" && sym.Kind == SymbolFn {
-		refName = sym.MangledName
-	}
-	return &TVarRefExpr{Name: refName, Typ: sym.Type, Pos_: nr.Pos}
 }
 
-func (te *TypeEvaluator) evalBinaryExpr(b *ir.BinaryExpr) *TBinaryExpr {
-	tLeft := te.EvalExpr(b.Left)
-	tRight := te.EvalExpr(b.Right)
+func (te *TypeEvaluator) evalBinaryExpr(b loneast.BinaryExpr) TExpr {
+	left := te.EvalExpr(b.Left)
+	right := te.EvalExpr(b.Right)
 
-	var resType Type = TypeUnknown
+	lType := left.ExprType()
+	rType := right.ExprType()
+
 	switch b.Op {
-	case ir.BINARY_OP_PLUS, ir.BINARY_OP_MINUS:
-		if pt, ok := tLeft.ExprType().(*PtrType); ok {
-			resType = pt
-		} else {
-			resType = tLeft.ExprType()
+	case "+", "-", "*", "/", "%", "^", "&", "|":
+		if lType.Equals(rType) {
+			return &TBinaryExpr{Op: b.Op, Left: left, Right: right, Typ: lType, Span_: b.Span_}
 		}
-	case ir.BINARY_OP_TIME, ir.BINARY_OP_DIV, ir.BINARY_OP_MOD:
-		resType = tLeft.ExprType()
-	case "<", "<=", ">", ">=":
-		if tLeft.ExprType() == TypeBool || tRight.ExprType() == TypeBool {
-			te.addDiag(SeverityError, b.Pos, "type/invalid-comparison",
-				fmt.Sprintf("cannot compare bool with comparison operator %q; comparison operators cannot be chained", b.Op))
-		}
-		resType = TypeBool
-	case ir.BINARY_OP_EQ, ir.BINARY_OP_NOT_EQ:
-		resType = TypeBool
-	case ir.BINARY_OP_AND, ir.BINARY_OP_OR, ir.BINARY_OP_XOR, ir.BINARY_OP_CARET, "&&", "||", "&", "|":
-		if tLeft.ExprType() == TypeBool {
-			resType = TypeBool
-		} else if tLeft.ExprType() != TypeUnknown {
-			resType = tLeft.ExprType()
-		} else if tRight.ExprType() == TypeBool {
-			resType = TypeBool
-		} else {
-			resType = tRight.ExprType()
-		}
-	default:
-		resType = tLeft.ExprType()
-	}
+		// In Lone, binary ops require identical types; no silent int-to-float promotion!
+		te.addDiag(SeverityError, b.Span_, "type/mismatch",
+			fmt.Sprintf("operator %s cannot be applied to mismatched types %q and %q (use explicit 'as' cast)",
+				b.Op, lType.String(), rType.String()))
+		return &TBinaryExpr{Op: b.Op, Left: left, Right: right, Typ: lType, Span_: b.Span_}
 
-	return &TBinaryExpr{
-		Op:    b.Op,
-		Left:  tLeft,
-		Right: tRight,
-		Typ:   resType,
-		Pos_:  b.Pos,
+	case "==", "!=", "<", "<=", ">", ">=":
+		if !lType.Equals(rType) && lType != TypeUnknown && rType != TypeUnknown {
+			te.addDiag(SeverityError, b.Span_, "type/comparison-mismatch",
+				fmt.Sprintf("cannot compare mismatched types %q and %q", lType.String(), rType.String()))
+		}
+		return &TBinaryExpr{Op: b.Op, Left: left, Right: right, Typ: TypeBool, Span_: b.Span_}
+
+	case "and", "or", "xor":
+		if !lType.Equals(TypeBool) || !rType.Equals(TypeBool) {
+			te.addDiag(SeverityError, b.Span_, "type/logical-not-bool",
+				fmt.Sprintf("logical %s operator requires boolean operands, got %q and %q",
+					b.Op, lType.String(), rType.String()))
+		}
+		return &TBinaryExpr{Op: b.Op, Left: left, Right: right, Typ: TypeBool, Span_: b.Span_}
+
+	default:
+		return &TBinaryExpr{Op: b.Op, Left: left, Right: right, Typ: lType, Span_: b.Span_}
 	}
 }
 
-func (te *TypeEvaluator) evalUnaryExpr(u *ir.UnaryExpr) *TUnaryExpr {
-	tExpr := te.EvalExpr(u.Expr)
-	var resType Type = tExpr.ExprType()
+func (te *TypeEvaluator) evalUnaryExpr(u loneast.UnaryExpr) TExpr {
+	sub := te.EvalExpr(u.Expr)
+	sType := sub.ExprType()
 
 	switch u.Op {
-	case ir.UNARY_OP_NOT:
-		resType = TypeBool
-	case ir.UNARY_OP_POSITIVE, ir.UNARY_OP_NEGATIVE:
-		resType = tExpr.ExprType()
-	case ir.UNARY_OP_RAW_REF:
-		if !te.isLValue(tExpr) {
-			te.addDiag(SeverityError, u.Pos, "type/invalid-address-of",
-				"cannot take raw pointer (&raw) of a temporary rvalue; bind it to a variable first")
-		}
-		te.markAddressTaken(tExpr)
-		resType = &PtrType{Elem: tExpr.ExprType()}
-	case ir.UNARY_OP_REF:
-		te.markAddressTaken(tExpr)
-		resType = &RefType{Elem: tExpr.ExprType()}
-	case ir.UNARY_OP_DEREF:
-		switch pt := tExpr.ExprType().(type) {
-		case *PtrType:
-			resType = pt.Elem
-		case *RefType:
-			resType = pt.Elem
-		default:
-			if tExpr.ExprType() != TypeUnknown && tExpr.ExprType() != TypeAny {
-				te.addDiag(SeverityError, u.Pos, "type/invalid-deref",
-					fmt.Sprintf("cannot dereference non-pointer/reference type %q", tExpr.ExprType().String()))
-			}
-			resType = TypeUnknown
-		}
-	}
+	case loneast.UNARY_OP_POSITIVE, loneast.UNARY_OP_NEGATIVE:
+		return &TUnaryExpr{Op: u.Op, Expr: sub, Typ: sType, Span_: u.Span_}
 
-	return &TUnaryExpr{
-		Op:   u.Op,
-		Expr: tExpr,
-		Typ:  resType,
-		Pos_: u.Pos,
+	case loneast.UNARY_OP_NOT:
+		return &TUnaryExpr{Op: u.Op, Expr: sub, Typ: TypeBool, Span_: u.Span_}
+
+	case loneast.UNARY_OP_DEREF: // *expr
+		if pt, ok := sType.(*PtrType); ok {
+			elemType := pt.Elem
+			if lt, ok := pt.Elem.(*ListType); ok {
+				elemType = lt.Elem
+			}
+			return &TUnaryExpr{Op: u.Op, Expr: sub, Typ: elemType, Span_: u.Span_}
+		}
+		if rt, ok := sType.(*RefType); ok {
+			elemType := rt.Elem
+			if lt, ok := rt.Elem.(*ListType); ok {
+				elemType = lt.Elem
+			}
+			return &TUnaryExpr{Op: u.Op, Expr: sub, Typ: elemType, Span_: u.Span_}
+		}
+		te.addDiag(SeverityError, u.Span_, "type/invalid-deref",
+			fmt.Sprintf("cannot dereference non-pointer, non-reference type %q", sType.String()))
+		return &TUnaryExpr{Op: u.Op, Expr: sub, Typ: TypeUnknown, Span_: u.Span_}
+
+	case loneast.UNARY_OP_REF: // &expr
+		isRo := false
+		if vref, ok := sub.(*TVarRefExpr); ok {
+			sym := te.stack.Lookup(vref.Name)
+			if sym != nil {
+				sym.AddressTaken = true
+				if tDec, ok := sym.Node.(*TVarDec); ok {
+					tDec.AddressTaken = true
+				}
+				if !sym.IsMutable {
+					isRo = true
+				}
+			}
+		} else if mem, ok := sub.(*TMemberAccessExpr); ok {
+			if st, ok := mem.Base.ExprType().(*StructType); ok {
+				if fInfo, exists := st.Field(mem.Field); exists {
+					if fInfo.IsReadOnly {
+						isRo = true
+					}
+					if fInfo.IsRoPub {
+						if te.currentSelfType == nil || !te.currentSelfType.Equals(st) {
+							isRo = true
+						}
+					}
+				}
+			}
+			if vref, ok := mem.Base.(*TVarRefExpr); ok {
+				sym := te.stack.Lookup(vref.Name)
+				if sym != nil && !sym.IsMutable {
+					isRo = true
+				}
+			}
+		}
+		return &TUnaryExpr{Op: u.Op, Expr: sub, Typ: &RefType{Elem: sType, ReadOnly: isRo}, Span_: u.Span_}
+
+	case loneast.UNARY_OP_RAW_REF: // &raw expr
+		isRo := false
+		if vref, ok := sub.(*TVarRefExpr); ok {
+			sym := te.stack.Lookup(vref.Name)
+			if sym != nil {
+				sym.AddressTaken = true
+				if tDec, ok := sym.Node.(*TVarDec); ok {
+					tDec.AddressTaken = true
+				}
+				if !sym.IsMutable {
+					isRo = true
+				}
+			}
+		} else if mem, ok := sub.(*TMemberAccessExpr); ok {
+			if st, ok := mem.Base.ExprType().(*StructType); ok {
+				if fInfo, exists := st.Field(mem.Field); exists {
+					if fInfo.IsReadOnly {
+						isRo = true
+					}
+					if fInfo.IsRoPub {
+						if te.currentSelfType == nil || !te.currentSelfType.Equals(st) {
+							isRo = true
+						}
+					}
+				}
+			}
+			if vref, ok := mem.Base.(*TVarRefExpr); ok {
+				sym := te.stack.Lookup(vref.Name)
+				if sym != nil && !sym.IsMutable {
+					isRo = true
+				}
+			}
+		}
+		return &TUnaryExpr{Op: u.Op, Expr: sub, Typ: &PtrType{Elem: sType, ReadOnly: isRo}, Span_: u.Span_}
+
+	default:
+		return &TUnaryExpr{Op: u.Op, Expr: sub, Typ: sType, Span_: u.Span_}
 	}
 }
 
-func (te *TypeEvaluator) evalPostFixExpr(pf *ir.PostFixExpr) TExpr {
-	tBase := te.EvalExpr(pf.Base)
+// evalCastExpr validates explicit type casts: expr as TargetType
+func (te *TypeEvaluator) evalCastExpr(c loneast.CastExpr) TExpr {
+	sub := te.EvalExpr(c.Expr)
+	targetType := te.resolveType(c.TargetType)
+	srcType := sub.ExprType()
 
-	if len(pf.Suffix) == 0 {
-		return tBase
+	// Validation rules for explicit casts
+	isSrcNum := IsIntegerType(srcType) || IsFloatType(srcType)
+	isDstNum := IsIntegerType(targetType) || IsFloatType(targetType)
+
+	if isSrcNum && isDstNum {
+		// Valid numeric cast: int to float, float to int, widening, narrowing
+		return &TCastExpr{Expr: sub, TargetType: targetType, Span_: c.Span_}
 	}
 
-	var curExpr TExpr = tBase
-	var boundReceiver TExpr
+	// Pointer casts: ptr<T> as ptr<U>
+	_, isSrcPtr := srcType.(*PtrType)
+	_, isDstPtr := targetType.(*PtrType)
+	if isSrcPtr && isDstPtr {
+		return &TCastExpr{Expr: sub, TargetType: targetType, Span_: c.Span_}
+	}
 
-	for _, s := range pf.Suffix {
-		switch suf := s.(type) {
-		case ir.SuffixCall:
-			var args []TExpr
-			for _, a := range suf.Args {
-				args = append(args, te.EvalExpr(a))
+	// Ref to Ptr cast: ref<T> as ptr<T>
+	_, isSrcRef := srcType.(*RefType)
+	if isSrcRef && isDstPtr {
+		return &TCastExpr{Expr: sub, TargetType: targetType, Span_: c.Span_}
+	}
+
+	// Integer <-> Pointer casts (e.g. #alloc(64) as ptr<[]u8> or addr as ptr<T>)
+	isSrcInt := srcType == TypeI32 || srcType == TypeU32 || srcType == TypeI64 || srcType == TypeU64
+	isDstInt := targetType == TypeI32 || targetType == TypeU32 || targetType == TypeI64 || targetType == TypeU64
+	if (isSrcInt && isDstPtr) || (isSrcPtr && isDstInt) {
+		return &TCastExpr{Expr: sub, TargetType: targetType, Span_: c.Span_}
+	}
+
+	// String <-> Pointer / Integer casts (e.g. buf as str or str as ptr<[]u8>)
+	if (srcType == TypeStr && (isDstPtr || isDstInt)) || (targetType == TypeStr && (isSrcPtr || isSrcInt)) {
+		return &TCastExpr{Expr: sub, TargetType: targetType, Span_: c.Span_}
+	}
+
+	te.addDiag(SeverityError, c.Span_, "type/invalid-cast",
+		fmt.Sprintf("invalid explicit cast from type %q to %q", srcType.String(), targetType.String()))
+	return &TCastExpr{Expr: sub, TargetType: targetType, Span_: c.Span_}
+}
+
+func (te *TypeEvaluator) evalIsExpr(i loneast.IsExpr) TExpr {
+	sub := te.EvalExpr(i.Expr)
+
+	if tb, ok := i.TargetType.Value.(*loneast.TypeBase); ok {
+		// 1. Explicit variant path: s is Shape::Circle or s is Option::Some
+		if tb.Variant != "" {
+			var et *EnumType
+			if e, ok := te.enums[tb.Name]; ok {
+				et = e
+			} else if subEt, ok := sub.ExprType().(*EnumType); ok && (subEt.Name == tb.Name || strings.HasPrefix(subEt.Name, tb.Name+"<")) {
+				et = subEt
+			} else if tmpl, ok := te.genericTypes[tb.Name]; ok {
+				if subEt, ok := sub.ExprType().(*EnumType); ok && strings.HasPrefix(subEt.Name, tmpl.Name+"<") {
+					et = subEt
+				}
+			}
+			if et != nil {
+				if vInfo, found := et.Variant(tb.Variant); found {
+					return &TIsExpr{
+						Expr:          sub,
+						TargetType:    et,
+						TargetVariant: vInfo,
+						Negated:       i.Negated,
+						Span_:         i.Span_,
+					}
+				}
+				te.addDiag(SeverityError, i.TargetType.NodeSpan(), "type/undefined-variant",
+					fmt.Sprintf("enum %q has no variant %q", tb.Name, tb.Variant))
+			}
+		} else {
+			// 2. Short variant name: s is Circle
+			if et, ok := sub.ExprType().(*EnumType); ok {
+				if vInfo, found := et.Variant(tb.Name); found {
+					return &TIsExpr{
+						Expr:          sub,
+						TargetType:    et,
+						TargetVariant: vInfo,
+						Negated:       i.Negated,
+						Span_:         i.Span_,
+					}
+				}
+			}
+		}
+	}
+
+	targetType := te.resolveType(i.TargetType)
+	return &TIsExpr{Expr: sub, TargetType: targetType, Negated: i.Negated, Span_: i.Span_}
+}
+
+func (te *TypeEvaluator) evalPostfixExpr(p loneast.PostFixExpr) TExpr {
+	curr := te.EvalExpr(p.Base)
+
+	for _, s := range p.Suffix {
+		switch suff := s.(type) {
+		case loneast.SuffixMemberAccess:
+			if tup, ok := curr.ExprType().(*TupleType); ok {
+				idx, err := strconv.Atoi(suff.Name)
+				if err != nil || idx < 0 || idx >= len(tup.Elements) {
+					te.addDiag(SeverityError, suff.Span_, "type/tuple-index-out-of-bounds",
+						fmt.Sprintf("tuple index %s is out of bounds for tuple %s", suff.Name, tup.String()))
+					curr = &TMemberAccessExpr{Base: curr, Field: suff.Name, Typ: TypeUnknown, Span_: suff.Span_}
+				} else {
+					curr = &TMemberAccessExpr{
+						Base:   curr,
+						Field:  suff.Name,
+						Offset: tup.Offsets[idx],
+						Typ:    tup.Elements[idx],
+						Span_:  suff.Span_,
+					}
+				}
+				break
 			}
 
-			// Special intrinsic #refGrab(r) -> dereferences ref<T>
-			if baseRef, ok := curExpr.(*TVarRefExpr); ok && baseRef.Name == "#refGrab" && len(args) == 1 {
-				var elemType Type = TypeUnknown
-				if rt, ok := args[0].ExprType().(*RefType); ok {
-					elemType = rt.Elem
-				} else if pt, ok := args[0].ExprType().(*PtrType); ok {
-					elemType = pt.Elem
-				} else {
-					te.addDiag(SeverityError, suf.Pos, "type/call-arg-type",
-						fmt.Sprintf("#refGrab expects ref<T>, got %q", args[0].ExprType().String()))
+			var targetStruct *StructType
+			if st, ok := curr.ExprType().(*StructType); ok {
+				targetStruct = st
+			} else if refT, ok := curr.ExprType().(*RefType); ok {
+				if st, ok := refT.Elem.(*StructType); ok {
+					targetStruct = st
 				}
-				curExpr = &TUnaryExpr{
-					Op:   ir.UNARY_OP_DEREF,
-					Expr: args[0],
-					Typ:  elemType,
-					Pos_: suf.Pos,
+			} else if ptrT, ok := curr.ExprType().(*PtrType); ok {
+				if st, ok := ptrT.Elem.(*StructType); ok {
+					targetStruct = st
 				}
-				continue
+			} else if vref, ok := curr.(*TVarRefExpr); ok {
+				if st, ok := te.structs[vref.Name]; ok {
+					targetStruct = st
+				}
 			}
 
-			var retType Type = TypeUnknown
-			baseType := curExpr.ExprType()
-			if fnType, ok := baseType.(*FnType); ok {
-				retType = fnType.ReturnType
-				if len(args) != len(fnType.Params) {
-					te.addDiag(SeverityError, suf.Pos, "type/call-arg-count",
-						fmt.Sprintf("function expects %d arguments, but got %d", len(fnType.Params), len(args)))
+			if targetStruct != nil {
+				if fInfo, exists := targetStruct.Field(suff.Name); exists {
+					if fInfo.IsPrivate {
+						isAllowed := false
+						if te.currentSelfType != nil && te.currentSelfType.Equals(targetStruct) {
+							isAllowed = true
+						}
+						if !isAllowed {
+							te.addDiag(SeverityError, suff.Span_, "type/private-field-access",
+								fmt.Sprintf("cannot access private field %q on struct %q outside its associated methods", suff.Name, targetStruct.Name))
+						}
+					}
+					curr = &TMemberAccessExpr{Base: curr, Field: suff.Name, Offset: fInfo.Offset, Typ: fInfo.Type, Span_: suff.Span_}
+				} else if mInfo, exists := targetStruct.Method(suff.Name); exists {
+					curr = &TMemberAccessExpr{Base: curr, Field: suff.Name, Typ: mInfo, Span_: suff.Span_}
 				} else {
-					for i, arg := range args {
-						paramType := fnType.Params[i].Type
-						if !arg.ExprType().AssignableTo(paramType) {
-							te.addDiag(SeverityError, arg.Pos(), "type/call-arg-type",
-								fmt.Sprintf("argument %d expects type %q, got %q", i+1, paramType.String(), arg.ExprType().String()))
-						} else if st, ok := paramType.(*StructType); ok {
-							if objExpr, ok := arg.(*TObjectExpr); ok {
-								args[i] = &TStructLitExpr{
-									StructType: st,
-									Fields:     objExpr.Fields,
-									Pos_:       objExpr.Pos_,
+					te.addDiag(SeverityError, suff.Span_, "type/undefined-field",
+						fmt.Sprintf("struct %q has no field or method %q", targetStruct.Name, suff.Name))
+					curr = &TMemberAccessExpr{Base: curr, Field: suff.Name, Typ: TypeUnknown, Span_: suff.Span_}
+				}
+			} else if mat, ok := curr.ExprType().(*MaterializedTraitType); ok {
+				if mInfo, exists := mat.Methods[suff.Name]; exists {
+					curr = &TMemberAccessExpr{Base: curr, Field: suff.Name, Typ: mInfo, Span_: suff.Span_}
+				} else {
+					te.addDiag(SeverityError, suff.Span_, "type/undefined-trait-method",
+						fmt.Sprintf("trait %q has no method %q", mat.Trait.Name, suff.Name))
+					curr = &TMemberAccessExpr{Base: curr, Field: suff.Name, Typ: TypeUnknown, Span_: suff.Span_}
+				}
+			} else if tr, ok := curr.ExprType().(*TraitType); ok {
+				if mInfo, exists := tr.Methods[suff.Name]; exists {
+					curr = &TMemberAccessExpr{Base: curr, Field: suff.Name, Typ: mInfo, Span_: suff.Span_}
+				} else {
+					te.addDiag(SeverityError, suff.Span_, "type/undefined-trait-method",
+						fmt.Sprintf("trait %q has no method %q", tr.Name, suff.Name))
+					curr = &TMemberAccessExpr{Base: curr, Field: suff.Name, Typ: TypeUnknown, Span_: suff.Span_}
+				}
+			} else {
+				curr = &TMemberAccessExpr{Base: curr, Field: suff.Name, Typ: TypeUnknown, Span_: suff.Span_}
+			}
+
+		case loneast.SuffixCall:
+			var tArgs []TExpr
+			for _, arg := range suff.Args {
+				tArgs = append(tArgs, te.EvalExpr(arg))
+			}
+			if vref, ok := curr.(*TVarRefExpr); ok {
+				if tmpl, ok := te.genericFns[vref.Name]; ok {
+					specialized := te.monomorphizeFn(tmpl, tArgs)
+					if specialized != nil {
+						var fnParams []FnParamInfo
+						for _, p := range specialized.Params {
+							fnParams = append(fnParams, FnParamInfo{Name: p.Name, Type: p.Type})
+						}
+						fnTyp := &FnType{Params: fnParams, Return: specialized.ReturnType}
+						curr = &TVarRefExpr{Name: specialized.Name, Typ: fnTyp, Span_: vref.Span_}
+					}
+				}
+			}
+			if enumConstr, ok := curr.(*TEnumConstructExpr); ok {
+				if enumConstr.Variant.Name == "Err" && len(tArgs) > 0 {
+					if te.currentFnReturn != nil {
+						if retEnum, ok := te.currentFnReturn.(*EnumType); ok {
+							if errV, ok := retEnum.Variant("Err"); ok && len(errV.Fields) > 0 && errV.Fields[0].Type == TypeInfer {
+								te.inferredErrors[te.currentFnName] = append(te.inferredErrors[te.currentFnName], tArgs[0].ExprType())
+							}
+						}
+					}
+				}
+				// If enum constructor has unknown/unspecified type parameters, infer from tArgs
+				baseEnumName := enumConstr.EnumType.Name
+				if idx := strings.Index(baseEnumName, "<"); idx != -1 {
+					baseEnumName = baseEnumName[:idx]
+				}
+				if tmpl, ok := te.genericTypes[baseEnumName]; ok && len(tArgs) > 0 {
+					if strings.Contains(enumConstr.EnumType.Name, "unknown") || strings.Contains(enumConstr.EnumType.Name, "any") {
+						var inferredArgs []loneast.TYPE_REF
+						for _, arg := range tArgs {
+							inferredArgs = append(inferredArgs, loneast.TYPE_REF{
+								Kind:  loneast.TYPE_BASE,
+								Value: &loneast.TypeBase{Name: arg.ExprType().String()},
+							})
+						}
+						concreteRes := te.instantiateGenericType(tmpl, inferredArgs)
+						if crEnum, ok := concreteRes.(*EnumType); ok {
+							enumConstr.EnumType = crEnum
+							if v, ok := crEnum.Variant(enumConstr.Variant.Name); ok {
+								enumConstr.Variant = v
+							}
+							enumConstr.Typ = crEnum
+						}
+					}
+				}
+				if len(tArgs) != len(enumConstr.Variant.Fields) {
+					te.addDiag(SeverityError, suff.Span_, "type/variant-arity-mismatch",
+						fmt.Sprintf("variant %q::%q expects %d arguments, got %d",
+							enumConstr.EnumType.Name, enumConstr.Variant.Name, len(enumConstr.Variant.Fields), len(tArgs)))
+				} else {
+					for i, arg := range tArgs {
+						expectedF := enumConstr.Variant.Fields[i]
+						if expectedF.Type != TypeInfer && !arg.ExprType().AssignableTo(expectedF.Type) {
+							te.addDiag(SeverityError, arg.Span(), "type/mismatch",
+								fmt.Sprintf("cannot pass argument of type %q to field %q of type %q",
+									arg.ExprType().String(), expectedF.Name, expectedF.Type.String()))
+						}
+					}
+				}
+				enumConstr.Args = tArgs
+				enumConstr.Span_ = loneast.Span{Start: enumConstr.Span_.Start, End: suff.Span_.End}
+				curr = enumConstr
+			} else {
+				retType := Type(TypeVoid)
+				if fnT, ok := curr.ExprType().(*FnType); ok {
+					retType = fnT.Return
+					if mem, isMem := curr.(*TMemberAccessExpr); isMem {
+						if len(fnT.Params) > 0 && fnT.Params[0].Name == "self" && len(tArgs) == len(fnT.Params)-1 {
+							selfParamType := fnT.Params[0].Type
+							baseType := mem.Base.ExprType()
+							var selfArg TExpr = mem.Base
+							if _, isRef := selfParamType.(*RefType); isRef {
+								if _, baseIsRef := baseType.(*RefType); !baseIsRef {
+									if _, baseIsPtr := baseType.(*PtrType); !baseIsPtr {
+										if vref, ok := mem.Base.(*TVarRefExpr); ok {
+											sym := te.stack.Lookup(vref.Name)
+											if sym != nil {
+												sym.AddressTaken = true
+												if tDec, ok := sym.Node.(*TVarDec); ok {
+													tDec.AddressTaken = true
+												}
+											}
+										}
+										selfArg = &TUnaryExpr{
+											Op:    loneast.UNARY_OP_REF,
+											Expr:  mem.Base,
+											Typ:   &RefType{Elem: baseType},
+											Span_: mem.Base.Span(),
+										}
+									}
+								}
+							} else if _, isPtr := selfParamType.(*PtrType); isPtr {
+								if _, baseIsPtr := baseType.(*PtrType); !baseIsPtr {
+									if _, baseIsRef := baseType.(*RefType); !baseIsRef {
+										if vref, ok := mem.Base.(*TVarRefExpr); ok {
+											sym := te.stack.Lookup(vref.Name)
+											if sym != nil {
+												sym.AddressTaken = true
+												if tDec, ok := sym.Node.(*TVarDec); ok {
+													tDec.AddressTaken = true
+												}
+											}
+										}
+										selfArg = &TUnaryExpr{
+											Op:    loneast.UNARY_OP_RAW_REF,
+											Expr:  mem.Base,
+											Typ:   &PtrType{Elem: baseType},
+											Span_: mem.Base.Span(),
+										}
+									}
+								}
+							}
+							tArgs = append([]TExpr{selfArg}, tArgs...)
+						}
+					}
+				}
+				curr = &TCallExpr{Callee: curr, Args: tArgs, Typ: retType, Span_: suff.Span_}
+			}
+
+		case loneast.SuffixAssociatedAccess:
+			var targetEnum *EnumType
+			if et, ok := curr.ExprType().(*EnumType); ok {
+				targetEnum = et
+			} else if vref, ok := curr.(*TVarRefExpr); ok {
+				if et, ok := te.enums[vref.Name]; ok {
+					targetEnum = et
+				} else if tmpl, ok := te.genericTypes[vref.Name]; ok {
+					if fnRetEnum, ok := te.currentFnReturn.(*EnumType); ok && strings.HasPrefix(fnRetEnum.Name, tmpl.Name+"<") {
+						targetEnum = fnRetEnum
+					} else {
+						if instantiated, ok := te.instantiateGenericType(tmpl, nil).(*EnumType); ok {
+							targetEnum = instantiated
+						}
+					}
+				}
+			}
+
+			if targetEnum != nil {
+				vInfo, ok := targetEnum.Variant(suff.Name)
+				if !ok {
+					te.addDiag(SeverityError, suff.Span_, "type/undefined-variant",
+						fmt.Sprintf("enum %q has no variant %q", targetEnum.Name, suff.Name))
+					curr = &TVarRefExpr{Name: suff.Name, Typ: TypeUnknown, Span_: suff.Span_}
+				} else {
+					curr = &TEnumConstructExpr{
+						EnumType: targetEnum,
+						Variant:  vInfo,
+						Args:     nil,
+						Typ:      targetEnum,
+						Span_:    loneast.Span{Start: curr.Span().Start, End: suff.Span_.End},
+					}
+				}
+			} else {
+				curr = &TVarRefExpr{Name: suff.Name, Typ: TypeUnknown, Span_: suff.Span_}
+			}
+
+		case loneast.SuffixCallTypeMake:
+			var targetStruct *StructType
+			if st, ok := curr.ExprType().(*StructType); ok {
+				targetStruct = st
+			} else if vref, ok := curr.(*TVarRefExpr); ok {
+				if st, ok := te.structs[vref.Name]; ok {
+					targetStruct = st
+				} else if tmpl, ok := te.genericTypes[vref.Name]; ok {
+					if fnRetSt, ok := te.currentFnReturn.(*StructType); ok && strings.HasPrefix(fnRetSt.Name, tmpl.Name+"<") {
+						targetStruct = fnRetSt
+					} else {
+						if instantiated, ok := te.instantiateGenericType(tmpl, nil).(*StructType); ok {
+							targetStruct = instantiated
+						}
+					}
+				}
+			}
+
+			if targetStruct != nil && targetStruct.HasPrivateFields() {
+				isAllowed := false
+				if te.currentSelfType != nil && te.currentSelfType.Equals(targetStruct) {
+					isAllowed = true
+				}
+				if !isAllowed {
+					te.addDiag(SeverityError, suff.Span_, "type/raw-construct-private-fields",
+						fmt.Sprintf("struct %q contains private field(s) and cannot be instantiated with raw aggregate syntax '::{ ... }'; use %s::(...) instead", targetStruct.Name, targetStruct.Name))
+				}
+			}
+
+			if targetStruct != nil {
+				fieldExprs := make(map[string]TExpr)
+				if objLit, ok := suff.Data.(loneast.ObjectLiteral); ok {
+					for _, f := range objLit.Fields {
+						fieldExprs[f.Name] = te.EvalExpr(f.Expr)
+					}
+				}
+				curr = &TStructConstructExpr{
+					StructType: targetStruct,
+					Fields:     fieldExprs,
+					Typ:        targetStruct,
+					Span_:      loneast.Span{Start: curr.Span().Start, End: suff.Span_.End},
+				}
+			} else {
+				curr = &TLiteralExpr{
+					Kind:  loneast.LiteralInt,
+					Value: suff.Data,
+					Typ:   TypeAny,
+					Span_: suff.Span_,
+				}
+			}
+
+		case loneast.SuffixConstructorCall:
+			var targetStruct *StructType
+			if st, ok := curr.ExprType().(*StructType); ok {
+				targetStruct = st
+			} else if vref, ok := curr.(*TVarRefExpr); ok {
+				if st, ok := te.structs[vref.Name]; ok {
+					targetStruct = st
+				} else if tmpl, ok := te.genericTypes[vref.Name]; ok {
+					if fnRetSt, ok := te.currentFnReturn.(*StructType); ok && strings.HasPrefix(fnRetSt.Name, tmpl.Name+"<") {
+						targetStruct = fnRetSt
+					} else {
+						if instantiated, ok := te.instantiateGenericType(tmpl, nil).(*StructType); ok {
+							targetStruct = instantiated
+						}
+					}
+				}
+			}
+
+			if targetStruct == nil {
+				te.addDiag(SeverityError, suff.Span_, "type/unresolved-constructor",
+					fmt.Sprintf("cannot invoke constructor on non-struct type %q", curr.ExprType().String()))
+				curr = &TCallExpr{Callee: curr, Args: nil, Typ: TypeUnknown, Span_: suff.Span_}
+			} else {
+				initMethod, hasInit := targetStruct.Method("__init__")
+				if !hasInit {
+					te.addDiag(SeverityError, suff.Span_, "type/unresolved-constructor",
+						fmt.Sprintf("struct %q does not define an '__init__' constructor; use raw aggregate %s::{ ... } instead", targetStruct.Name, targetStruct.Name))
+					curr = &TCallExpr{Callee: curr, Args: nil, Typ: targetStruct, Span_: suff.Span_}
+				} else {
+					var tArgs []TExpr
+					for _, arg := range suff.Args {
+						tArgs = append(tArgs, te.EvalExpr(arg))
+					}
+					if len(tArgs) != len(initMethod.Params) {
+						te.addDiag(SeverityError, suff.Span_, "type/call-arg-count",
+							fmt.Sprintf("constructor %s::(...) expects %d arguments, but got %d", targetStruct.Name, len(initMethod.Params), len(tArgs)))
+					} else {
+						for i, param := range initMethod.Params {
+							argTyp := tArgs[i].ExprType()
+							if !argTyp.AssignableTo(param.Type) && param.Type != TypeInfer && argTyp != TypeUnknown {
+								te.addDiag(SeverityError, tArgs[i].Span(), "type/call-arg-type",
+									fmt.Sprintf("cannot pass argument of type %q to parameter %q of type %q in constructor %s::(...)",
+										argTyp.String(), param.Name, param.Type.String(), targetStruct.Name))
+							}
+						}
+					}
+					callee := &TVarRefExpr{
+						Name:  targetStruct.Name + ".__init__",
+						Typ:   initMethod,
+						Span_: loneast.Span{Start: curr.Span().Start, End: suff.Span_.End},
+					}
+					curr = &TCallExpr{
+						Callee: callee,
+						Args:   tArgs,
+						Typ:    targetStruct,
+						Span_:  suff.Span_,
+					}
+				}
+			}
+
+		case loneast.SuffixIndex:
+			tIdx := te.EvalExpr(suff.Index)
+			elemType := Type(TypeUnknown)
+
+			// 1. Validate that index is an integer
+			if tIdx.ExprType() != nil && tIdx.ExprType() != TypeAny && tIdx.ExprType() != TypeInfer {
+				idxType := tIdx.ExprType()
+				if idxType != TypeI32 && idxType != TypeI64 && idxType != TypeU32 && idxType != TypeU64 && idxType != TypeI16 && idxType != TypeU16 && idxType != TypeI8 && idxType != TypeU8 {
+					te.addDiag(SeverityError, suff.Span_, "type/invalid-index-type",
+						fmt.Sprintf("buffer index must be an integer, got %q", idxType.String()))
+				}
+			}
+
+			// 2. Validate base type and bounds
+			if lt, ok := curr.ExprType().(*ListType); ok {
+				elemType = lt.Elem
+				if lt.Fixed {
+					if lit, ok := tIdx.(*TLiteralExpr); ok && lit.Kind == loneast.LiteralInt {
+						if v, ok := lit.Value.(int64); ok {
+							if int(v) < 0 || int(v) >= lt.Size {
+								te.addDiag(SeverityError, suff.Span_, "type/index-out-of-bounds",
+									fmt.Sprintf("index %d is out of bounds for array of size %d", v, lt.Size))
+							}
+						}
+					}
+				}
+			} else if pt, ok := curr.ExprType().(*PtrType); ok {
+				if lt, ok := pt.Elem.(*ListType); ok {
+					elemType = lt.Elem
+					if lt.Fixed {
+						// Fixed array pointer ptr<[N]T>
+						if lit, ok := tIdx.(*TLiteralExpr); ok && lit.Kind == loneast.LiteralInt {
+							if v, ok := lit.Value.(int64); ok {
+								if int(v) < 0 || int(v) >= lt.Size {
+									te.addDiag(SeverityError, suff.Span_, "type/index-out-of-bounds",
+										fmt.Sprintf("index %d is out of bounds for array pointer %q of size %d", v, pt.String(), lt.Size))
 								}
 							}
 						}
 					}
-				}
-			} else if baseRef, ok := curExpr.(*TVarRefExpr); ok && IsIntrinsic(baseRef.Name) {
-				retType = TypeVoid
-			} else if baseType == TypeUnknown || baseType == TypeAny {
-				retType = TypeAny
-			} else {
-				te.addDiag(SeverityError, suf.Pos, "type/not-callable",
-					fmt.Sprintf("expression of type %q is not callable", baseType.String()))
-			}
-
-			if boundReceiver != nil {
-				args = append([]TExpr{boundReceiver}, args...)
-				boundReceiver = nil
-			}
-
-			curExpr = &TCallExpr{
-				Callee: curExpr,
-				Args:   args,
-				Typ:    retType,
-				Pos_:   suf.Pos,
-			}
-
-		case ir.SuffixCallTypeMake:
-			st, ok := curExpr.ExprType().(*StructType)
-			if !ok {
-				te.addDiag(SeverityError, suf.Pos, "type/not-a-struct",
-					fmt.Sprintf("cannot construct non-struct type %q with ::{ ... }", curExpr.ExprType().String()))
-				curExpr = &TLiteralExpr{Kind: ir.LITERAL_UNINITIALIZED, Typ: TypeUnknown, Pos_: suf.Pos}
-				continue
-			}
-			objLit, ok := suf.Arg.(ir.ObjectLiteral)
-			if !ok {
-				te.addDiag(SeverityError, suf.Pos, "type/invalid-struct-init",
-					fmt.Sprintf("struct %q expects named field initialization ::{ .field: val }", st.Name))
-				curExpr = &TLiteralExpr{Kind: ir.LITERAL_UNINITIALIZED, Typ: st, Pos_: suf.Pos}
-				continue
-			}
-			provided := make(map[string]TExpr)
-			var tFields []TFieldAssign
-			for _, f := range objLit.Fields {
-				val := te.EvalExpr(f.Expr)
-				sf, exists := st.Field(f.Name)
-				if !exists {
-					te.addDiag(SeverityError, suf.Pos, "type/field-not-found",
-						fmt.Sprintf("struct %q has no field %q", st.Name, f.Name))
-				} else if !val.ExprType().AssignableTo(sf.Type) {
-					te.addDiag(SeverityError, val.Pos(), "type/field-type-mismatch",
-						fmt.Sprintf("field %q of struct %q expects %q, got %q",
-							f.Name, st.Name, sf.Type.String(), val.ExprType().String()))
-				}
-				provided[f.Name] = val
-				tFields = append(tFields, TFieldAssign{Name: f.Name, Expr: val})
-			}
-			for _, sf := range st.Fields {
-				if _, ok := provided[sf.Name]; !ok {
-					te.addDiag(SeverityError, suf.Pos, "type/missing-struct-field",
-						fmt.Sprintf("missing initializer for field %q in struct %q", sf.Name, st.Name))
-				}
-			}
-			curExpr = &TStructLitExpr{
-				StructType: st,
-				Fields:     tFields,
-				Pos_:       suf.Pos,
-			}
-
-		case ir.SuffixCallTypeInit:
-			st, ok := curExpr.ExprType().(*StructType)
-			if !ok {
-				te.addDiag(SeverityError, suf.Pos, "type/not-a-struct",
-					fmt.Sprintf("cannot invoke ::(...) init constructor on %q", curExpr.ExprType().String()))
-				curExpr = &TLiteralExpr{Kind: ir.LITERAL_UNINITIALIZED, Typ: TypeUnknown, Pos_: suf.Pos}
-				continue
-			}
-			var args []TExpr
-			for _, a := range suf.Args {
-				args = append(args, te.EvalExpr(a))
-			}
-			mSym := te.lookupMethod(st.Name, "#init")
-			if mSym == nil {
-				mSym = te.lookupMethod(st.Name, "new")
-			}
-			if mSym == nil {
-				te.addDiag(SeverityError, suf.Pos, "type/missing-init",
-					fmt.Sprintf("struct %q does not define a #init or new constructor", st.Name))
-				curExpr = &TLiteralExpr{Kind: ir.LITERAL_UNINITIALIZED, Typ: st, Pos_: suf.Pos}
-				continue
-			}
-			fnType, _ := mSym.Type.(*FnType)
-			if fnType != nil && len(args) != len(fnType.Params) {
-				te.addDiag(SeverityError, suf.Pos, "type/call-arg-count",
-					fmt.Sprintf("constructor for %q expects %d arguments, got %d", st.Name, len(fnType.Params), len(args)))
-			} else if fnType != nil {
-				for i, arg := range args {
-					if !arg.ExprType().AssignableTo(fnType.Params[i].Type) {
-						te.addDiag(SeverityError, arg.Pos(), "type/call-arg-type",
-							fmt.Sprintf("argument %d expects %q, got %q", i+1, fnType.Params[i].Type.String(), arg.ExprType().String()))
-					}
-				}
-			}
-			retType := Type(st)
-			if fnType != nil && fnType.ReturnType != nil {
-				retType = fnType.ReturnType
-			}
-			curExpr = &TCallExpr{
-				Callee: &TVarRefExpr{Name: mSym.MangledName, Typ: mSym.Type, Pos_: suf.Pos},
-				Args:   args,
-				Typ:    retType,
-				Pos_:   suf.Pos,
-			}
-
-		case ir.SuffixAssociatedAccess:
-			if st, ok := curExpr.ExprType().(*StructType); ok {
-				mSym := te.lookupMethod(st.Name, suf.Name)
-				if mSym == nil {
-					te.addDiag(SeverityError, suf.Pos, "type/method-not-found",
-						fmt.Sprintf("associated function %q not found on struct %q", suf.Name, st.Name))
-					curExpr = &TVarRefExpr{Name: suf.Name, Typ: TypeUnknown, Pos_: suf.Pos}
-					continue
-				}
-				curExpr = &TVarRefExpr{Name: mSym.MangledName, Typ: mSym.Type, Pos_: suf.Pos}
-				continue
-			}
-			if modAlias, ok := curExpr.ExprType().(*ModuleAliasType); ok {
-				curExpr = te.resolveModuleMember(modAlias, suf.Name, suf.Pos)
-				continue
-			}
-			te.addDiag(SeverityError, suf.Pos, "type/invalid-associated-access",
-				fmt.Sprintf("cannot access ::%s on %q", suf.Name, curExpr.ExprType().String()))
-			curExpr = &TVarRefExpr{Name: suf.Name, Typ: TypeUnknown, Pos_: suf.Pos}
-
-		case ir.SuffixNamespaceAccess:
-			if modAlias, ok := curExpr.ExprType().(*ModuleAliasType); ok {
-				curExpr = te.resolveModuleMember(modAlias, suf.Name, suf.Pos)
-				continue
-			}
-			te.addDiag(SeverityError, suf.Pos, "type/invalid-namespace-access",
-				fmt.Sprintf("cannot access :%s on %q", suf.Name, curExpr.ExprType().String()))
-			curExpr = &TVarRefExpr{Name: suf.Name, Typ: TypeUnknown, Pos_: suf.Pos}
-
-		case ir.SuffixTraitMat:
-			traitType, ok := curExpr.ExprType().(*TraitType)
-			if !ok {
-				te.addDiag(SeverityError, suf.Pos, "type/not-a-trait",
-					fmt.Sprintf("cannot materialize non-trait %q", curExpr.ExprType().String()))
-				curExpr = &TLiteralExpr{Kind: ir.LITERAL_UNINITIALIZED, Typ: TypeUnknown, Pos_: suf.Pos}
-				continue
-			}
-			targetType := te.parseType(&suf.TargetType)
-			targetName := targetType.String()
-			if te.traitImpls[traitType.Name] == nil || te.traitImpls[traitType.Name][targetName] == nil {
-				te.addDiag(SeverityError, suf.Pos, "type/missing-trait-impl",
-					fmt.Sprintf("type %q does not implement trait %q", targetName, traitType.Name))
-			}
-			curExpr = &TTraitMatExpr{
-				Trait:  traitType,
-				Target: targetType,
-				Typ:    &TraitMatType{Trait: traitType, Target: targetType},
-				Pos_:   suf.Pos,
-			}
-
-		case ir.SuffixMemberAccess:
-			boundReceiver = nil
-			baseType := curExpr.ExprType()
-
-			// 1. Module alias access: io.println
-			if modAlias, ok := baseType.(*ModuleAliasType); ok {
-				curExpr = te.resolveModuleMember(modAlias, suf.Name, suf.Pos)
-				continue
-			}
-
-			// 2. Materialized trait access: w.write
-			if mat, ok := baseType.(*TraitMatType); ok {
-				targetName := mat.Target.String()
-				if implMap := te.traitImpls[mat.Trait.Name]; implMap != nil {
-					if methods := implMap[targetName]; methods != nil {
-						if mSym, exists := methods[suf.Name]; exists {
-							curExpr = &TVarRefExpr{Name: mSym.MangledName, Typ: mSym.Type, Pos_: suf.Pos}
-							continue
-						}
-					}
-				}
-				te.addDiag(SeverityError, suf.Pos, "type/method-not-found",
-					fmt.Sprintf("method %q not found on materialized trait %q", suf.Name, mat.String()))
-				curExpr = &TVarRefExpr{Name: suf.Name, Typ: TypeUnknown, Pos_: suf.Pos}
-				continue
-			}
-
-			// 3. Struct, ptr<Struct>, or ref<Struct> field / instance method access
-			if st := unwrapStructType(baseType); st != nil {
-				if sf, exists := st.Field(suf.Name); exists {
-					curExpr = &TMemberExpr{
-						Base:   curExpr,
-						Member: suf.Name,
-						Offset: sf.Offset,
-						Typ:    sf.Type,
-						Pos_:   suf.Pos,
-					}
-					continue
-				}
-				if mSym := te.lookupMethod(st.Name, suf.Name); mSym != nil {
-					if fnType, ok := mSym.Type.(*FnType); ok {
-						if len(fnType.Params) > 0 && fnType.Params[0].Name == "self" {
-							selfParamType := fnType.Params[0].Type
-							if _, isPtr := selfParamType.(*PtrType); isPtr {
-								te.markAddressTaken(curExpr)
-							} else if _, isRef := selfParamType.(*RefType); isRef {
-								te.markAddressTaken(curExpr)
-							}
-							if isMutSelfReceiver(selfParamType) && isReadOnlyReceiverType(baseType) {
-								te.addDiag(SeverityError, suf.Pos, "type/readonly-mutation",
-									fmt.Sprintf("cannot call mutable method %q on read-only %q", suf.Name, baseType.String()))
-							}
-							boundReceiver = curExpr
-							stripped := &FnType{
-								Params:     fnType.Params[1:],
-								ReturnType: fnType.ReturnType,
-							}
-							curExpr = &TVarRefExpr{Name: mSym.MangledName, Typ: stripped, Pos_: suf.Pos}
-							continue
-						}
-						curExpr = &TVarRefExpr{Name: mSym.MangledName, Typ: fnType, Pos_: suf.Pos}
-						continue
-					}
-				}
-				te.addDiag(SeverityError, suf.Pos, "type/field-not-found",
-					fmt.Sprintf("field or method %q not found on struct %q", suf.Name, st.Name))
-				curExpr = &TMemberExpr{Base: curExpr, Member: suf.Name, Typ: TypeUnknown, Pos_: suf.Pos}
-				continue
-			}
-
-			// 4. Anonymous ObjectType field access
-			var memberType Type = TypeUnknown
-			if objType, ok := baseType.(*ObjectType); ok {
-				if ft, ok := objType.Fields[suf.Name]; ok {
-					memberType = ft
+					// Unsized ptr<[]T> is permitted with zero bounds checks
 				} else {
-					te.addDiag(SeverityError, suf.Pos, "type/field-not-found",
-						fmt.Sprintf("field %q not found on type %q", suf.Name, objType.String()))
+					// Single-item pointer ptr<T>: indexing forbidden!
+					te.addDiag(SeverityError, suff.Span_, "type/single-pointer-indexing-rejected",
+						fmt.Sprintf("cannot index single-item pointer %q; use \"*p\" for dereference or cast to buffer pointer \"ptr<[]%s>\" for array indexing", pt.String(), pt.Elem.String()))
+					elemType = pt.Elem
 				}
-			} else if baseType != TypeUnknown && baseType != TypeAny {
-				te.addDiag(SeverityError, suf.Pos, "type/field-not-found",
-					fmt.Sprintf("cannot access member %q on type %q", suf.Name, baseType.String()))
+			} else if rt, ok := curr.ExprType().(*RefType); ok {
+				if lt, ok := rt.Elem.(*ListType); ok {
+					elemType = lt.Elem
+					if lt.Fixed {
+						// Fixed array reference ref<[N]T>
+						if lit, ok := tIdx.(*TLiteralExpr); ok && lit.Kind == loneast.LiteralInt {
+							if v, ok := lit.Value.(int64); ok {
+								if int(v) < 0 || int(v) >= lt.Size {
+									te.addDiag(SeverityError, suff.Span_, "type/index-out-of-bounds",
+										fmt.Sprintf("index %d is out of bounds for array reference %q of size %d", v, rt.String(), lt.Size))
+								}
+							}
+						}
+					}
+					// Unsized ref<[]T> is permitted (fat slice)
+				} else {
+					te.addDiag(SeverityError, suff.Span_, "type/invalid-index",
+						fmt.Sprintf("cannot index managed reference of non-buffer type %q", rt.String()))
+					elemType = rt.Elem
+				}
+			} else if curr.ExprType() == TypeStr {
+				elemType = TypeI32
+			} else {
+				te.addDiag(SeverityError, suff.Span_, "type/invalid-index",
+					fmt.Sprintf("cannot index value of non-buffer type %q", curr.ExprType().String()))
 			}
-			curExpr = &TMemberExpr{Base: curExpr, Member: suf.Name, Typ: memberType, Pos_: suf.Pos}
+			curr = &TIndexExpr{Base: curr, Index: tIdx, Typ: elemType, Span_: suff.Span_}
 
-		case ir.SuffixIndex:
-			tIdx := te.EvalExpr(suf.Index)
-			if prim, ok := tIdx.ExprType().(*PrimitiveType); !ok || !isAnyInt(prim.Name) {
-				if tIdx.ExprType() != TypeUnknown && tIdx.ExprType() != TypeAny {
-					te.addDiag(SeverityError, tIdx.Pos(), "type/invalid-index-type",
-						fmt.Sprintf("index expression must be an integer, got %q", tIdx.ExprType().String()))
+		case loneast.SuffixTraitMat:
+			targetType := te.resolveType(suff.TargetType)
+			traitName := ""
+			var tr *TraitType
+			if traitT, ok := curr.ExprType().(*TraitType); ok {
+				tr = traitT
+				traitName = traitT.Name
+			} else if vref, ok := curr.(*TVarRefExpr); ok {
+				if traitT, ok := te.traits[vref.Name]; ok {
+					tr = traitT
+					traitName = vref.Name
 				}
 			}
 
-			var elemType Type = TypeUnknown
-			switch bt := curExpr.ExprType().(type) {
-			case *ListType:
-				elemType = bt.ItemType
-			case *PtrType:
-				elemType = bt.Elem
-			case *PrimitiveType:
-				if bt.Name == "str" {
-					elemType = TypeU8
-				} else if bt.Name != "unknown" && bt.Name != "any" {
-					te.addDiag(SeverityError, suf.Pos, "type/not-indexable",
-						fmt.Sprintf("type %q does not support indexing", bt.String()))
+			if tr == nil {
+				te.addDiag(SeverityError, suff.Span_, "type/not-a-trait",
+					fmt.Sprintf("cannot materialize non-trait %q", curr.ExprType().String()))
+				curr = &TTraitMatExpr{TraitName: traitName, TargetType: targetType, Typ: TypeUnknown, Span_: suff.Span_}
+			} else {
+				if targetType != TypeUnknown && targetType != TypeInfer {
+					if te.traitImpls[traitName] == nil || te.traitImpls[traitName][targetType.String()] == nil {
+						te.addDiag(SeverityError, suff.Span_, "type/missing-trait-impl",
+							fmt.Sprintf("type %q does not implement trait %q", targetType.String(), traitName))
+					}
 				}
-			default:
-				te.addDiag(SeverityError, suf.Pos, "type/not-indexable",
-					fmt.Sprintf("type %q does not support indexing", curExpr.ExprType().String()))
+				mMethods := make(map[string]*FnType)
+				for mName, sig := range tr.Methods {
+					var mParams []FnParamInfo
+					for _, p := range sig.Params {
+						pTyp := p.Type
+						if p.Name == "self" {
+							pTyp = targetType
+						}
+						mParams = append(mParams, FnParamInfo{Name: p.Name, Type: pTyp})
+					}
+					mMethods[mName] = &FnType{Params: mParams, Return: sig.Return}
+				}
+				matType := &MaterializedTraitType{
+					Trait:      tr,
+					TargetType: targetType,
+					Methods:    mMethods,
+				}
+				curr = &TTraitMatExpr{TraitName: traitName, TargetType: targetType, Typ: matType, Span_: suff.Span_}
 			}
 
-			curExpr = &TIndexExpr{
-				Base:  curExpr,
-				Index: tIdx,
-				Typ:   elemType,
-				Pos_:  suf.Pos,
+		default:
+			// No-op for now
+		}
+	}
+
+	return curr
+}
+
+func (te *TypeEvaluator) evalMatchExpr(m loneast.MatchExpr) TExpr {
+	target := te.EvalExpr(m.Target)
+	targetType := target.ExprType()
+
+	var tArms []TMatchArm
+	var armTypes []Type
+	hasWildcard := false
+	coveredVariants := make(map[string]bool)
+
+	enumType, isEnum := targetType.(*EnumType)
+
+	for _, arm := range m.Arms {
+		te.stack.Push(ScopeBlock)
+
+		var vInfo *EnumVariantInfo
+		var bindings []*TVarDec
+
+		switch pat := arm.Pattern.(type) {
+		case loneast.WildcardPattern:
+			hasWildcard = true
+
+		case loneast.VariantPattern:
+			if !isEnum {
+				te.addDiag(SeverityError, pat.NodeSpan(), "type/invalid-pattern",
+					fmt.Sprintf("cannot match variant on non-enum type %q", targetType.String()))
+			} else {
+				if pat.TypeName != "" && pat.TypeName != enumType.Name && !strings.HasPrefix(enumType.Name, pat.TypeName+"<") {
+					te.addDiag(SeverityError, pat.NodeSpan(), "type/enum-type-mismatch",
+						fmt.Sprintf("variant pattern belongs to enum %q, but target is enum %q", pat.TypeName, enumType.Name))
+				}
+				varName := pat.Variant
+				v, found := enumType.Variant(varName)
+				if !found {
+					te.addDiag(SeverityError, pat.NodeSpan(), "type/unknown-variant",
+						fmt.Sprintf("enum %q has no variant %q", enumType.Name, varName))
+				} else {
+					vInfo = v
+					coveredVariants[varName] = true
+					if len(pat.Bindings) != len(v.Fields) {
+						te.addDiag(SeverityError, pat.NodeSpan(), "type/pattern-arity-mismatch",
+							fmt.Sprintf("variant %q has %d fields, but pattern binds %d variables",
+								varName, len(v.Fields), len(pat.Bindings)))
+					} else {
+						for i, bName := range pat.Bindings {
+							fInfo := v.Fields[i]
+							if bName != "_" {
+								sym := &Symbol{
+									Name:      bName,
+									Kind:      SymbolVar,
+									Type:      fInfo.Type,
+									IsMutable: false,
+								}
+								_ = te.stack.Define(sym)
+								bindings = append(bindings, &TVarDec{
+									Name:      bName,
+									IsMutable: false,
+									Type:      fInfo.Type,
+									Value:     nil,
+									Span_:     pat.NodeSpan(),
+								})
+							}
+						}
+					}
+				}
+			}
+
+		case loneast.LiteralPattern:
+			litExpr := te.evalLiteral(pat.Literal)
+			if !litExpr.ExprType().AssignableTo(targetType) && !targetType.AssignableTo(litExpr.ExprType()) {
+				te.addDiag(SeverityError, pat.NodeSpan(), "type/pattern-mismatch",
+					fmt.Sprintf("pattern of type %q cannot match target of type %q",
+						litExpr.ExprType().String(), targetType.String()))
 			}
 		}
-	}
 
-	return curExpr
-}
+		var bodyExpr TExpr
+		var bodyBlock *TBlock
+		var armType Type = TypeVoid
 
-func unwrapStructType(t Type) *StructType {
-	switch v := t.(type) {
-	case *StructType:
-		return v
-	case *PtrType:
-		if st, ok := v.Elem.(*StructType); ok {
-			return st
+		if blk, ok := arm.Body.(loneast.Block); ok {
+			tb := te.analyzeBlock(&blk, TypeUnknown)
+			bodyBlock = &tb
+			armType = tb.Typ
+		} else if pblk, ok := arm.Body.(*loneast.Block); ok {
+			tb := te.analyzeBlock(pblk, TypeUnknown)
+			bodyBlock = &tb
+			armType = tb.Typ
+		} else if expr, ok := arm.Body.(loneast.Expr); ok {
+			bodyExpr = te.EvalExpr(expr)
+			armType = bodyExpr.ExprType()
 		}
-	case *RefType:
-		if st, ok := v.Elem.(*StructType); ok {
-			return st
-		}
-	}
-	return nil
-}
 
-func isMutSelfReceiver(t Type) bool {
-	switch v := t.(type) {
-	case *PtrType:
-		return !v.ReadOnly
-	case *RefType:
-		return !v.ReadOnly
-	}
-	return false
-}
+		te.stack.Pop()
 
-func isReadOnlyReceiverType(t Type) bool {
-	switch v := t.(type) {
-	case *PtrType:
-		return v.ReadOnly
-	case *RefType:
-		return v.ReadOnly
-	}
-	return false
-}
-
-func (te *TypeEvaluator) lookupMethod(typeName, methodName string) *Symbol {
-	if methods, ok := te.methodImpls[typeName]; ok {
-		return methods[methodName]
-	}
-	return nil
-}
-
-func (te *TypeEvaluator) resolveModuleMember(modAlias *ModuleAliasType, name string, pos ir.Position) *TVarRefExpr {
-	if modAlias.Exports != nil {
-		if sym, ok := modAlias.Exports[name]; ok && sym != nil {
-			refName := sym.Name
-			if sym.MangledName != "" {
-				refName = sym.MangledName
-			}
-			return &TVarRefExpr{Name: refName, Typ: sym.Type, Pos_: pos}
-		}
-	}
-	te.addDiag(SeverityError, pos, "import/undefined-symbol",
-		fmt.Sprintf("symbol %q is not exported by module %q", name, modAlias.Source))
-	return &TVarRefExpr{Name: name, Typ: TypeUnknown, Pos_: pos}
-}
-
-func (te *TypeEvaluator) evalObjectLiteral(obj *ir.ObjectLiteral) *TObjectExpr {
-	fields := make([]TFieldAssign, 0, len(obj.Fields))
-	typeMap := make(map[string]Type)
-
-	for _, f := range obj.Fields {
-		tExpr := te.EvalExpr(f.Expr)
-		fields = append(fields, TFieldAssign{
-			Name: f.Name,
-			Expr: tExpr,
+		tArms = append(tArms, TMatchArm{
+			Pattern:   arm.Pattern,
+			Variant:   vInfo,
+			Bindings:  bindings,
+			BodyExpr:  bodyExpr,
+			BodyBlock: bodyBlock,
+			Span_:     arm.Span_,
 		})
-		typeMap[f.Name] = tExpr.ExprType()
+		armTypes = append(armTypes, armType)
 	}
 
-	return &TObjectExpr{
-		Fields: fields,
-		Typ:    &ObjectType{Fields: typeMap},
-		Pos_:   obj.Pos,
+	// Check exhaustiveness for enum targets
+	if isEnum && !hasWildcard {
+		if len(coveredVariants) < len(enumType.Variants) {
+			var missing []string
+			for _, v := range enumType.Variants {
+				if !coveredVariants[v.Name] {
+					missing = append(missing, v.Name)
+				}
+			}
+			te.addDiag(SeverityError, m.Span_, "type/non-exhaustive-match",
+				fmt.Sprintf("non-exhaustive match on enum %q: missing variants %s",
+					enumType.Name, strings.Join(missing, ", ")))
+		}
+	} else if !isEnum && !hasWildcard && len(m.Arms) > 0 {
+		te.addDiag(SeverityError, m.Span_, "type/non-exhaustive-match",
+			fmt.Sprintf("non-exhaustive match on type %q: missing wildcard '_' arm", targetType.String()))
 	}
-}
 
-func (te *TypeEvaluator) evalListLiteral(list *ir.ListLiteral) *TListExpr {
-	items := make([]TExpr, 0, len(list.Content))
-	var elemType Type = TypeAny
-
-	for _, c := range list.Content {
-		tExpr := te.EvalExpr(c)
-		items = append(items, tExpr)
-		if elemType == TypeAny {
-			elemType = tExpr.ExprType()
+	// Unify arm result types
+	var resultType Type = TypeVoid
+	if len(armTypes) > 0 {
+		resultType = armTypes[0]
+		for i := 1; i < len(armTypes); i++ {
+			if !armTypes[i].AssignableTo(resultType) && !resultType.AssignableTo(armTypes[i]) {
+				te.addDiag(SeverityError, m.Arms[i].Span_, "type/match-arm-mismatch",
+					fmt.Sprintf("match arm has incompatible return type %q (expected %q)",
+						armTypes[i].String(), resultType.String()))
+			}
 		}
 	}
 
-	return &TListExpr{
-		Items: items,
-		Typ:   &ListType{ItemType: elemType, Size: len(items)},
-		Pos_:  list.Pos,
+	return &TMatchExpr{
+		Target: target,
+		Arms:   tArms,
+		Typ:    resultType,
+		Span_:  m.Span_,
 	}
 }
+
+func (te *TypeEvaluator) evalMustExpr(m loneast.MustExpr) TExpr {
+	sub := te.EvalExpr(m.Expr)
+	et, ok := sub.ExprType().(*EnumType)
+	if !ok {
+		te.addDiag(SeverityError, m.Span_, "type/must-requires-result",
+			fmt.Sprintf("'must' requires a Result/enum type, got %q", sub.ExprType().String()))
+		return &TMustExpr{Expr: sub, OkType: TypeUnknown, Span_: m.Span_}
+	}
+	okV, hasOk := et.Variant("Ok")
+	if !hasOk {
+		te.addDiag(SeverityError, m.Span_, "type/must-requires-ok-variant",
+			fmt.Sprintf("'must' requires enum %q to have an 'Ok' variant", et.Name))
+		return &TMustExpr{Expr: sub, OkType: TypeUnknown, Span_: m.Span_}
+	}
+	var okType Type = TypeVoid
+	if len(okV.Fields) > 0 {
+		okType = okV.Fields[0].Type
+	}
+	return &TMustExpr{
+		Expr:       sub,
+		ResultType: et,
+		OkVariant:  okV,
+		OkType:     okType,
+		Span_:      m.Span_,
+	}
+}
+
+func (te *TypeEvaluator) instantiateGenericType(tmpl *GenericTypeTemplate, args []loneast.TYPE_REF) Type {
+	paramMap := make(map[string]Type)
+	var typeArgNames []string
+
+	for i, p := range tmpl.TypeParams {
+		var resolved Type
+		if i < len(args) {
+			resolved = te.resolveType(args[i])
+		} else if p.Default != nil {
+			resolved = te.resolveType(*p.Default)
+		} else {
+			resolved = TypeUnknown
+		}
+		paramMap[p.Name] = resolved
+		typeArgNames = append(typeArgNames, resolved.String())
+	}
+
+	monoName := fmt.Sprintf("%s<%s>", tmpl.Name, strings.Join(typeArgNames, ", "))
+
+	// Check caches
+	if et, ok := te.enums[monoName]; ok {
+		return et
+	}
+	if st, ok := te.structs[monoName]; ok {
+		return st
+	}
+
+	// Validate constraints
+	for _, c := range tmpl.Constraints {
+		actualType, exists := paramMap[c.TypeParam]
+		if !exists || actualType == TypeUnknown {
+			continue
+		}
+		switch c.Op {
+		case loneast.ConstraintIs:
+			targetType := te.resolveType(c.Target)
+			targetName := ""
+			if tb, ok := c.Target.Value.(*loneast.TypeBase); ok {
+				targetName = tb.Name
+			} else {
+				targetName = targetType.String()
+			}
+
+			if targetName == "Error" {
+				isErr := false
+				if actualType.String() == "Error" || actualType == TypeInfer {
+					isErr = true
+				} else if _, isEnum := actualType.(*EnumType); isEnum {
+					isErr = true
+				}
+				if !isErr {
+					te.addDiag(SeverityError, c.Span_, "type/constraint-violation",
+						fmt.Sprintf("type parameter %q bound to %q does not satisfy 'is Error'", c.TypeParam, actualType.String()))
+					return TypeUnknown
+				}
+			} else {
+				if !actualType.AssignableTo(targetType) && !actualType.Equals(targetType) {
+					te.addDiag(SeverityError, c.Span_, "type/constraint-violation",
+						fmt.Sprintf("type parameter %q bound to %q does not satisfy 'is %s'", c.TypeParam, actualType.String(), targetType.String()))
+					return TypeUnknown
+				}
+			}
+
+		case loneast.ConstraintSatisfies:
+			targetName := ""
+			if tb, ok := c.Target.Value.(*loneast.TypeBase); ok {
+				targetName = tb.Name
+			} else {
+				targetName = te.resolveType(c.Target).String()
+			}
+			if ifc, isIfc := te.interfaces[targetName]; isIfc {
+				if !te.TypeSatisfiesInterface(actualType, ifc, c.Span_) {
+					return TypeUnknown
+				}
+			} else {
+				if te.traitImpls[targetName] == nil || te.traitImpls[targetName][actualType.String()] == nil {
+					te.addDiag(SeverityError, c.Span_, "type/constraint-violation",
+						fmt.Sprintf("type parameter %q bound to %q does not satisfy trait %q", c.TypeParam, actualType.String(), targetName))
+					return TypeUnknown
+				}
+			}
+		}
+	}
+
+	substType := func(tr loneast.TYPE_REF) Type {
+		if tr.Kind == loneast.TYPE_BASE {
+			if tb, ok := tr.Value.(*loneast.TypeBase); ok {
+				if tMapped, found := paramMap[tb.Name]; found {
+					return tMapped
+				}
+			}
+		}
+		return te.resolveType(tr)
+	}
+
+	if tmpl.Decl.Kind == loneast.TYPE_DEC_ENUM {
+		et := &EnumType{
+			Name:       monoName,
+			VariantMap: make(map[string]*EnumVariantInfo),
+		}
+
+		maxPayloadSize := 0
+		maxAlign := 4 // tag is i32
+
+		for tag, v := range tmpl.Decl.Variants {
+			var fields []StructFieldInfo
+			fieldMap := make(map[string]StructFieldInfo)
+			vOffset := 4
+			vMaxAlign := 1
+
+			for _, f := range v.Fields {
+				fType := substType(f.Type)
+				sz := TypeSize(fType)
+				al := TypeAlign(fType)
+				if al > vMaxAlign {
+					vMaxAlign = al
+				}
+				if al > maxAlign {
+					maxAlign = al
+				}
+				if al > 0 && vOffset%al != 0 {
+					vOffset += al - (vOffset % al)
+				}
+				info := StructFieldInfo{Name: f.Name, Type: fType, Offset: vOffset}
+				fields = append(fields, info)
+				fieldMap[f.Name] = info
+				vOffset += sz
+			}
+
+			payloadSize := vOffset - 4
+			if payloadSize > maxPayloadSize {
+				maxPayloadSize = payloadSize
+			}
+
+			vInfo := EnumVariantInfo{
+				Name:       v.Name,
+				Tag:        tag,
+				Fields:     fields,
+				FieldMap:   fieldMap,
+				TotalSize:  vOffset,
+				TotalAlign: vMaxAlign,
+			}
+			et.Variants = append(et.Variants, vInfo)
+		}
+
+		for i := range et.Variants {
+			et.VariantMap[et.Variants[i].Name] = &et.Variants[i]
+		}
+
+		if maxAlign > 0 && maxPayloadSize%maxAlign != 0 {
+			maxPayloadSize += maxAlign - (maxPayloadSize % maxAlign)
+		}
+		et.TotalSize = 4 + maxPayloadSize
+		et.TotalAlign = maxAlign
+
+		te.enums[monoName] = et
+		return et
+	}
+
+	if tmpl.Decl.Kind == loneast.TYPE_DEC_STRUCT {
+		st := &StructType{
+			Name:     monoName,
+			FieldMap: make(map[string]StructFieldInfo),
+			Methods:  make(map[string]*FnType),
+		}
+
+		offset := 0
+		maxAlign := 1
+		for _, f := range tmpl.Decl.Fields {
+			fType := substType(f.Type)
+			sz := TypeSize(fType)
+			al := TypeAlign(fType)
+			if al > maxAlign {
+				maxAlign = al
+			}
+			if al > 0 && offset%al != 0 {
+				offset += al - (offset % al)
+			}
+			isPriv := strings.HasPrefix(f.Name, "_")
+			if isPriv && f.IsRoPub {
+				te.addDiag(SeverityError, f.Span_, "syn/redundant-field-modifier",
+					fmt.Sprintf("private field %q cannot have 'ro(pub)' modifier", f.Name))
+			}
+			info := StructFieldInfo{
+				Name:       f.Name,
+				Type:       fType,
+				Offset:     offset,
+				IsReadOnly: f.IsReadOnly,
+				IsRoPub:    f.IsRoPub,
+				IsPrivate:  isPriv,
+			}
+			st.Fields = append(st.Fields, info)
+			st.FieldMap[f.Name] = info
+			offset += sz
+		}
+
+		if maxAlign > 0 && offset%maxAlign != 0 {
+			offset += maxAlign - (offset % maxAlign)
+		}
+		st.TotalSize = offset
+		st.TotalAlign = maxAlign
+
+		te.structs[monoName] = st
+		return st
+	}
+
+	return TypeUnknown
+}
+
+func (te *TypeEvaluator) monomorphizeFn(tmpl *GenericFnTemplate, args []TExpr) *TFnDec {
+	paramMap := make(map[string]Type)
+	var typeArgNames []string
+
+	for _, p := range tmpl.TypeParams {
+		var resolved Type = TypeUnknown
+		for argIdx, param := range tmpl.Decl.Params {
+			if param.Type.Kind == loneast.TYPE_BASE {
+				if tb, ok := param.Type.Value.(*loneast.TypeBase); ok {
+					if tb.Name == p.Name {
+						if argIdx < len(args) {
+							resolved = args[argIdx].ExprType()
+							break
+						}
+					} else if (tb.Name == "ref" || tb.Name == "ptr") && len(tb.Args) > 0 {
+						if atb, ok := tb.Args[0].Value.(*loneast.TypeBase); ok && atb.Name == p.Name {
+							if argIdx < len(args) {
+								argT := args[argIdx].ExprType()
+								if refT, ok := argT.(*RefType); ok {
+									resolved = refT.Elem
+								} else if ptrT, ok := argT.(*PtrType); ok {
+									resolved = ptrT.Elem
+								} else {
+									resolved = argT
+								}
+								break
+							}
+						}
+					}
+				}
+			}
+		}
+		if resolved == TypeUnknown && p.Default != nil {
+			resolved = te.resolveType(*p.Default)
+		}
+		paramMap[p.Name] = resolved
+		typeArgNames = append(typeArgNames, resolved.String())
+	}
+
+	monoIdent := fmt.Sprintf("%s__%s", tmpl.Name, strings.Join(typeArgNames, "_"))
+
+	if existing, ok := te.instantiatedFns[monoIdent]; ok {
+		return existing
+	}
+
+	cloned := *tmpl.Decl
+	cloned.Name = monoIdent
+	cloned.TypeParams = nil
+
+	var newParams []loneast.FnParam
+	for _, p := range tmpl.Decl.Params {
+		newP := p
+		if p.Type.Kind == loneast.TYPE_BASE {
+			if tb, ok := p.Type.Value.(*loneast.TypeBase); ok {
+				if mappedT, ok := paramMap[tb.Name]; ok {
+					newP.Type = loneast.TYPE_REF{
+						Kind:  loneast.TYPE_BASE,
+						Value: &loneast.TypeBase{Name: mappedT.String()},
+						Span_: p.Span_,
+					}
+				} else if (tb.Name == "ref" || tb.Name == "ptr") && len(tb.Args) > 0 {
+					if atb, ok := tb.Args[0].Value.(*loneast.TypeBase); ok {
+						if mappedT, ok := paramMap[atb.Name]; ok {
+							newP.Type = loneast.TYPE_REF{
+								Kind: loneast.TYPE_BASE,
+								Value: &loneast.TypeBase{
+									Name: tb.Name,
+									Args: []loneast.TYPE_REF{{
+										Kind:  loneast.TYPE_BASE,
+										Value: &loneast.TypeBase{Name: mappedT.String()},
+										Span_: tb.Args[0].Span_,
+									}},
+								},
+								Span_: p.Span_,
+							}
+						}
+					}
+				}
+			}
+		}
+		newParams = append(newParams, newP)
+	}
+	cloned.Params = newParams
+
+	if tmpl.Decl.ReturnType != nil {
+		rt := *tmpl.Decl.ReturnType
+		if rt.Kind == loneast.TYPE_BASE {
+			if tb, ok := rt.Value.(*loneast.TypeBase); ok {
+				var newArgs []loneast.TYPE_REF
+				for _, arg := range tb.Args {
+					if arg.Kind == loneast.TYPE_BASE {
+						if atb, ok := arg.Value.(*loneast.TypeBase); ok {
+							if mappedT, ok := paramMap[atb.Name]; ok {
+								newArgs = append(newArgs, loneast.TYPE_REF{
+									Kind:  loneast.TYPE_BASE,
+									Value: &loneast.TypeBase{Name: mappedT.String()},
+									Span_: arg.Span_,
+								})
+								continue
+							}
+						}
+					}
+					newArgs = append(newArgs, arg)
+				}
+				newTb := *tb
+				newTb.Args = newArgs
+				if mappedT, ok := paramMap[tb.Name]; ok {
+					newTb.Name = mappedT.String()
+				}
+				rt.Value = &newTb
+			}
+		}
+		cloned.ReturnType = &rt
+	}
+
+	// Validate constraints
+	for _, c := range tmpl.Constraints {
+		actualType, exists := paramMap[c.TypeParam]
+		if !exists || actualType == TypeUnknown {
+			continue
+		}
+		switch c.Op {
+		case loneast.ConstraintIs:
+			targetType := te.resolveType(c.Target)
+			targetName := ""
+			if tb, ok := c.Target.Value.(*loneast.TypeBase); ok {
+				targetName = tb.Name
+			} else {
+				targetName = targetType.String()
+			}
+			if targetName == "Error" {
+				isErr := false
+				if actualType.String() == "Error" || actualType == TypeInfer {
+					isErr = true
+				} else if _, isEnum := actualType.(*EnumType); isEnum {
+					isErr = true
+				}
+				if !isErr {
+					te.addDiag(SeverityError, c.Span_, "type/constraint-violation",
+						fmt.Sprintf("type parameter %q bound to %q does not satisfy 'is Error'", c.TypeParam, actualType.String()))
+					return nil
+				}
+			} else {
+				if !actualType.AssignableTo(targetType) && !actualType.Equals(targetType) {
+					te.addDiag(SeverityError, c.Span_, "type/constraint-violation",
+						fmt.Sprintf("type parameter %q bound to %q does not satisfy 'is %s'", c.TypeParam, actualType.String(), targetType.String()))
+					return nil
+				}
+			}
+
+		case loneast.ConstraintSatisfies:
+			targetName := ""
+			if tb, ok := c.Target.Value.(*loneast.TypeBase); ok {
+				targetName = tb.Name
+			} else {
+				targetName = te.resolveType(c.Target).String()
+			}
+			if ifc, isIfc := te.interfaces[targetName]; isIfc {
+				if !te.TypeSatisfiesInterface(actualType, ifc, c.Span_) {
+					return nil
+				}
+			} else {
+				if te.traitImpls[targetName] == nil || te.traitImpls[targetName][actualType.String()] == nil {
+					te.addDiag(SeverityError, c.Span_, "type/constraint-violation",
+						fmt.Sprintf("type parameter %q bound to %q does not satisfy trait %q", c.TypeParam, actualType.String(), targetName))
+					return nil
+				}
+			}
+		}
+	}
+
+	oldParams := te.currentTypeParams
+	te.currentTypeParams = paramMap
+	defer func() { te.currentTypeParams = oldParams }()
+
+	te.hoistFn(&cloned)
+	tfn := te.analyzeFnDec(&cloned)
+	te.instantiatedFns[monoIdent] = tfn
+	te.extraDecls = append(te.extraDecls, tfn)
+	return tfn
+}
+
+func (te *TypeEvaluator) evalTryExpr(t loneast.TryExpr) TExpr {
+	sub := te.EvalExpr(t.Expr)
+	et, ok := sub.ExprType().(*EnumType)
+	if !ok {
+		te.addDiag(SeverityError, t.Span_, "type/try-requires-result",
+			fmt.Sprintf("'try' requires a Result/enum type, got %q", sub.ExprType().String()))
+		return &TTryExpr{Expr: sub, OkType: TypeUnknown, Span_: t.Span_}
+	}
+	okV, hasOk := et.Variant("Ok")
+	errV, hasErr := et.Variant("Err")
+	if !hasOk || !hasErr {
+		te.addDiag(SeverityError, t.Span_, "type/try-requires-ok-err",
+			fmt.Sprintf("'try' requires enum %q to have 'Ok' and 'Err' variants", et.Name))
+		return &TTryExpr{Expr: sub, OkType: TypeUnknown, Span_: t.Span_}
+	}
+
+	var subErrType Type = TypeVoid
+	if len(errV.Fields) > 0 {
+		subErrType = errV.Fields[0].Type
+	}
+
+	// Check current function return type
+	if te.currentFnReturn != nil {
+		currRetEnum, isRetEnum := te.currentFnReturn.(*EnumType)
+		if !isRetEnum || currRetEnum.VariantMap["Ok"] == nil || currRetEnum.VariantMap["Err"] == nil {
+			te.addDiag(SeverityError, t.Span_, "type/try-incompatible-return",
+				fmt.Sprintf("cannot use 'try' in function returning %q; enclosing function must return a Result enum",
+					te.currentFnReturn.String()))
+		} else {
+			// Check error compatibility
+			currErrV, _ := currRetEnum.Variant("Err")
+			var currErrType Type = TypeVoid
+			if len(currErrV.Fields) > 0 {
+				currErrType = currErrV.Fields[0].Type
+			}
+
+			if currErrType == TypeInfer {
+				te.inferredErrors[te.currentFnName] = append(te.inferredErrors[te.currentFnName], subErrType)
+			} else if currErrType.Equals(te.enums["Error"]) {
+				// Error is the general unified error
+			} else if !subErrType.AssignableTo(currErrType) {
+				te.addDiag(SeverityError, t.Span_, "type/try-incompatible-error",
+					fmt.Sprintf("cannot propagate error of type %q in function returning %q",
+						subErrType.String(), currRetEnum.String()))
+			}
+		}
+	}
+
+	var okType Type = TypeVoid
+	if len(okV.Fields) > 0 {
+		okType = okV.Fields[0].Type
+	}
+	return &TTryExpr{
+		Expr:       sub,
+		ResultType: et,
+		OkVariant:  okV,
+		OkType:     okType,
+		Span_:      t.Span_,
+	}
+}
+
+func (te *TypeEvaluator) resolveType(tr loneast.TYPE_REF) Type {
+	base := te.resolveBaseType(tr)
+	if tr.Constrain.Optional {
+		return &OptionalType{Inner: base}
+	}
+	return base
+}
+
+func (te *TypeEvaluator) resolveBaseType(tr loneast.TYPE_REF) Type {
+	switch tr.Kind {
+	case loneast.TYPE_LIST:
+		if tl, ok := tr.Value.(*loneast.TypeList); ok {
+			elemType := te.resolveType(tl.ItemType)
+			size := 0
+			if tl.Size != nil {
+				if lit, ok := tl.Size.(loneast.Literal); ok && lit.Kind == loneast.LiteralInt {
+					if v, ok := lit.Value.(int64); ok {
+						size = int(v)
+					}
+				}
+			}
+			return &ListType{Elem: elemType, Fixed: tl.IsFixed(), Size: size}
+		}
+	case loneast.TYPE_FN:
+		if tf, ok := tr.Value.(*loneast.TypeFn); ok {
+			var params []FnParamInfo
+			for _, p := range tf.Params {
+				params = append(params, FnParamInfo{
+					Name: p.Name,
+					Type: te.resolveType(p.Type),
+				})
+			}
+			retType := Type(TypeVoid)
+			if tf.ReturnType != nil {
+				retType = te.resolveType(*tf.ReturnType)
+			}
+			return &FnType{Params: params, Return: retType}
+		}
+	case loneast.TYPE_TUPLE:
+		if tt, ok := tr.Value.(*loneast.TypeTuple); ok {
+			var elemTypes []Type
+			for _, elemTr := range tt.Types {
+				elemTypes = append(elemTypes, te.resolveType(elemTr))
+			}
+			return NewTupleType(elemTypes)
+		}
+	case loneast.TYPE_BASE:
+		if tb, ok := tr.Value.(*loneast.TypeBase); ok {
+			// Handle pointer ptr<T>
+			if tb.Name == "ptr" && len(tb.Args) > 0 {
+				inner := te.resolveType(tb.Args[0])
+				isRo := tr.Constrain.ReadOnly || tb.Args[0].Constrain.ReadOnly
+				return &PtrType{Elem: inner, ReadOnly: isRo}
+			}
+			// Handle reference ref<T>
+			if tb.Name == "ref" && len(tb.Args) > 0 {
+				inner := te.resolveType(tb.Args[0])
+				isRo := tr.Constrain.ReadOnly || tb.Args[0].Constrain.ReadOnly
+				return &RefType{Elem: inner, ReadOnly: isRo}
+			}
+			// Handle infer
+			if tb.Name == "infer" {
+				return TypeInfer
+			}
+			// If type arguments are provided (e.g. Result<i32>), check generic templates first
+			if len(tb.Args) > 0 {
+				if tmpl, ok := te.genericTypes[tb.Name]; ok {
+					return te.instantiateGenericType(tmpl, tb.Args)
+				}
+			}
+			// Handle Self / self
+			if (tb.Name == "Self" || tb.Name == "self") && te.currentSelfType != nil {
+				return te.currentSelfType
+			}
+			// Primitive lookup
+			if prim := PrimitiveByName(tb.Name); prim != nil {
+				return prim
+			}
+			// Scope symbol lookup (struct / trait / enum)
+			sym := te.stack.Lookup(tb.Name)
+			if sym != nil && sym.Kind == SymbolType {
+				return sym.Type
+			}
+			if et, ok := te.enums[tb.Name]; ok {
+				return et
+			}
+			if st, ok := te.structs[tb.Name]; ok {
+				return st
+			}
+			if tr, ok := te.traits[tb.Name]; ok {
+				return tr
+			}
+			if ifc, ok := te.interfaces[tb.Name]; ok {
+				return ifc
+			}
+			// Generic template with default arguments (e.g. Result with 0 args)
+			if tmpl, ok := te.genericTypes[tb.Name]; ok {
+				return te.instantiateGenericType(tmpl, tb.Args)
+			}
+			return &PrimitiveType{Name: tb.Name}
+		}
+	}
+	return TypeUnknown
+}
+
+func isTrNaming(name string) bool {
+	if len(name) >= 3 && name[:2] == "Tr" && unicode.IsUpper(rune(name[2])) {
+		return true
+	}
+	return false
+}
+
+func isIfcNaming(name string) bool {
+	if len(name) >= 4 && name[:3] == "Ifc" && unicode.IsUpper(rune(name[3])) {
+		return true
+	}
+	return false
+}
+
+func (te *TypeEvaluator) TypeSatisfiesInterface(target Type, ifc *InterfaceType, span loneast.Span) bool {
+	if _, isEnum := target.(*EnumType); isEnum {
+		te.addDiag(SeverityError, span, "type/interface-enum-rejected",
+			fmt.Sprintf("enum %q cannot satisfy interface %q", target.String(), ifc.Name))
+		return false
+	}
+
+	st, isStruct := target.(*StructType)
+	if !isStruct {
+		te.addDiag(SeverityError, span, "type/interface-not-satisfied",
+			fmt.Sprintf("type %q cannot satisfy interface %q", target.String(), ifc.Name))
+		return false
+	}
+
+	for _, req := range ifc.Fields {
+		actual, exists := st.Field(req.Name)
+		if !exists {
+			te.addDiag(SeverityError, span, "type/interface-missing-field",
+				fmt.Sprintf("type %q does not satisfy interface %q: missing required field %q", st.Name, ifc.Name, req.Name))
+			return false
+		}
+		if !actual.Type.AssignableTo(req.Type) {
+			te.addDiag(SeverityError, span, "type/interface-field-type-mismatch",
+				fmt.Sprintf("field %q on %q has type %q, but interface %q requires %q", req.Name, st.Name, actual.Type.String(), ifc.Name, req.Type.String()))
+			return false
+		}
+		if !req.IsReadOnly && (actual.IsReadOnly || actual.IsRoPub) {
+			te.addDiag(SeverityError, span, "type/field-mutability-mismatch",
+				fmt.Sprintf("field %q on %q is read-only to external callers, but interface %q requires a mutable field", req.Name, st.Name, ifc.Name))
+			return false
+		}
+	}
+	return true
+}
+

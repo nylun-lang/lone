@@ -13,13 +13,13 @@ const (
 	TypeI64  WasmType = "i64"
 	TypeF32  WasmType = "f32"
 	TypeF64  WasmType = "f64"
-	TypeVoid WasmType = "void"
+	TypeVoid WasmType = ""
 )
 
 // WasmInst represents an individual WebAssembly instruction node.
 type WasmInst interface {
 	FormatWat(indent int) string
-	IsPure() bool // Returns true if instruction has no side-effects
+	IsPure() bool
 }
 
 // Param represents a named function parameter.
@@ -39,7 +39,7 @@ type Global struct {
 	Name    string
 	Type    WasmType
 	Mutable bool
-	InitVal string // e.g. "i32.const 131072"
+	InitVal string
 }
 
 // Import represents a Wasm module import.
@@ -54,8 +54,8 @@ type Import struct {
 // Export represents an exported symbol.
 type Export struct {
 	Name string
-	Kind string // "func", "memory", "table"
-	Ref  string // e.g. "$main" or "0"
+	Kind string // "func", "memory", "table", "global"
+	Ref  string // e.g. "$main"
 }
 
 // DataSegment represents linear memory initial data.
@@ -90,7 +90,7 @@ type WasmModule struct {
 // NewModule initializes an empty WasmModule AST.
 func NewModule() *WasmModule {
 	return &WasmModule{
-		MemoryPages:  1,
+		MemoryPages:  2, // Default 128 KiB
 		MemoryExport: "memory",
 	}
 }
@@ -104,15 +104,45 @@ func (m *WasmModule) AddFunction(fn *WasmFunc) {
 // Instructions
 // =====================
 
-// InstConst represents an i32.const instruction.
-type InstConst struct {
+// InstConstI32 represents an i32.const instruction.
+type InstConstI32 struct {
 	Value int32
 }
 
-func (i InstConst) FormatWat(indent int) string {
+func (i InstConstI32) FormatWat(indent int) string {
 	return fmt.Sprintf("%si32.const %d", strings.Repeat("  ", indent), i.Value)
 }
-func (i InstConst) IsPure() bool { return true }
+func (i InstConstI32) IsPure() bool { return true }
+
+// InstConstI64 represents an i64.const instruction.
+type InstConstI64 struct {
+	Value int64
+}
+
+func (i InstConstI64) FormatWat(indent int) string {
+	return fmt.Sprintf("%si64.const %d", strings.Repeat("  ", indent), i.Value)
+}
+func (i InstConstI64) IsPure() bool { return true }
+
+// InstConstF32 represents an f32.const instruction.
+type InstConstF32 struct {
+	Value float32
+}
+
+func (i InstConstF32) FormatWat(indent int) string {
+	return fmt.Sprintf("%sf32.const %g", strings.Repeat("  ", indent), i.Value)
+}
+func (i InstConstF32) IsPure() bool { return true }
+
+// InstConstF64 represents an f64.const instruction.
+type InstConstF64 struct {
+	Value float64
+}
+
+func (i InstConstF64) FormatWat(indent int) string {
+	return fmt.Sprintf("%sf64.const %g", strings.Repeat("  ", indent), i.Value)
+}
+func (i InstConstF64) IsPure() bool { return true }
 
 // InstLocalGet represents a local.get instruction.
 type InstLocalGet struct {
@@ -164,9 +194,9 @@ func (i InstGlobalSet) FormatWat(indent int) string {
 }
 func (i InstGlobalSet) IsPure() bool { return false }
 
-// InstLoad represents a linear memory load instruction (e.g. i32.load, i32.load8_u).
+// InstLoad represents a linear memory load instruction.
 type InstLoad struct {
-	Op     string // "i32.load", "i32.load8_u", "i32.load8_s", etc.
+	Op     string // "i32.load", "i32.load8_u", etc.
 	Offset int
 }
 
@@ -178,9 +208,9 @@ func (i InstLoad) FormatWat(indent int) string {
 }
 func (i InstLoad) IsPure() bool { return false }
 
-// InstStore represents a linear memory store instruction (e.g. i32.store, i32.store8).
+// InstStore represents a linear memory store instruction.
 type InstStore struct {
-	Op     string // "i32.store", "i32.store8", "i32.store16", etc.
+	Op     string // "i32.store", "i32.store8", etc.
 	Offset int
 }
 
@@ -192,15 +222,25 @@ func (i InstStore) FormatWat(indent int) string {
 }
 func (i InstStore) IsPure() bool { return false }
 
-// InstBinaryOp represents a binary operation instruction (e.g. i32.add).
+// InstBinaryOp represents a binary operation instruction.
 type InstBinaryOp struct {
-	Op string // "i32.add", "i32.sub", "i32.mul", etc.
+	Op string // "i32.add", "i32.sub", "f64.mul", etc.
 }
 
 func (i InstBinaryOp) FormatWat(indent int) string {
 	return fmt.Sprintf("%s%s", strings.Repeat("  ", indent), i.Op)
 }
 func (i InstBinaryOp) IsPure() bool { return true }
+
+// InstUnaryOp represents a unary operation instruction.
+type InstUnaryOp struct {
+	Op string // "i32.eqz", "f64.neg", "f64.convert_i32_s", "i32.trunc_f64_s", etc.
+}
+
+func (i InstUnaryOp) FormatWat(indent int) string {
+	return fmt.Sprintf("%s%s", strings.Repeat("  ", indent), i.Op)
+}
+func (i InstUnaryOp) IsPure() bool { return true }
 
 // InstCall represents a call instruction.
 type InstCall struct {
@@ -236,16 +276,104 @@ func (i InstNop) FormatWat(indent int) string {
 }
 func (i InstNop) IsPure() bool { return true }
 
+// InstUnreachable represents an unreachable instruction.
+type InstUnreachable struct{}
+
+func (i InstUnreachable) FormatWat(indent int) string {
+	return fmt.Sprintf("%sunreachable", strings.Repeat("  ", indent))
+}
+func (i InstUnreachable) IsPure() bool { return false }
+
+// InstMemoryGrow represents a memory.grow instruction.
+type InstMemoryGrow struct{}
+
+func (i InstMemoryGrow) FormatWat(indent int) string {
+	return fmt.Sprintf("%smemory.grow", strings.Repeat("  ", indent))
+}
+func (i InstMemoryGrow) IsPure() bool { return false }
+
+// InstMemorySize represents a memory.size instruction.
+type InstMemorySize struct{}
+
+func (i InstMemorySize) FormatWat(indent int) string {
+	return fmt.Sprintf("%smemory.size", strings.Repeat("  ", indent))
+}
+func (i InstMemorySize) IsPure() bool { return false }
+
+// InstBlock represents a structured block.
+type InstBlock struct {
+	Label  string
+	Result WasmType
+	Body   []WasmInst
+}
+
+func (i InstBlock) FormatWat(indent int) string {
+	pad := strings.Repeat("  ", indent)
+	labelStr := ""
+	if i.Label != "" {
+		labelStr = " " + i.Label
+	}
+	resStr := ""
+	if i.Result != "" && i.Result != TypeVoid {
+		resStr = fmt.Sprintf(" (result %s)", i.Result)
+	}
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("%sblock%s%s\n", pad, labelStr, resStr))
+	for _, inst := range i.Body {
+		sb.WriteString(inst.FormatWat(indent+1) + "\n")
+	}
+	sb.WriteString(fmt.Sprintf("%send", pad))
+	return sb.String()
+}
+func (i InstBlock) IsPure() bool { return false }
+
+// InstLoop represents a structured loop.
+type InstLoop struct {
+	Label  string
+	Result WasmType
+	Body   []WasmInst
+}
+
+func (i InstLoop) FormatWat(indent int) string {
+	pad := strings.Repeat("  ", indent)
+	labelStr := ""
+	if i.Label != "" {
+		labelStr = " " + i.Label
+	}
+	resStr := ""
+	if i.Result != "" && i.Result != TypeVoid {
+		resStr = fmt.Sprintf(" (result %s)", i.Result)
+	}
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("%sloop%s%s\n", pad, labelStr, resStr))
+	for _, inst := range i.Body {
+		sb.WriteString(inst.FormatWat(indent+1) + "\n")
+	}
+	sb.WriteString(fmt.Sprintf("%send", pad))
+	return sb.String()
+}
+func (i InstLoop) IsPure() bool { return false }
+
 // InstIf represents a structured WebAssembly if/else/end block.
 type InstIf struct {
-	Then []WasmInst
-	Else []WasmInst
+	Label  string
+	Result WasmType
+	Then   []WasmInst
+	Else   []WasmInst
 }
 
 func (i InstIf) FormatWat(indent int) string {
 	pad := strings.Repeat("  ", indent)
+	labelStr := ""
+	if i.Label != "" {
+		labelStr = " " + i.Label
+	}
+	resStr := ""
+	if i.Result != "" && i.Result != TypeVoid {
+		resStr = fmt.Sprintf(" (result %s)", i.Result)
+	}
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("%sif\n", pad))
+	sb.WriteString(fmt.Sprintf("%sif%s%s\n", pad, labelStr, resStr))
 	for _, inst := range i.Then {
 		sb.WriteString(inst.FormatWat(indent+1) + "\n")
 	}
@@ -259,50 +387,6 @@ func (i InstIf) FormatWat(indent int) string {
 	return sb.String()
 }
 func (i InstIf) IsPure() bool { return false }
-
-// InstBlock represents a structured block.
-type InstBlock struct {
-	Label string
-	Body  []WasmInst
-}
-
-func (i InstBlock) FormatWat(indent int) string {
-	pad := strings.Repeat("  ", indent)
-	labelStr := ""
-	if i.Label != "" {
-		labelStr = " " + i.Label
-	}
-	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("%sblock%s\n", pad, labelStr))
-	for _, inst := range i.Body {
-		sb.WriteString(inst.FormatWat(indent+1) + "\n")
-	}
-	sb.WriteString(fmt.Sprintf("%send", pad))
-	return sb.String()
-}
-func (i InstBlock) IsPure() bool { return false }
-
-// InstLoop represents a structured loop.
-type InstLoop struct {
-	Label string
-	Body  []WasmInst
-}
-
-func (i InstLoop) FormatWat(indent int) string {
-	pad := strings.Repeat("  ", indent)
-	labelStr := ""
-	if i.Label != "" {
-		labelStr = " " + i.Label
-	}
-	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("%sloop%s\n", pad, labelStr))
-	for _, inst := range i.Body {
-		sb.WriteString(inst.FormatWat(indent+1) + "\n")
-	}
-	sb.WriteString(fmt.Sprintf("%send", pad))
-	return sb.String()
-}
-func (i InstLoop) IsPure() bool { return false }
 
 // InstBr represents an unconditional branch.
 type InstBr struct {

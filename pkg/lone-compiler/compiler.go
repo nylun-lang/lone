@@ -3,70 +3,62 @@ package lonecompiler
 import (
 	"fmt"
 	"os"
-	"path/filepath"
-	"strings"
 
 	loneanalyzer "lone/pkg/lone-analyzer"
-	loneproject "lone/pkg/lone-analyzer-project"
-	loneadapter "lone/pkg/lone-compiler-adapter"
-	lonemir "lone/pkg/lone-compiler-mir"
 	lonewir "lone/pkg/lone-compiler-wir"
+	lonelexer "lone/pkg/lone-lexer"
 	loneparser "lone/pkg/lone-parser"
-	loneruntime "lone/pkg/lone-runtime"
+	loneproject "lone/pkg/lone-project"
 )
 
-// Target represents the execution platform for the emitted WebAssembly.
-type Target = loneruntime.Target
-
-const (
-	TargetWasi = loneruntime.TargetWasi
-	TargetWeb  = loneruntime.TargetWeb
-)
-
-// Config defines the options for a compilation run.
+// Config defines configuration options for the compiler pipeline.
 type Config struct {
-	Target          Target
-	EmitMir         bool
-	Optimize        bool
-	WithAdapter     string // "node" or "browser"
-	OutFilePath     string
+	Target       string // "wasi" (default) or "web"
+	Optimize     bool
+	OutFilePath  string
+	MemoryPages  int
+	MemoryExport string
 }
 
 // DefaultConfig provides recommended compilation options.
 func DefaultConfig() Config {
 	return Config{
-		Target:   TargetWasi,
-		EmitMir:  false,
-		Optimize: true,
+		Target:       "wasi",
+		Optimize:     true,
+		MemoryPages:  2,
+		MemoryExport: "memory",
 	}
 }
 
 // Result holds the compiled artifacts produced across all compiler stages.
 type Result struct {
+	AST          []any
 	TypedProgram *loneanalyzer.TProgram
 	Diagnostics  []loneanalyzer.Diagnostic
-	MirModule    *lonemir.MirModule
 	WasmModule   *lonewir.WasmModule
 	WatOutput    string
-	AdapterGlue  string
-	AdapterFile  string
 }
 
 // Compiler coordinates the end-to-end compilation pipeline.
 type Compiler struct {
 	cfg Config
-	rt  *loneruntime.Table
 }
 
 // NewCompiler creates a new Compiler with the given configuration.
 func NewCompiler(cfg Config) *Compiler {
-	return &Compiler{
-		cfg: cfg,
-		rt:  loneruntime.NewDefaultTable(),
+	if cfg.Target == "" {
+		cfg.Target = "wasi"
 	}
+	if cfg.MemoryPages <= 0 {
+		cfg.MemoryPages = 2
+	}
+	if cfg.MemoryExport == "" {
+		cfg.MemoryExport = "memory"
+	}
+	return &Compiler{cfg: cfg}
 }
 
-// CompileFile reads a .lone file from disk and runs it through the full compiler pipeline.
+// CompileFile reads a file from disk and compiles it.
 func (c *Compiler) CompileFile(filePath string) (*Result, error) {
 	content, err := os.ReadFile(filePath)
 	if err != nil {
@@ -75,21 +67,29 @@ func (c *Compiler) CompileFile(filePath string) (*Result, error) {
 	return c.CompileSource(filePath, content)
 }
 
-// CompileSource executes the compiler pipeline on in-memory Lone source code.
+// CompileSource executes the complete compiler pipeline on in-memory source code.
 func (c *Compiler) CompileSource(fileName string, source []byte) (*Result, error) {
-	// 1. Parsing
-	rawAst, err := loneparser.Parse(fileName, source)
+	// 1. Lexical Analysis
+	tokens, err := lonelexer.NewLexer(source).Tokenize()
 	if err != nil {
-		return nil, fmt.Errorf("syntax error: %w", err)
+		return nil, fmt.Errorf("lexer error in %s: %w", fileName, err)
 	}
 
-	// 1.5. Module & Host Capability Resolution
-	resolvedAst, resolveDiags := loneproject.ResolveAST(fileName, rawAst)
+	// 2. Parsing (Pratt + Recursive Descent)
+	parser := loneparser.NewParser(tokens)
+	ast, err := parser.ParseProgram()
+	if err != nil {
+		return nil, fmt.Errorf("syntax error in %s: %w", fileName, err)
+	}
 
-	// 2. Semantic Analysis & Type Inference
-	analyzer := loneanalyzer.NewAnalyzer(fileName, loneanalyzer.DefaultConfig())
-	typedProg, diags := analyzer.AnalyzeTyped(resolvedAst)
-	diags = append(resolveDiags, diags...)
+	// 2.5. Module Resolution
+	resolvedAst, resolveDiags := loneproject.ResolveAST(fileName, ast)
+	diags := resolveDiags
+
+	// 3. Semantic Analysis & Type Evaluation
+	evaluator := loneanalyzer.NewTypeEvaluator()
+	typedProg := evaluator.EvaluateProgram(resolvedAst)
+	diags = append(diags, evaluator.Diagnostics()...)
 
 	hasErrors := false
 	for _, d := range diags {
@@ -99,68 +99,45 @@ func (c *Compiler) CompileSource(fileName string, source []byte) (*Result, error
 	}
 	if hasErrors {
 		return &Result{
+			AST:          ast,
 			TypedProgram: typedProg,
 			Diagnostics:  diags,
-		}, fmt.Errorf("compilation failed with type/semantic errors")
+		}, fmt.Errorf("compilation failed with type/semantic errors in %s", fileName)
 	}
 
-	// 3. Lowering to MIR (Mid-level IR)
-	mirMod, err := lonemir.LowerProgram(typedProg)
+	// 4. Structured Wasm Lowering
+	lowerOpts := lonewir.LowerOptions{
+		Target:       c.cfg.Target,
+		MemoryPages:  c.cfg.MemoryPages,
+		MemoryExport: c.cfg.MemoryExport,
+	}
+	wasmMod, err := lonewir.LowerProgram(typedProg, lowerOpts)
 	if err != nil {
-		return nil, fmt.Errorf("MIR lowering error: %w", err)
+		return nil, fmt.Errorf("lowering error in %s: %w", fileName, err)
 	}
 
-	res := &Result{
-		TypedProgram: typedProg,
-		Diagnostics:  diags,
-		MirModule:    mirMod,
-	}
-
-	// If MIR output requested, format and return early
-	if c.cfg.EmitMir {
-		res.WatOutput = lonemir.FormatModule(mirMod)
-		return res, nil
-	}
-
-	// 4. Lowering to WIR (Wasm AST)
-	wasmMod, err := lonewir.LowerToWasmModule(mirMod, c.cfg.Target, c.rt)
-	if err != nil {
-		return nil, fmt.Errorf("WIR AST construction error: %w", err)
-	}
-	res.WasmModule = wasmMod
-
-	// 5. Optimization pass
+	// 5. Optimization
 	if c.cfg.Optimize {
 		opt := lonewir.NewOptimizer()
 		opt.OptimizeModule(wasmMod)
 	}
 
-	// 6. Formatting WAT
-	res.WatOutput = wasmMod.FormatWat()
+	// 6. WAT Code Generation
+	wat := wasmMod.FormatWat()
 
-	// 7. Adapter Glue generation
-	if c.cfg.WithAdapter != "" {
-		kind, err := loneadapter.ParseAdapterKind(c.cfg.WithAdapter)
-		if err != nil {
-			return nil, err
+	res := &Result{
+		AST:          ast,
+		TypedProgram: typedProg,
+		Diagnostics:  diags,
+		WasmModule:   wasmMod,
+		WatOutput:    wat,
+	}
+
+	// 7. Write to output file if requested
+	if c.cfg.OutFilePath != "" {
+		if err := os.WriteFile(c.cfg.OutFilePath, []byte(wat), 0644); err != nil {
+			return res, fmt.Errorf("failed to write output to %s: %w", c.cfg.OutFilePath, err)
 		}
-		wasmBaseName := "out.wasm"
-		if c.cfg.OutFilePath != "" {
-			wasmBaseName = filepath.Base(c.cfg.OutFilePath)
-			if strings.HasSuffix(wasmBaseName, ".wat") {
-				wasmBaseName = strings.TrimSuffix(wasmBaseName, ".wat") + ".wasm"
-			}
-		}
-		glue, err := loneadapter.GenerateAdapter(kind, wasmBaseName)
-		if err != nil {
-			return nil, fmt.Errorf("adapter generation failed: %w", err)
-		}
-		res.AdapterGlue = glue
-		ext := ".mjs"
-		if kind == loneadapter.AdapterBrowser {
-			ext = ".html"
-		}
-		res.AdapterFile = strings.TrimSuffix(wasmBaseName, filepath.Ext(wasmBaseName)) + ext
 	}
 
 	return res, nil

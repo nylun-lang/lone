@@ -1,74 +1,110 @@
 package loneast
 
+// ImportDecl represents a flat import statement: import .sym1, .sym2 from :source
 type ImportDecl struct {
-	Symbols     []string // List of imported symbol names (e.g. ["readline", "print"])
-	Source      string   // Target namespace or relative path (e.g. ":std:io", ".std")
-	IsNamespace bool     // True if Source starts with ':'
-	Alias       string   // Optional alias (e.g. for "import :std:io as io")
-	Pos         Position
+	Symbols     []string
+	Source      string
+	IsNamespace bool
+	Alias       string
+	Span_       Span
 }
 
+func (i ImportDecl) NodeSpan() Span { return i.Span_ }
+
+// WasmDirective represents @fa:wasm or legacy directive.
 type WasmDirective struct {
-	Name    string       // Directive identifier (e.g. "wasm", "doc")
+	Name    string
 	Imports []ImportDecl
-	Inline  bool // True for single-line directive
-	Pos     Position
+	Inline  bool
+	Span_   Span
 }
 
-type HostImportParam struct {
-	Name     string
-	LoneType string
-	WasmType string
-}
+func (w WasmDirective) NodeSpan() Span { return w.Span_ }
 
-type HostImportDecl struct {
-	Namespace      string
-	WasmModule     string
-	WasmName       string
-	LocalName      string
-	Params         []HostImportParam
-	ReturnLoneType string
-	ReturnWasmType string
-	Pos            Position
-}
-
-type ModuleScopeDecl struct {
-	ModuleID string
-	FilePath string
-	Decls    []any
-	Exports  map[string]bool
-}
-
-type ResolvedImportDecl struct {
-	ModuleID string
-	Source   string
-	Symbols  []string
-	Alias    string
-	Pos      Position
-}
-
+// BIND_DEC represents variable and constant bindings (let and var).
 type BIND_DEC struct {
-	Name     string
-	IsPublic bool
-	Pos      Position
-	Value    Expr
-	Type     TYPE_REF
+	Name      string
+	Names     []string     // non-empty for grouped declarations: let [a, b]: int = 0
+	Pattern   MatchPattern // non-nil for destructuring: let Shape::Circle(r) = s or let (a, b) = pair
+	IsPublic  bool
+	IsMutable bool // true for 'var' (mutable), false for 'let' (immutable)
+	Value     Expr
+	Type      TYPE_REF
+	Span_     Span
 }
 
+func (b BIND_DEC) NodeSpan() Span { return b.Span_ }
+
+// FnParam represents a typed function parameter.
+type FnParam struct {
+	Name  string
+	Names []string // non-empty for grouped parameters: [x, y, w, h]: int
+	Type  TYPE_REF
+	Span_ Span
+}
+
+func (p FnParam) NodeSpan() Span { return p.Span_ }
+
+// TypeParam represents a generic type parameter: T or U = DefaultType
+type TypeParam struct {
+	Name    string
+	Default *TYPE_REF
+	Span_   Span
+}
+
+func (tp TypeParam) NodeSpan() Span { return tp.Span_ }
+
+type ConstraintOp int
+
+const (
+	ConstraintIs ConstraintOp = iota
+	ConstraintSatisfies
+)
+
+// GenericConstraint represents where { U is Error } or where { T satisfies TrWriter }
+type GenericConstraint struct {
+	TypeParam string
+	Op        ConstraintOp
+	Target    TYPE_REF
+	Span_     Span
+}
+
+func (c GenericConstraint) NodeSpan() Span { return c.Span_ }
+
+// FN_DEC represents a function declaration.
 type FN_DEC struct {
+	Name        string
+	IsPublic    bool
+	TypeParams  []TypeParam
+	Constraints []GenericConstraint
+	Params      []FnParam
+	ReturnType  *TYPE_REF
+	Body        Block
+	Span_       Span
+}
+
+func (f FN_DEC) NodeSpan() Span { return f.Span_ }
+
+// StructField represents a field inside a struct declaration.
+type StructField struct {
 	Name       string
-	IsPublic   bool
-	Pos        Position
+	Type       TYPE_REF
+	IsReadOnly bool
+	IsRoPub    bool
+	Span_      Span
+}
+
+func (s StructField) NodeSpan() Span { return s.Span_ }
+
+// TraitMethodSig represents a signature inside a trait declaration.
+type TraitMethodSig struct {
+	Name       string
 	Params     []FnParam
 	ReturnType *TYPE_REF
-	Body       Block
+	Span_      Span
 }
 
-type AssignStmt struct {
-	Target Expr
-	Value  Expr
-	Pos    Position
-}
+func (t TraitMethodSig) NodeSpan() Span { return t.Span_ }
 
 type TypeDecKind int
 
@@ -76,54 +112,60 @@ const (
 	TYPE_DEC_ALIAS TypeDecKind = iota
 	TYPE_DEC_STRUCT
 	TYPE_DEC_TRAIT
+	TYPE_DEC_ENUM
+	TYPE_DEC_INTERFACE
 )
 
-type StructField struct {
-	Name string
-	Type TYPE_REF
-	Pos  Position
+// EnumVariant represents a variant within an enum declaration.
+type EnumVariant struct {
+	Name   string
+	Fields []StructField
+	Tag    int
+	Span_  Span
 }
 
-type TraitMethodSig struct {
-	Name       string
-	Params     []FnParam
-	ReturnType *TYPE_REF
-	Pos        Position
-}
+func (v EnumVariant) NodeSpan() Span { return v.Span_ }
 
+// TYPE_DEC represents struct, trait, enum, or alias declarations.
 type TYPE_DEC struct {
-	Name       string
-	IsPublic   bool
-	TypeParams []string
-	Kind       TypeDecKind
+	Name        string
+	IsPublic    bool
+	TypeParams  []TypeParam
+	Constraints []GenericConstraint
+	Kind        TypeDecKind
 	AliasType  *TYPE_REF
 	Fields     []StructField
+	Embedded   []string
+	Variants   []EnumVariant
 	Methods    []FN_DEC
 	TraitSigs  []TraitMethodSig
-	Pos        Position
+	Span_      Span
 }
 
+func (t TYPE_DEC) NodeSpan() Span { return t.Span_ }
+
+// IMPL_DEC represents trait implementation on a type: impl TrTrait for TargetType { ... }
 type IMPL_DEC struct {
 	TraitName  string
 	TraitArgs  []TYPE_REF
 	TargetType TYPE_REF
 	Methods    []FN_DEC
-	Pos        Position
+	Span_      Span
 }
 
-func (f FN_DEC) HasReturn() bool {
-	return f.ReturnType != nil
-}
+func (i IMPL_DEC) NodeSpan() Span { return i.Span_ }
 
+// Block represents a sequence of statements enclosed in braces.
 type Block struct {
 	Stmts []any
-	Pos   Position
+	Span_ Span
 }
 
-type ReturnStmt struct {
-	Value Expr
-	Pos   Position
-}
+func (b Block) NodeSpan() Span { return b.Span_ }
+
+// =====================
+// TYPE REFERENCES
+// =====================
 
 type TypeRefKind int
 
@@ -131,20 +173,8 @@ const (
 	TYPE_BASE TypeRefKind = iota
 	TYPE_LIST
 	TYPE_FN
+	TYPE_TUPLE
 )
-
-func (k TypeRefKind) String() string {
-	switch k {
-	case TYPE_BASE:
-		return "TypeBase"
-	case TYPE_LIST:
-		return "TypeList"
-	case TYPE_FN:
-		return "TypeFn"
-	default:
-		return "Unknown"
-	}
-}
 
 type TypeConstrain struct {
 	ReadOnly bool
@@ -153,69 +183,31 @@ type TypeConstrain struct {
 }
 
 type TYPE_REF struct {
-	Pos       Position
 	Kind      TypeRefKind
 	Constrain TypeConstrain
-	Value     any
+	Value     any // *TypeBase, *TypeList, *TypeFn, *TypeTuple
+	Span_     Span
 }
 
-func (t TYPE_REF) AsBase() *TypeBase {
-	switch v := t.Value.(type) {
-	case *TypeBase:
-		return v
-	case TypeBase:
-		return &v
-	default:
-		return nil
-	}
-}
+func (t TYPE_REF) NodeSpan() Span { return t.Span_ }
 
-func (t TYPE_REF) AsList() *TypeList {
-	switch v := t.Value.(type) {
-	case *TypeList:
-		return v
-	case TypeList:
-		return &v
-	default:
-		return nil
-	}
-}
-
-func (t TYPE_REF) AsFn() *TypeFn {
-	switch v := t.Value.(type) {
-	case *TypeFn:
-		return v
-	case TypeFn:
-		return &v
-	default:
-		return nil
-	}
+type TypeTuple struct {
+	Types []TYPE_REF
 }
 
 type TypeBase struct {
-	Name string
-	Args []TYPE_REF
+	Name    string
+	Variant string // non-empty if associated variant e.g. Shape::Circle
+	Args    []TYPE_REF
 }
 
 type TypeList struct {
-	Size     Expr
+	Size     Expr // nil or dynamic size literal for slice []T, constant Expr for fixed [N]T
 	ItemType TYPE_REF
 }
 
 func (l TypeList) IsFixed() bool {
-	if l.Size == nil {
-		return false
-	}
-	if lit, ok := l.Size.(Literal); ok && lit.Kind == LITERAL_DYNAMIC_SIZE {
-		return false
-	}
-	return true
-}
-
-type FnParam struct {
-	Name string
-	Type TYPE_REF
-	Size Expr
+	return l.Size != nil
 }
 
 type TypeFn struct {

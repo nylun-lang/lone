@@ -1,94 +1,38 @@
 package loneanalyzer
 
+import (
+	loneparser "lone/pkg/lone-parser"
+)
 
-// Pass represents an analysis pass operating on AST declarations.
-type Pass interface {
-	Run(decls []any) []Diagnostic
-}
-
-// AnalyzerConfig specifies options for configuring the analyzer.
-type AnalyzerConfig struct {
-	EnforceNamingConventions bool
-	EnforceTypeChecking      bool
-	EnforceConsumeOrDrop     bool
-}
-
-// DefaultConfig returns the standard analyzer configuration.
-func DefaultConfig() AnalyzerConfig {
-	return AnalyzerConfig{
-		EnforceNamingConventions: true,
-		EnforceTypeChecking:      true,
-		EnforceConsumeOrDrop:     true,
-	}
-}
-
-// Analyzer orchestrates multiple analysis passes over a Lone file AST.
+// Analyzer orchestrates parsing and semantic evaluation.
 type Analyzer struct {
-	fileName string
-	config   AnalyzerConfig
-	passes   []Pass
-	typePass *PassTypes
+	evaluator *TypeEvaluator
 }
 
-// NewAnalyzer creates a configured analyzer for a given file.
-func NewAnalyzer(fileName string, config AnalyzerConfig) *Analyzer {
-	a := &Analyzer{
-		fileName: fileName,
-		config:   config,
-		passes:   make([]Pass, 0),
+func NewAnalyzer() *Analyzer {
+	return &Analyzer{
+		evaluator: NewTypeEvaluator(),
 	}
-
-	if config.EnforceNamingConventions {
-		a.passes = append(a.passes, NewPassNamingConventions(fileName))
-	}
-
-	if config.EnforceTypeChecking {
-		a.typePass = NewPassTypes(fileName, config.EnforceConsumeOrDrop)
-		a.passes = append(a.passes, a.typePass)
-	}
-
-	return a
 }
 
-// Analyze runs all registered passes on the AST declarations and returns collected diagnostics.
-func (a *Analyzer) Analyze(ast any) []Diagnostic {
-	decls := toDeclSlice(ast)
-	var diagnostics []Diagnostic
-
-	for _, pass := range a.passes {
-		diags := pass.Run(decls)
-		diagnostics = append(diagnostics, diags...)
-	}
-
-	return diagnostics
+// Analyze runs semantic analysis on parsed AST declarations and returns collected diagnostics.
+func (a *Analyzer) Analyze(decls []any) []Diagnostic {
+	_ = a.evaluator.EvaluateProgram(decls)
+	return a.evaluator.Diagnostics()
 }
 
-// AnalyzeTyped runs all passes and returns both the generated Typed IR and collected diagnostics.
-func (a *Analyzer) AnalyzeTyped(ast any) (*TProgram, []Diagnostic) {
-	diags := a.Analyze(ast)
-	var prog *TProgram
-	if a.typePass != nil {
-		prog = a.typePass.TypedProgram()
-	}
-	return prog, diags
+// AnalyzeTyped runs semantic analysis and returns both the Typed IR program and diagnostics.
+func (a *Analyzer) AnalyzeTyped(decls []any) (*TProgram, []Diagnostic) {
+	prog := a.evaluator.EvaluateProgram(decls)
+	return prog, a.evaluator.Diagnostics()
 }
 
-// Evaluator returns the TypeEvaluator instance from the type pass if enabled and executed.
-func (a *Analyzer) Evaluator() *TypeEvaluator {
-	if a.typePass != nil {
-		return a.typePass.Evaluator()
+// AnalyzeSource parses source bytes and performs full type evaluation.
+func (a *Analyzer) AnalyzeSource(src []byte) (*TProgram, []Diagnostic, error) {
+	decls, err := loneparser.Parse(src)
+	if err != nil {
+		return nil, nil, err
 	}
-	return nil
-}
-
-func toDeclSlice(ast any) []any {
-	if ast == nil {
-		return nil
-	}
-	switch v := ast.(type) {
-	case []any:
-		return v
-	default:
-		return []any{v}
-	}
+	prog, diags := a.AnalyzeTyped(decls)
+	return prog, diags, nil
 }

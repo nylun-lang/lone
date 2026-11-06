@@ -1,14 +1,14 @@
 package lonewir
 
-// Optimizer performs peephole optimizations and dead instruction elimination on a WasmModule AST.
+// Optimizer applies safe peephole optimizations to a WebAssembly AST.
 type Optimizer struct{}
 
-// NewOptimizer returns a new Optimizer instance.
+// NewOptimizer creates an Optimizer instance.
 func NewOptimizer() *Optimizer {
 	return &Optimizer{}
 }
 
-// OptimizeModule optimizes all functions in the given WasmModule.
+// OptimizeModule runs optimization passes over all functions in the module.
 func (opt *Optimizer) OptimizeModule(mod *WasmModule) {
 	if mod == nil {
 		return
@@ -18,50 +18,74 @@ func (opt *Optimizer) OptimizeModule(mod *WasmModule) {
 	}
 }
 
-// OptimizeInsts recursively cleans and optimizes a slice of instructions.
+// OptimizeInsts optimizes a slice of instructions.
 func (opt *Optimizer) OptimizeInsts(insts []WasmInst) []WasmInst {
-	if len(insts) == 0 {
-		return insts
-	}
-
-	var optimized []WasmInst
+	var result []WasmInst
 
 	for i := 0; i < len(insts); i++ {
-		curr := insts[i]
+		inst := insts[i]
 
-		// 1. Strip pure nop instructions
-		if _, isNop := curr.(InstNop); isNop {
+		// Recurse into structured blocks
+		switch b := inst.(type) {
+		case InstBlock:
+			b.Body = opt.OptimizeInsts(b.Body)
+			inst = b
+		case InstLoop:
+			b.Body = opt.OptimizeInsts(b.Body)
+			inst = b
+		case InstIf:
+			b.Then = opt.OptimizeInsts(b.Then)
+			b.Else = opt.OptimizeInsts(b.Else)
+			inst = b
+		}
+
+		// 1. Strip Nop
+		if _, isNop := inst.(InstNop); isNop {
 			continue
 		}
 
-		// 2. Peephole: Suppress naive constant followed immediately by drop (e.g. i32.const -> drop)
+		// 2. Suppress pure const followed by drop
 		if i+1 < len(insts) {
-			next := insts[i+1]
-			if curr.IsPure() {
-				if _, isDrop := next.(InstDrop); isDrop {
-					// Both the pure instruction and the drop can be suppressed!
-					i++ // Skip next (the drop)
-					continue
-				}
+			_, nextIsDrop := insts[i+1].(InstDrop)
+			if nextIsDrop && isConstInst(inst) {
+				i++ // Skip both const and drop
+				continue
 			}
 		}
 
-		// 3. Recurse into structured blocks, loops, and conditionals
-		switch block := curr.(type) {
-		case InstBlock:
-			block.Body = opt.OptimizeInsts(block.Body)
-			curr = block
-		case InstLoop:
-			block.Body = opt.OptimizeInsts(block.Body)
-			curr = block
-		case InstIf:
-			block.Then = opt.OptimizeInsts(block.Then)
-			block.Else = opt.OptimizeInsts(block.Else)
-			curr = block
+		// 3. local.set $x; local.get $x -> local.tee $x
+		if i+1 < len(insts) {
+			setInst, isSet := inst.(InstLocalSet)
+			getInst, isGet := insts[i+1].(InstLocalGet)
+			if isSet && isGet && setInst.Name == getInst.Name {
+				result = append(result, InstLocalTee{Name: setInst.Name})
+				i++ // Skip get
+				continue
+			}
 		}
 
-		optimized = append(optimized, curr)
+		result = append(result, inst)
+
+		// 4. Eliminate dead code after unconditional return or br
+		if _, isRet := inst.(InstReturn); isRet {
+			break
+		}
+		if _, isBr := inst.(InstBr); isBr {
+			break
+		}
+		if _, isUnreachable := inst.(InstUnreachable); isUnreachable {
+			break
+		}
 	}
 
-	return optimized
+	return result
+}
+
+func isConstInst(inst WasmInst) bool {
+	switch inst.(type) {
+	case InstConstI32, InstConstI64, InstConstF32, InstConstF64:
+		return true
+	default:
+		return false
+	}
 }

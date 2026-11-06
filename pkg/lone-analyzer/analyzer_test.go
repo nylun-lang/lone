@@ -3,555 +3,1412 @@ package loneanalyzer
 import (
 	"strings"
 	"testing"
-
-	ir "lone/pkg/lone-parser-ast"
-	"lone/pkg/lone-parser"
 )
 
-func TestScopeStack(t *testing.T) {
-	stack := NewScopeStack("main.lone")
-	if stack.Current().Kind != ScopeFile {
-		t.Fatalf("expected root scope to be file, got %v", stack.Current().Kind)
-	}
-
-	sym1 := &Symbol{Name: "GLOBAL_VAL", Kind: SymbolVar}
-	if err := stack.Define(sym1); err != nil {
-		t.Fatalf("failed to define global: %v", err)
-	}
-
-	// Duplicate error
-	if err := stack.Define(sym1); err == nil {
-		t.Fatalf("expected error on duplicate definition")
-	}
-
-	// Push function
-	stack.Push(ScopeFunction, "main")
-	if stack.Current().Kind != ScopeFunction {
-		t.Fatalf("expected function scope, got %v", stack.Current().Kind)
-	}
-	if !stack.HasEnclosing(ScopeFile) {
-		t.Fatalf("expected enclosing file scope")
-	}
-
-	// Define local
-	sym2 := &Symbol{Name: "local_val", Kind: SymbolVar}
-	if err := stack.Define(sym2); err != nil {
-		t.Fatalf("failed to define local: %v", err)
-	}
-
-	// Lookup local and global from inner scope
-	if resolved := stack.Resolve("local_val"); resolved == nil {
-		t.Fatalf("failed to resolve local_val")
-	}
-	if resolved := stack.Resolve("GLOBAL_VAL"); resolved == nil {
-		t.Fatalf("failed to resolve GLOBAL_VAL from inner scope")
-	}
-
-	// Pop
-	stack.Pop()
-	if stack.Current().Kind != ScopeFile {
-		t.Fatalf("expected to return to file scope, got %v", stack.Current().Kind)
-	}
-	if resolved := stack.Resolve("local_val"); resolved != nil {
-		t.Fatalf("expected local_val not to resolve in file scope")
-	}
-}
-
-func TestNamingConventionsValidCode(t *testing.T) {
+func TestLetImmutabilityEnforcement(t *testing.T) {
 	code := `
-var MAX_USERS = 100
-var app_name = "lone"
+let max = 100
+max = 200
 
-fn calculate_total(item_count: i32, unit_price: f32) f32 {
-	var sub_total = 0
-	blk: {
-		break blk: 42
-	}
-	return 0
-}
+var count = 0
+count = 10
 `
-	ast, err := loneparser.Parse("test.lone", []byte(code))
+	analyzer := NewAnalyzer()
+	_, diags, err := analyzer.AnalyzeSource([]byte(code))
 	if err != nil {
-		t.Fatalf("parse failed: %v", err)
+		t.Fatalf("unexpected parse error: %v", err)
 	}
 
-	analyzer := NewAnalyzer("test.lone", DefaultConfig())
-	diags := analyzer.Analyze(ast)
+	if len(diags) != 1 {
+		t.Fatalf("expected exactly 1 diagnostic, got %d: %v", len(diags), diags)
+	}
+
+	d := diags[0]
+	if d.Rule != "type/immutable-reassignment" {
+		t.Errorf("expected rule 'type/immutable-reassignment', got %q", d.Rule)
+	}
+	if !strings.Contains(d.Message, "cannot reassign immutable binding \"max\"") {
+		t.Errorf("unexpected error message: %q", d.Message)
+	}
+}
+
+func TestVarMutabilityAllowed(t *testing.T) {
+	code := `
+var total = 0
+total = 10
+total = total + 5
+`
+	analyzer := NewAnalyzer()
+	_, diags, err := analyzer.AnalyzeSource([]byte(code))
+	if err != nil {
+		t.Fatalf("unexpected parse error: %v", err)
+	}
 
 	if len(diags) != 0 {
-		t.Fatalf("expected 0 diagnostics for valid code, got %d: %v", len(diags), diags)
+		t.Fatalf("expected 0 diagnostics, got %d: %v", len(diags), diags)
 	}
 }
 
-func TestNamingConventionsInvalidIdentifiers(t *testing.T) {
+func TestScopedConditionHeaderScope(t *testing.T) {
 	code := `
-var BadGlobalName = 10
-
-fn BadFunctionName(BadParam: i32) bad_custom_type {
-	var BadLocalVar = 20
-	BadLabel: {
-		break BadLabel: 1
-	}
-	var obj = { .BadField: 1 }
-	return 0
+fn test_scoped() void {
+    if: [let scoped_var = 42] scoped_var > 0 {
+        let inside = scoped_var
+    }
+    let leak = scoped_var
 }
 `
-	ast, err := loneparser.Parse("test.lone", []byte(code))
+	analyzer := NewAnalyzer()
+	_, diags, err := analyzer.AnalyzeSource([]byte(code))
 	if err != nil {
-		t.Fatalf("parse failed: %v", err)
+		t.Fatalf("unexpected parse error: %v", err)
 	}
 
-	analyzer := NewAnalyzer("test.lone", DefaultConfig())
-	diags := analyzer.Analyze(ast)
-
-	expectedRules := map[string]bool{
-		"naming/global":    false,
-		"naming/function":  false,
-		"naming/parameter": false,
-		"naming/type":      false,
-		"naming/variable":  false,
-		"naming/label":     false,
-		"naming/field":     false,
+	// 'scoped_var' must be undefined outside the 'if' construct
+	if len(diags) != 1 {
+		t.Fatalf("expected 1 diagnostic (scope leak), got %d: %v", len(diags), diags)
 	}
 
-	for _, d := range diags {
-		if _, ok := expectedRules[d.Rule]; ok {
-			expectedRules[d.Rule] = true
-		}
-	}
-
-	for rule, found := range expectedRules {
-		if !found {
-			t.Errorf("expected diagnostic for rule %q, but none was emitted. Emitted diags: %v", rule, diags)
-		}
+	d := diags[0]
+	if d.Rule != "type/undefined-identifier" || !strings.Contains(d.Message, "scoped_var") {
+		t.Errorf("expected undefined identifier 'scoped_var', got %v", d)
 	}
 }
 
-func TestNamingConventionsIntrinsicFunction(t *testing.T) {
-	// Intrinsic function using direct AST node
-	fn := ir.FN_DEC{
-		Name: "#intrinsic_print",
-		Body: ir.Block{Stmts: nil},
+func TestScopedConditionHeaderPackedIf(t *testing.T) {
+	code := `
+fn test_packed() void {
+    if: [let x = 10, let y = 20] {
+        x > 0 and y > 0 => {
+            drop x + y
+        },
+        else => {
+            drop 0
+        }
+    }
+}
+`
+	analyzer := NewAnalyzer()
+	_, diags, err := analyzer.AnalyzeSource([]byte(code))
+	if err != nil {
+		t.Fatalf("unexpected parse error: %v", err)
 	}
-
-	analyzer := NewAnalyzer("test.lone", DefaultConfig())
-	diags := analyzer.Analyze([]any{fn})
 
 	if len(diags) != 0 {
-		t.Fatalf("expected 0 diagnostics for intrinsic function, got %d: %v", len(diags), diags)
+		t.Fatalf("expected 0 diagnostics, got %d: %v", len(diags), diags)
 	}
 }
 
-func TestTypeInferenceToConcreteIR(t *testing.T) {
-	code := `
-var num = 42
-var text = "hello"
-var flag = true
-
-fn compute() i32 {
-	var local_infer = 100
-	return local_infer
+func TestTrTraitNamingConvention(t *testing.T) {
+	// 1. Valid Tr trait
+	validCode := `
+pub type TrWriter = trait {
+    fn write(self, buf: []u8) i32
+}
+pub type Stdout = struct {
+    fd: i32
 }
 `
-	ast, err := loneparser.Parse("infer.lone", []byte(code))
+	analyzer := NewAnalyzer()
+	_, diags, err := analyzer.AnalyzeSource([]byte(validCode))
 	if err != nil {
-		t.Fatalf("parse failed: %v", err)
+		t.Fatalf("unexpected parse error: %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("expected 0 diagnostics for valid TrWriter, got: %v", diags)
 	}
 
-	analyzer := NewAnalyzer("infer.lone", DefaultConfig())
-	prog, diags := analyzer.AnalyzeTyped(ast)
+	// 2. Trait without Tr prefix
+	invalidTraitCode := `
+pub type WriterTrait = trait {
+    fn write(self) void
+}
+`
+	analyzer2 := NewAnalyzer()
+	_, diags2, err := analyzer2.AnalyzeSource([]byte(invalidTraitCode))
+	if err != nil {
+		t.Fatalf("unexpected parse error: %v", err)
+	}
+	if len(diags2) != 1 || diags2[0].Rule != "convention/trait-naming" {
+		t.Errorf("expected convention/trait-naming error, got: %v", diags2)
+	}
 
+	// 3. Struct with Tr prefix
+	invalidStructCode := `
+pub type TrMyStruct = struct {
+    x: i32
+}
+`
+	analyzer3 := NewAnalyzer()
+	_, diags3, err := analyzer3.AnalyzeSource([]byte(invalidStructCode))
+	if err != nil {
+		t.Fatalf("unexpected parse error: %v", err)
+	}
+	if len(diags3) != 1 || diags3[0].Rule != "convention/non-trait-naming" {
+		t.Errorf("expected convention/non-trait-naming error, got: %v", diags3)
+	}
+}
+
+func TestExplicitCastOperator(t *testing.T) {
+	code := `
+let i: i32 = 100
+let f: f32 = i as f32
+let w: i64 = i as i64
+`
+	analyzer := NewAnalyzer()
+	prog, diags, err := analyzer.AnalyzeSource([]byte(code))
+	if err != nil {
+		t.Fatalf("unexpected parse error: %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("expected 0 diagnostics for explicit 'as' casts, got: %v", diags)
+	}
+
+	fVar := prog.Decls[1].(*TVarDec)
+	if !fVar.Type.Equals(TypeF32) {
+		t.Errorf("expected type f32, got %q", fVar.Type.String())
+	}
+}
+
+func TestImplicitNumericMismatchRejected(t *testing.T) {
+	code := `
+var f: f32 = 100
+`
+	analyzer := NewAnalyzer()
+	_, diags, err := analyzer.AnalyzeSource([]byte(code))
+	if err != nil {
+		t.Fatalf("unexpected parse error: %v", err)
+	}
+
+	if len(diags) != 1 {
+		t.Fatalf("expected 1 diagnostic (type mismatch for implicit int to float), got %d: %v", len(diags), diags)
+	}
+	if diags[0].Rule != "type/mismatch" {
+		t.Errorf("expected rule 'type/mismatch', got %q", diags[0].Rule)
+	}
+}
+
+func TestEnumAndMatchAnalysis(t *testing.T) {
+	code := `
+type Shape = enum {
+    Circle(radius: f32),
+    Rect(width: f32, height: f32),
+    Point,
+}
+
+fn area(s: Shape) f32 {
+    return match s {
+        Shape::Circle(r) => 3.14 * r * r,
+        Shape::Rect(w, h) => w * h,
+        Shape::Point => 0.0,
+    }
+}
+
+fn test_construct() Shape {
+    let c = Shape::Circle(10.5)
+    let p = Shape::Point
+    return c
+}
+`
+	analyzer := NewAnalyzer()
+	prog, diags, err := analyzer.AnalyzeSource([]byte(code))
+	if err != nil {
+		t.Fatalf("unexpected parse error: %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("expected 0 diagnostics, got %d: %v", len(diags), diags)
+	}
+
+	enumDec, ok := prog.Decls[0].(*TEnumDec)
+	if !ok {
+		t.Fatalf("expected TEnumDec, got %#v", prog.Decls[0])
+	}
+	// Tag (4) + Rect payload (4+4) = 12 bytes
+	if enumDec.Type.TotalSize != 12 {
+		t.Errorf("expected Shape size 12, got %d", enumDec.Type.TotalSize)
+	}
+}
+
+func TestNonExhaustiveMatchError(t *testing.T) {
+	code := `
+type Shape = enum {
+    Circle(radius: f32),
+    Rect(width: f32, height: f32),
+    Point,
+}
+
+fn area(s: Shape) f32 {
+    return match s {
+        Shape::Circle(r) => 3.14 * r * r,
+        Shape::Point => 0.0,
+    }
+}
+`
+	analyzer := NewAnalyzer()
+	_, diags, err := analyzer.AnalyzeSource([]byte(code))
+	if err != nil {
+		t.Fatalf("unexpected parse error: %v", err)
+	}
+	if len(diags) != 1 {
+		t.Fatalf("expected 1 diagnostic for missing Rect variant, got %d: %v", len(diags), diags)
+	}
+	if diags[0].Rule != "type/non-exhaustive-match" {
+		t.Errorf("expected rule 'type/non-exhaustive-match', got %q", diags[0].Rule)
+	}
+	if !strings.Contains(diags[0].Message, "Rect") {
+		t.Errorf("expected message to mention missing variant 'Rect', got %q", diags[0].Message)
+	}
+}
+
+func TestDiscriminantIsAndHeaderDestructuring(t *testing.T) {
+	code := `
+type Shape = enum {
+    Circle(radius: i32),
+    Rect(width: i32, height: i32),
+    Point,
+}
+
+fn check_shape(s: Shape) bool {
+    let is_circ = s is Shape::Circle
+    let not_pt = s is not Shape::Point
+
+    if: [let Shape::Circle(r) = s] {
+        return r > 0
+    } else {
+        return false
+    }
+}
+`
+	analyzer := NewAnalyzer()
+	_, diags, err := analyzer.AnalyzeSource([]byte(code))
+	if err != nil {
+		t.Fatalf("unexpected parse error: %v", err)
+	}
 	if len(diags) != 0 {
 		t.Fatalf("expected 0 diagnostics, got: %v", diags)
 	}
-
-	if prog == nil || len(prog.Decls) != 4 {
-		t.Fatalf("expected 4 declarations in typed IR, got: %+v", prog)
-	}
-
-	// 1. var num = 42 -> TypeI32
-	varNum, ok := prog.Decls[0].(*TVarDec)
-	if !ok || !varNum.Type.Equals(TypeI32) {
-		t.Errorf("expected varNum to be resolved to i32, got: %+v", varNum)
-	}
-
-	// 2. var text = "hello" -> TypeStr
-	varText, ok := prog.Decls[1].(*TVarDec)
-	if !ok || !varText.Type.Equals(TypeStr) {
-		t.Errorf("expected varText to be resolved to str, got: %+v", varText)
-	}
-
-	// 3. var flag = true -> TypeBool
-	varFlag, ok := prog.Decls[2].(*TVarDec)
-	if !ok || !varFlag.Type.Equals(TypeBool) {
-		t.Errorf("expected varFlag to be resolved to bool, got: %+v", varFlag)
-	}
-
-	// 4. fn compute() i32 -> local_infer is i32
-	fnCompute, ok := prog.Decls[3].(*TFnDec)
-	if !ok || !fnCompute.ReturnType.Equals(TypeI32) {
-		t.Errorf("expected fnCompute return type to be i32, got: %+v", fnCompute)
-	}
-	localVar, ok := fnCompute.Body.Stmts[0].(*TVarDec)
-	if !ok || !localVar.Type.Equals(TypeI32) {
-		t.Errorf("expected local_infer to be resolved to i32, got: %+v", localVar)
-	}
 }
 
-func TestFunctionReturnCheck(t *testing.T) {
-	// Function returning wrong type
-	codeMismatch := `
-fn get_num() i32 {
-	return "not a number"
-}
-`
-	astMismatch, err := loneparser.Parse("mismatch.lone", []byte(codeMismatch))
-	if err != nil {
-		t.Fatalf("parse failed: %v", err)
-	}
-
-	analyzer := NewAnalyzer("mismatch.lone", DefaultConfig())
-	diags := analyzer.Analyze(astMismatch)
-
-	hasMismatch := false
-	for _, d := range diags {
-		if d.Rule == "type/return-mismatch" {
-			hasMismatch = true
-		}
-	}
-	if !hasMismatch {
-		t.Fatalf("expected type/return-mismatch diagnostic, got: %v", diags)
-	}
-
-	// Function missing return
-	codeMissing := `
-fn need_num() i32 {
-	var x = 10
-}
-`
-	astMissing, err := loneparser.Parse("missing.lone", []byte(codeMissing))
-	if err != nil {
-		t.Fatalf("parse failed: %v", err)
-	}
-
-	diagsMissing := analyzer.Analyze(astMissing)
-	hasMissing := false
-	for _, d := range diagsMissing {
-		if d.Rule == "type/missing-return" {
-			hasMissing = true
-		}
-	}
-	if !hasMissing {
-		t.Fatalf("expected type/missing-return diagnostic, got: %v", diagsMissing)
-	}
-}
-
-func TestConsumeOrDropRule(t *testing.T) {
-	// 1. Unused return value from function without drop -> ERROR
-	codeUnused := `
-fn compute_val() i32 {
-	return 42
-}
-
-fn test_main() void {
-	compute_val()
-}
-`
-	astUnused, err := loneparser.Parse("unused.lone", []byte(codeUnused))
-	if err != nil {
-		t.Fatalf("parse failed: %v", err)
-	}
-
-	analyzer := NewAnalyzer("unused.lone", DefaultConfig())
-	diagsUnused := analyzer.Analyze(astUnused)
-
-	hasUnusedDiag := false
-	for _, d := range diagsUnused {
-		if d.Rule == "type/unused-result" {
-			hasUnusedDiag = true
-		}
-	}
-	if !hasUnusedDiag {
-		t.Fatalf("expected type/unused-result diagnostic for bare call, got: %v", diagsUnused)
-	}
-
-	// 2. Explicitly dropped with 'drop' keyword -> SUCCESS (0 diagnostics)
-	codeDropped := `
-fn compute_val() i32 {
-	return 42
-}
-
-fn test_main() void {
-	drop compute_val()
-}
-`
-	astDropped, err := loneparser.Parse("dropped.lone", []byte(codeDropped))
-	if err != nil {
-		t.Fatalf("parse failed: %v", err)
-	}
-
-	diagsDropped := analyzer.Analyze(astDropped)
-	if len(diagsDropped) != 0 {
-		t.Fatalf("expected 0 diagnostics when drop is used, got: %v", diagsDropped)
-	}
-
-	// 3. Consumed by variable binding -> SUCCESS (0 diagnostics)
-	codeConsumed := `
-fn compute_val() i32 {
-	return 42
-}
-
-fn test_main() void {
-	var result = compute_val()
-}
-`
-	astConsumed, err := loneparser.Parse("consumed.lone", []byte(codeConsumed))
-	if err != nil {
-		t.Fatalf("parse failed: %v", err)
-	}
-
-	diagsConsumed := analyzer.Analyze(astConsumed)
-	if len(diagsConsumed) != 0 {
-		t.Fatalf("expected 0 diagnostics when consumed by var, got: %v", diagsConsumed)
-	}
-
-	// 4. Calling void function directly -> SUCCESS (void does not require drop)
-	codeVoid := `
-fn do_logging() void {
-}
-
-fn test_main() void {
-	do_logging()
-}
-`
-	astVoid, err := loneparser.Parse("void.lone", []byte(codeVoid))
-	if err != nil {
-		t.Fatalf("parse failed: %v", err)
-	}
-
-	diagsVoid := analyzer.Analyze(astVoid)
-	if len(diagsVoid) != 0 {
-		t.Fatalf("expected 0 diagnostics when calling void fn, got: %v", diagsVoid)
-	}
-}
-
-func TestPrintIntrinsicAnalysis(t *testing.T) {
+func TestMustAndTry(t *testing.T) {
 	code := `
-fn main() void {
-	#print("Hello, world!\n")
+type Result = enum {
+    Ok(val: i32),
+    Err(code: i32),
+}
+
+fn step1(r: Result) Result {
+    let val = try r
+    let direct = must r
+    return Result::Ok(val + direct)
+}
+
+fn bad_try(r: Result) i32 {
+    let val = try r
+    return val
 }
 `
-	ast, err := loneparser.Parse("print.lone", []byte(code))
+	analyzer := NewAnalyzer()
+	_, diags, err := analyzer.AnalyzeSource([]byte(code))
 	if err != nil {
-		t.Fatalf("parse failed: %v", err)
+		t.Fatalf("unexpected parse error: %v", err)
 	}
+	// bad_try should trigger type/try-incompatible-return
+	if len(diags) != 1 {
+		t.Fatalf("expected 1 diagnostic for bad_try return mismatch, got %d: %v", len(diags), diags)
+	}
+	if diags[0].Rule != "type/try-incompatible-return" {
+		t.Errorf("expected rule 'type/try-incompatible-return', got %q", diags[0].Rule)
+	}
+}
 
-	analyzer := NewAnalyzer("print.lone", DefaultConfig())
-	prog, diags := analyzer.AnalyzeTyped(ast)
+func TestGenericsAndResultInfer(t *testing.T) {
+	code := `
+pub type Option<T> = enum {
+    Some(val: T),
+    None,
+}
+
+pub type Pair<A, B> = struct {
+    first: A,
+    second: B,
+}
+
+fn wrap_val<T>(val: T) Option<T> {
+    return Option::Some(val)
+}
+
+fn get_pair() Pair<i32, string> {
+    return Pair::{ .first: 10, .second: "hello" }
+}
+
+fn compute_inferred(a: i32) Result<i32, infer> {
+    if a < 0 {
+        return Result::Err(Error::Code(400))
+    }
+    return Result::Ok(a * 2)
+}
+
+fn call_inferred() Result<i32> {
+    let x = try compute_inferred(21)
+    return Result::Ok(x)
+}
+`
+	analyzer := NewAnalyzer()
+	prog, diags, err := analyzer.AnalyzeSource([]byte(code))
+	if err != nil {
+		t.Fatalf("unexpected parse error: %v", err)
+	}
 	if len(diags) != 0 {
-		t.Fatalf("expected 0 diagnostics for #print call, got: %v", diags)
+		t.Fatalf("unexpected diags: %v", diags)
 	}
-
-	if len(prog.Decls) != 1 {
-		t.Fatalf("expected 1 decl, got %d", len(prog.Decls))
-	}
-	fnMain, ok := prog.Decls[0].(*TFnDec)
-	if !ok {
-		t.Fatalf("expected TFnDec, got %T", prog.Decls[0])
-	}
-	if len(fnMain.Body.Stmts) != 1 {
-		t.Fatalf("expected 1 stmt, got %d", len(fnMain.Body.Stmts))
-	}
-	exprStmt, ok := fnMain.Body.Stmts[0].(*TExprStmt)
-	if !ok {
-		t.Fatalf("expected TExprStmt, got %T", fnMain.Body.Stmts[0])
-	}
-	callExpr, ok := exprStmt.Expr.(*TCallExpr)
-	if !ok {
-		t.Fatalf("expected TCallExpr, got %T", exprStmt.Expr)
-	}
-	ref, ok := callExpr.Callee.(*TVarRefExpr)
-	if !ok || ref.Name != "#print" {
-		t.Fatalf("expected callee '#print', got %+v", callExpr.Callee)
+	if prog == nil {
+		t.Fatalf("expected prog")
 	}
 }
 
-func TestTraitNamingConventions(t *testing.T) {
-	// 1. Valid trait with Trait suffix and legitimate English words (portrait, strait)
-	validCode := `
-type ComparableTrait = trait {
-	fn compare(self, other: i32) i32
+func TestGenericConstraintsIsError(t *testing.T) {
+	goodCode := `
+pub type CustomErr = enum {
+    Failed,
 }
 
-type Canvas = struct {
-	portrait: i32,
-	bering_strait: i32,
+fn valid_default() Result<i32> {
+    return Result::Ok(1)
 }
 
-fn draw_portrait(strait_width: i32) void {
-	var local_portrait = 10
-	var obj = { .portrait: 42 }
+fn valid_infer() Result<i32, infer> {
+    return Result::Ok(2)
+}
+
+fn valid_custom() Result<i32, CustomErr> {
+    return Result::Ok(3)
 }
 `
-	astValid, err := loneparser.Parse("valid_trait.lone", []byte(validCode))
+	analyzer := NewAnalyzer()
+	_, diags, err := analyzer.AnalyzeSource([]byte(goodCode))
 	if err != nil {
-		t.Fatalf("parse failed: %v", err)
+		t.Fatalf("unexpected parse error: %v", err)
 	}
-	diagsValid := NewAnalyzer("valid_trait.lone", DefaultConfig()).Analyze(astValid)
-	for _, d := range diagsValid {
-		if d.Severity == SeverityWarning || d.Severity == SeverityError {
-			t.Fatalf("unexpected diagnostic in valid_trait.lone: %v", d)
-		}
+	if len(diags) != 0 {
+		t.Fatalf("expected 0 diags for valid Result types, got %d: %v", len(diags), diags)
 	}
 
-	// 2. Trait missing "Trait" suffix
-	badTraitCode := `
-type Comparable = trait {
-	fn compare(self, other: i32) i32
+	badCode := `
+fn invalid_err_type() Result<i32, string> {
+    return Result::Ok(42)
 }
 `
-	astBadTrait, err := loneparser.Parse("bad_trait.lone", []byte(badTraitCode))
+	analyzer2 := NewAnalyzer()
+	_, diags2, err := analyzer2.AnalyzeSource([]byte(badCode))
 	if err != nil {
-		t.Fatalf("parse failed: %v", err)
+		t.Fatalf("unexpected parse error: %v", err)
 	}
-	diagsBadTrait := NewAnalyzer("bad_trait.lone", DefaultConfig()).Analyze(astBadTrait)
-	if !hasDiagRule(diagsBadTrait, "naming/trait") {
-		t.Fatalf("expected naming/trait warning for trait not ending with Trait, got: %v", diagsBadTrait)
+	if len(diags2) == 0 {
+		t.Fatalf("expected constraint violation diagnostic for Result<i32, string>")
 	}
-
-	// 3. Non-trait types (struct, alias) ending in Trait or named Trait
-	badNonTraitTypes := `
-type PointTrait = struct {
-	x: i32,
-}
-
-type Trait = struct {
-	y: i32,
-}
-
-type NumTrait = i32
-`
-	astBadTypes, err := loneparser.Parse("bad_types.lone", []byte(badNonTraitTypes))
-	if err != nil {
-		t.Fatalf("parse failed: %v", err)
-	}
-	diagsBadTypes := NewAnalyzer("bad_types.lone", DefaultConfig()).Analyze(astBadTypes)
-	var typeWarnCount int
-	for _, d := range diagsBadTypes {
-		if d.Rule == "naming/type" {
-			typeWarnCount++
-		}
-	}
-	if typeWarnCount < 3 {
-		t.Fatalf("expected at least 3 naming/type warnings for non-trait types ending in Trait, got %d: %v", typeWarnCount, diagsBadTypes)
-	}
-
-	// 4. Non-trait function, variables, fields, params ending in trait
-	badOtherDecls := `
-var global_trait = 1
-var TRAIT = 2
-
-fn run_trait(param_trait: i32) void {
-	var local_trait = 3
-	lbl_trait: {
-		break lbl_trait: 0
-	}
-	var o = { .bad_trait: 4 }
-}
-`
-	astBadOther, err := loneparser.Parse("bad_other.lone", []byte(badOtherDecls))
-	if err != nil {
-		t.Fatalf("parse failed: %v", err)
-	}
-	diagsBadOther := NewAnalyzer("bad_other.lone", DefaultConfig()).Analyze(astBadOther)
-
-	expectedRules := map[string]bool{
-		"naming/global":    false,
-		"naming/function":  false,
-		"naming/parameter": false,
-		"naming/variable":  false,
-		"naming/label":     false,
-		"naming/field":     false,
-	}
-	for _, d := range diagsBadOther {
-		if _, ok := expectedRules[d.Rule]; ok {
-			expectedRules[d.Rule] = true
-		}
-	}
-	for rule, found := range expectedRules {
-		if !found {
-			t.Errorf("expected diagnostic for rule %q in badOtherDecls, got: %v", rule, diagsBadOther)
-		}
-	}
-}
-
-func TestComparisonChainingAnalyzerRejection(t *testing.T) {
-	code := `
-fn check(a: i32, b: i32, c: i32) void {
-	var x = (a < b) < c
-}
-`
-	ast, err := loneparser.Parse("chained_analyzer.lone", []byte(code))
-	if err != nil {
-		t.Fatalf("parse failed unexpectedly: %v", err)
-	}
-	diags := NewAnalyzer("chained_analyzer.lone", DefaultConfig()).Analyze(ast)
-	found := false
-	for _, d := range diags {
-		if d.Rule == "type/invalid-comparison" && strings.Contains(d.Message, "cannot compare bool with comparison operator") {
-			found = true
+	hasViolation := false
+	for _, d := range diags2 {
+		if d.Rule == "type/constraint-violation" && strings.Contains(d.Message, "does not satisfy 'is Error'") {
+			hasViolation = true
 			break
 		}
 	}
-	if !found {
-		t.Fatalf("expected diagnostic 'type/invalid-comparison' for parenthesized comparison chaining, got: %v", diags)
+	if !hasViolation {
+		t.Errorf("expected diagnostic with rule 'type/constraint-violation' and message mentioning 'is Error', got: %v", diags2)
 	}
 }
 
-func TestLoopWhileSmartScopeAndAnalysis(t *testing.T) {
-	// 1. Valid: variable declared inside body accessible in while [condition]
-	validCode := `
-fn test_loop_scope() void {
-	var total = 0
-	loop {
-		var step = 1
-		total = total + step
-	} while: [step < 5]
+func TestGenericConstraintsSatisfiesAndTraitMaterialization(t *testing.T) {
+	code := `
+pub type TrWriter = trait {
+    fn write(self, msg: str) void
+}
+
+pub type Console = struct {
+    id: int,
+}
+
+impl TrWriter on Console {
+    fn write(self, msg: str) void {
+        #print(msg)
+    }
+}
+
+pub type Dummy = struct {
+    x: int,
+}
+
+fn log_msg<T where { T satisfies TrWriter }>(writer: T, msg: str) void {
+    let w = TrWriter::|T|
+    w.write(writer, msg)
+}
+
+fn test_valid() void {
+    let c = Console::{ .id: 1 }
+    log_msg(c, "hello\n")
+}
+
+fn test_invalid() void {
+    let d = Dummy::{ .x: 2 }
+    log_msg(d, "fail\n")
 }
 `
-	ast, err := loneparser.Parse("valid_loop_while.lone", []byte(validCode))
+	analyzer := NewAnalyzer()
+	_, diags, err := analyzer.AnalyzeSource([]byte(code))
 	if err != nil {
-		t.Fatalf("parse failed: %v", err)
+		t.Fatalf("unexpected parse error: %v", err)
 	}
-	diags := NewAnalyzer("valid_loop_while.lone", DefaultConfig()).Analyze(ast)
+	if len(diags) == 0 {
+		t.Fatalf("expected constraint violation for Dummy not implementing TrWriter")
+	}
+	hasViolation := false
+	for _, d := range diags {
+		if d.Rule == "type/constraint-violation" && strings.Contains(d.Message, "does not satisfy trait \"TrWriter\"") {
+			hasViolation = true
+			break
+		}
+	}
+	if !hasViolation {
+		t.Errorf("expected type/constraint-violation for Dummy, got: %v", diags)
+	}
+}
+
+func TestStructEncapsulationAndPrivateFields(t *testing.T) {
+	code := `
+type Account = struct {
+    id: int,
+    _balance: int,
+
+    pub fn __init__(id: int, deposit: int) Account {
+        return Account::{
+            .id: id,
+            ._balance: deposit,
+        }
+    }
+
+    pub fn get_balance(self) int {
+        return self._balance
+    }
+}
+
+fn test_valid() void {
+    let acc = Account::(101, 500)
+    let bal = acc.get_balance()
+}
+
+fn test_invalid_raw_construct() void {
+    let bad = Account::{ .id: 102 }
+}
+
+fn test_invalid_private_access() void {
+    let acc = Account::(103, 300)
+    let secret = acc._balance
+}
+`
+	analyzer := NewAnalyzer()
+	_, diags, err := analyzer.AnalyzeSource([]byte(code))
+	if err != nil {
+		t.Fatalf("unexpected parse error: %v", err)
+	}
+
+	var hasRawConstructErr, hasPrivateAccessErr bool
+	for _, d := range diags {
+		if d.Rule == "type/raw-construct-private-fields" {
+			hasRawConstructErr = true
+		}
+		if d.Rule == "type/private-field-access" {
+			hasPrivateAccessErr = true
+		}
+	}
+
+	if !hasRawConstructErr {
+		t.Errorf("expected type/raw-construct-private-fields diagnostic, got: %v", diags)
+	}
+	if !hasPrivateAccessErr {
+		t.Errorf("expected type/private-field-access diagnostic, got: %v", diags)
+	}
+}
+
+func TestStructReadOnlyFieldEnforcement(t *testing.T) {
+	code := `
+type Point = struct {
+    ro id: int,
+    val: int,
+}
+
+fn test_ro() void {
+    var p = Point::{ .id: 1, .val: 10 }
+    p.val = 20
+    p.id = 99
+}
+`
+	analyzer := NewAnalyzer()
+	_, diags, err := analyzer.AnalyzeSource([]byte(code))
+	if err != nil {
+		t.Fatalf("unexpected parse error: %v", err)
+	}
+
+	hasRoWriteErr := false
+	for _, d := range diags {
+		if d.Rule == "type/immutable-field-write" {
+			hasRoWriteErr = true
+			break
+		}
+	}
+
+	if !hasRoWriteErr {
+		t.Errorf("expected type/immutable-field-write diagnostic, got: %v", diags)
+	}
+}
+
+func TestStructMissingInitForRoPrivateField(t *testing.T) {
+	code := `
+type SecretRecord = struct {
+    ro _key: str,
+    title: str,
+}
+`
+	analyzer := NewAnalyzer()
+	_, diags, err := analyzer.AnalyzeSource([]byte(code))
+	if err != nil {
+		t.Fatalf("unexpected parse error: %v", err)
+	}
+
+	hasMissingInitErr := false
+	for _, d := range diags {
+		if d.Rule == "type/missing-init-for-ro-private-field" {
+			hasMissingInitErr = true
+			break
+		}
+	}
+
+	if !hasMissingInitErr {
+		t.Errorf("expected type/missing-init-for-ro-private-field diagnostic, got: %v", diags)
+	}
+}
+
+func TestStructUnresolvedConstructor(t *testing.T) {
+	code := `
+type PlainData = struct {
+    x: int,
+    y: int,
+}
+
+fn test_bad_constructor() void {
+    let p = PlainData::(10, 20)
+}
+`
+	analyzer := NewAnalyzer()
+	_, diags, err := analyzer.AnalyzeSource([]byte(code))
+	if err != nil {
+		t.Fatalf("unexpected parse error: %v", err)
+	}
+
+	hasUnresolvedErr := false
+	for _, d := range diags {
+		if d.Rule == "type/unresolved-constructor" {
+			hasUnresolvedErr = true
+			break
+		}
+	}
+
+	if !hasUnresolvedErr {
+		t.Errorf("expected type/unresolved-constructor diagnostic, got: %v", diags)
+	}
+}
+
+func TestRefVsPtrImmutabilityTracking(t *testing.T) {
+	code := `
+fn test_immutable_writes() void {
+    let x = 42
+    let r = &x
+    *r = 99
+
+    let p = &raw x
+    *p = 100
+    p[0] = 101
+
+    var y = 10
+    var r_mut = &y
+    *r_mut = 20
+}
+`
+	analyzer := NewAnalyzer()
+	_, diags, err := analyzer.AnalyzeSource([]byte(code))
+	if err != nil {
+		t.Fatalf("unexpected parse error: %v", err)
+	}
+
+	var hasRefWriteErr, hasPtrWriteErr bool
+	for _, d := range diags {
+		if d.Rule == "type/immutable-reference-write" {
+			hasRefWriteErr = true
+		}
+		if d.Rule == "type/immutable-pointer-write" {
+			hasPtrWriteErr = true
+		}
+	}
+
+	if !hasRefWriteErr {
+		t.Errorf("expected type/immutable-reference-write diagnostic, got: %v", diags)
+	}
+	if !hasPtrWriteErr {
+		t.Errorf("expected type/immutable-pointer-write diagnostic, got: %v", diags)
+	}
+}
+
+func TestPointerIndexingAllowedAndRefForbidden(t *testing.T) {
+	code := `
+fn test_indexing(p: ptr<i32>, r: ref<i32>) void {
+    let val_p = p[2]
+    p[2] = 42
+
+    let val_r = r[2]
+}
+`
+	analyzer := NewAnalyzer()
+	_, diags, err := analyzer.AnalyzeSource([]byte(code))
+	if err != nil {
+		t.Fatalf("unexpected parse error: %v", err)
+	}
+
+	hasRefIndexErr := false
+	for _, d := range diags {
+		if d.Rule == "type/invalid-index" && strings.Contains(d.Message, "cannot index managed reference") {
+			hasRefIndexErr = true
+			break
+		}
+	}
+
+	if !hasRefIndexErr {
+		t.Errorf("expected type/invalid-index diagnostic for ref, got: %v", diags)
+	}
+}
+
+func TestGroupedDeclarations(t *testing.T) {
+	code := `
+fn add_points([p1, p2]: (int, int)) int {
+    let (x1, y1) = p1
+    let (x2, y2) = p2
+    return x1 + y1 + x2 + y2
+}
+
+fn test_grouped_locals() int {
+    var [top, bottom, left, right]: int = 0
+    top = 10
+    bottom = 20
+    left = 30
+    right = 40
+    return top + bottom + left + right
+}
+`
+	analyzer := NewAnalyzer()
+	_, diags, err := analyzer.AnalyzeSource([]byte(code))
+	if err != nil {
+		t.Fatalf("unexpected parse error: %v", err)
+	}
+
 	for _, d := range diags {
 		if d.Severity == SeverityError {
-			t.Fatalf("unexpected error diagnostic: %+v", d)
+			t.Errorf("unexpected error diagnostic: %v", d)
+		}
+	}
+}
+
+func TestTuplesAndDestructuring(t *testing.T) {
+	code := `
+fn test_tuples() void {
+    let pair = (10, 20)
+    let a = pair.0
+    let b = pair.1
+    let bad_idx = pair.2
+
+    let (x, y) = pair
+    let (u, v, w) = pair
+}
+`
+	analyzer := NewAnalyzer()
+	_, diags, err := analyzer.AnalyzeSource([]byte(code))
+	if err != nil {
+		t.Fatalf("unexpected parse error: %v", err)
+	}
+
+	var hasOobErr, hasArityErr bool
+	for _, d := range diags {
+		if d.Rule == "type/tuple-index-out-of-bounds" {
+			hasOobErr = true
+		}
+		if d.Rule == "type/tuple-arity-mismatch" {
+			hasArityErr = true
 		}
 	}
 
-	// 2. Invalid: variable declared inside body NOT accessible outside the loop
-	invalidOutsideCode := `
-fn test_loop_outside() void {
-	loop {
-		var inner = 42
-	} while: [inner > 0]
-	var y = inner
+	if !hasOobErr {
+		t.Errorf("expected type/tuple-index-out-of-bounds, got: %v", diags)
+	}
+	if !hasArityErr {
+		t.Errorf("expected type/tuple-arity-mismatch, got: %v", diags)
+	}
+}
+
+func TestAnonymousFunctionsAndEscapingCapture(t *testing.T) {
+	validCode := `
+fn test_valid_anon() int {
+    let square = fn(x: int) int {
+        return x * x
+    }
+    return square(5)
 }
 `
-	astBad, err := loneparser.Parse("bad_loop_outside.lone", []byte(invalidOutsideCode))
+	analyzer := NewAnalyzer()
+	_, diags, err := analyzer.AnalyzeSource([]byte(validCode))
 	if err != nil {
-		t.Fatalf("parse failed: %v", err)
+		t.Fatalf("unexpected parse error: %v", err)
 	}
-	diagsBad := NewAnalyzer("bad_loop_outside.lone", DefaultConfig()).Analyze(astBad)
-	foundUndefined := false
-	for _, d := range diagsBad {
-		if d.Rule == "type/undefined-identifier" && strings.Contains(d.Message, "inner") {
-			foundUndefined = true
+	for _, d := range diags {
+		if d.Severity == SeverityError {
+			t.Errorf("unexpected error diagnostic in valid anon fn: %v", d)
+		}
+	}
+
+	badCaptureCode := `
+fn test_bad_capture() void {
+    var local_val = 42
+    let bad_fn = fn() void {
+        let r = &local_val
+    }
+}
+`
+	analyzer2 := NewAnalyzer()
+	_, diags2, err := analyzer2.AnalyzeSource([]byte(badCaptureCode))
+	if err != nil {
+		t.Fatalf("unexpected parse error: %v", err)
+	}
+
+	hasCaptureErr := false
+	for _, d := range diags2 {
+		if d.Rule == "closure/escaping-reference-capture" {
+			hasCaptureErr = true
 			break
 		}
 	}
-	if !foundUndefined {
-		t.Fatalf("expected type/undefined-identifier for 'inner' outside loop, got: %v", diagsBad)
+
+	if !hasCaptureErr {
+		t.Errorf("expected closure/escaping-reference-capture diagnostic, got: %v", diags2)
 	}
 }
+
+func TestInterfaceNamingConventions(t *testing.T) {
+	codeBad1 := `
+type Point = interface {
+    x: int,
+    y: int,
+}
+`
+	analyzer := NewAnalyzer()
+	_, diags, err := analyzer.AnalyzeSource([]byte(codeBad1))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	hasNamingErr := false
+	for _, d := range diags {
+		if d.Rule == "naming/interface" {
+			hasNamingErr = true
+		}
+	}
+	if !hasNamingErr {
+		t.Errorf("expected naming/interface diagnostic for Point, got: %v", diags)
+	}
+
+	codeBad2 := `
+type IfcFake = struct {
+    x: int,
+}
+`
+	_, diags2, err := analyzer.AnalyzeSource([]byte(codeBad2))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	hasNonIfcErr := false
+	for _, d := range diags2 {
+		if d.Rule == "naming/interface" {
+			hasNonIfcErr = true
+		}
+	}
+	if !hasNonIfcErr {
+		t.Errorf("expected naming/interface diagnostic for non-interface struct, got: %v", diags2)
+	}
+}
+
+func TestInterfaceEmbeddingAndCollisions(t *testing.T) {
+	codeValid := `
+type IfcIdentifiable = interface {
+    id: int,
+}
+type IfcNamed = interface {
+    name: str,
+}
+type IfcUser = interface {
+    IfcIdentifiable,
+    IfcNamed,
+    ro created_at: i64,
+}
+`
+	analyzer := NewAnalyzer()
+	_, diags, err := analyzer.AnalyzeSource([]byte(codeValid))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, d := range diags {
+		if d.Severity == SeverityError {
+			t.Errorf("unexpected error in valid interface embedding: %v", d)
+		}
+	}
+
+	codeCollision := `
+type IfcA = interface {
+    id: int,
+}
+type IfcB = interface {
+    id: str,
+}
+type IfcConflict = interface {
+    IfcA,
+    IfcB,
+}
+`
+	_, diags2, err := analyzer.AnalyzeSource([]byte(codeCollision))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	hasCollision := false
+	for _, d := range diags2 {
+		if d.Rule == "type/interface-embedding-collision" {
+			hasCollision = true
+		}
+	}
+	if !hasCollision {
+		t.Errorf("expected type/interface-embedding-collision, got: %v", diags2)
+	}
+}
+
+func TestInterfacePrivateFieldProhibited(t *testing.T) {
+	code := `
+type IfcSecret = interface {
+    _token: str,
+}
+`
+	analyzer := NewAnalyzer()
+	_, diags, err := analyzer.AnalyzeSource([]byte(code))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	hasPrivErr := false
+	for _, d := range diags {
+		if d.Rule == "type/interface-private-field" {
+			hasPrivErr = true
+		}
+	}
+	if !hasPrivErr {
+		t.Errorf("expected type/interface-private-field, got: %v", diags)
+	}
+}
+
+func TestInterfaceDuckTypingAndSatisfaction(t *testing.T) {
+	code := `
+type IfcPoint = interface {
+    x: int,
+    ro y: int,
+}
+
+type Point2D = struct {
+    x: int,
+    y: int,
+    extra: str,
+    _hidden: int,
+}
+
+type MissingPoint = struct {
+    x: int,
+}
+
+type BadMutPoint = struct {
+    ro x: int,
+    y: int,
+}
+
+type EnumPoint = enum {
+    Origin,
+}
+
+fn inspect_point<T where { T satisfies IfcPoint }>(p: T) int {
+    return p.x + p.y
+}
+
+fn test_satisfaction() void {
+    let p = Point2D::{ .x: 1, .y: 2, .extra: "ok", ._hidden: 99 }
+    let s = inspect_point(p)
+
+    let bad1 = MissingPoint::{ .x: 5 }
+    let s_bad1 = inspect_point(bad1)
+
+    let bad2 = BadMutPoint::{ .x: 5, .y: 6 }
+    let s_bad2 = inspect_point(bad2)
+
+    let bad3 = EnumPoint::Origin
+    let s_bad3 = inspect_point(bad3)
+}
+`
+	analyzer := NewAnalyzer()
+	_, diags, err := analyzer.AnalyzeSource([]byte(code))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var hasMissingField, hasMutMismatch, hasEnumRejected bool
+	for _, d := range diags {
+		if d.Rule == "type/interface-missing-field" {
+			hasMissingField = true
+		}
+		if d.Rule == "type/field-mutability-mismatch" {
+			hasMutMismatch = true
+		}
+		if d.Rule == "type/interface-enum-rejected" {
+			hasEnumRejected = true
+		}
+	}
+
+	if !hasMissingField {
+		t.Errorf("expected type/interface-missing-field, got: %v", diags)
+	}
+	if !hasMutMismatch {
+		t.Errorf("expected type/field-mutability-mismatch, got: %v", diags)
+	}
+	if !hasEnumRejected {
+		t.Errorf("expected type/interface-enum-rejected, got: %v", diags)
+	}
+}
+
+func TestStringInterpolationPrimitives(t *testing.T) {
+	code := `
+fn main() void {
+    let name = "Lone"
+    let ver = 6
+    let active = true
+    let msg = f"Running ${name} v0.${ver}.0 (active: ${active})"
+}
+`
+	analyzer := NewAnalyzer()
+	prog, diags, err := analyzer.AnalyzeSource([]byte(code))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(diags) > 0 {
+		t.Fatalf("expected 0 diagnostics, got: %v", diags)
+	}
+
+	fnDec := prog.Decls[0].(*TFnDec)
+	bMsg := fnDec.Body.Stmts[3].(*TVarDec)
+	interp, ok := bMsg.Value.(*TInterpolatedStringExpr)
+	if !ok {
+		t.Fatalf("expected TInterpolatedStringExpr, got %#v", bMsg.Value)
+	}
+	if interp.ExprType() != TypeStr {
+		t.Errorf("expected TypeStr, got %s", interp.ExprType().String())
+	}
+}
+
+func TestStringInterpolationMissingTrDisplay(t *testing.T) {
+	code := `
+type Point = struct {
+    x: int,
+    y: int,
+}
+
+fn main() void {
+    let p = Point::{ .x: 10, .y: 20 }
+    let s = f"Coord: ${p}"
+}
+`
+	analyzer := NewAnalyzer()
+	_, diags, err := analyzer.AnalyzeSource([]byte(code))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	hasMissingTrait := false
+	for _, d := range diags {
+		if d.Rule == "type/missing-trait-impl" && strings.Contains(d.Message, "does not implement trait \"TrDisplay\"") {
+			hasMissingTrait = true
+			break
+		}
+	}
+	if !hasMissingTrait {
+		t.Fatalf("expected type/missing-trait-impl diagnostic, got: %v", diags)
+	}
+}
+
+func TestStringInterpolationWithTrDisplay(t *testing.T) {
+	code := `
+type Point = struct {
+    x: int,
+    y: int,
+}
+
+impl TrDisplay on Point {
+    fn fmt(self, buf: any) void {
+    }
+}
+
+fn main() void {
+    let p = Point::{ .x: 10, .y: 20 }
+    let s = f"Coord: ${p}"
+}
+`
+	analyzer := NewAnalyzer()
+	_, diags, err := analyzer.AnalyzeSource([]byte(code))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(diags) > 0 {
+		t.Fatalf("expected 0 diagnostics for struct implementing TrDisplay, got: %v", diags)
+	}
+}
+
+func TestStructFieldWriteThroughRef(t *testing.T) {
+	code := `
+type Point = struct {
+    ro id: int,
+    x: int,
+    y: int,
+}
+
+fn move_point(p: ref<Point>) void {
+    p.x = p.x + 10
+    p.y = p.y + 20
+}
+
+fn main() void {
+    var pt = Point::{ .id: 1, .x: 0, .y: 0 }
+    move_point(&pt)
+}
+`
+	analyzer := NewAnalyzer()
+	_, diags, err := analyzer.AnalyzeSource([]byte(code))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(diags) > 0 {
+		t.Fatalf("expected 0 diagnostics for field write through mutable ref, got: %v", diags)
+	}
+}
+
+func TestStructFieldWriteReadOnlyRejections(t *testing.T) {
+	code := `
+type Point = struct {
+    ro id: int,
+    x: int,
+}
+
+fn test_ro_ref(r: ref<ro Point>) void {
+    r.x = 42
+}
+
+fn test_ro_field(r: ref<Point>) void {
+    r.id = 99
+}
+`
+	analyzer := NewAnalyzer()
+	_, diags, err := analyzer.AnalyzeSource([]byte(code))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	hasRefWriteErr := false
+	hasFieldWriteErr := false
+	for _, d := range diags {
+		if d.Rule == "type/immutable-reference-write" {
+			hasRefWriteErr = true
+		}
+		if d.Rule == "type/immutable-field-write" {
+			hasFieldWriteErr = true
+		}
+	}
+
+	if !hasRefWriteErr {
+		t.Errorf("expected type/immutable-reference-write diagnostic for ref<ro Point>, got: %v", diags)
+	}
+	if !hasFieldWriteErr {
+		t.Errorf("expected type/immutable-field-write diagnostic for ro field through ref, got: %v", diags)
+	}
+}
+
+func TestStructByValueParameterImmutability(t *testing.T) {
+	code := `
+type Point = struct {
+    x: int,
+}
+
+fn mutate_param(p: Point) void {
+    p.x = 100
+}
+`
+	analyzer := NewAnalyzer()
+	_, diags, err := analyzer.AnalyzeSource([]byte(code))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	hasReassignErr := false
+	for _, d := range diags {
+		if d.Rule == "type/immutable-reassignment" {
+			hasReassignErr = true
+			if !strings.Contains(d.Message, `cannot mutate field "x" on immutable binding "p"`) {
+				t.Errorf("unexpected message: %s", d.Message)
+			}
+			break
+		}
+	}
+
+	if !hasReassignErr {
+		t.Fatalf("expected type/immutable-reassignment diagnostic, got: %v", diags)
+	}
+}
+
+func TestSinglePointerIndexingRejected(t *testing.T) {
+	code := `
+fn test_single_ptr(p: ptr<int>) void {
+    let val = p[0]
+}
+`
+	analyzer := NewAnalyzer()
+	_, diags, err := analyzer.AnalyzeSource([]byte(code))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	hasSinglePtrErr := false
+	for _, d := range diags {
+		if d.Rule == "type/single-pointer-indexing-rejected" {
+			hasSinglePtrErr = true
+			if !strings.Contains(d.Message, `cannot index single-item pointer "ptr<i32>"`) {
+				t.Errorf("unexpected message: %s", d.Message)
+			}
+			break
+		}
+	}
+	if !hasSinglePtrErr {
+		t.Fatalf("expected type/single-pointer-indexing-rejected diagnostic, got: %v", diags)
+	}
+}
+
+func TestSizedPointerConstantBoundsCheck(t *testing.T) {
+	code := `
+fn test_sized_ptr(p: ptr<[6]int>) void {
+    let ok0 = p[0]
+    let ok5 = p[5]
+    let bad6 = p[6]
+}
+`
+	analyzer := NewAnalyzer()
+	_, diags, err := analyzer.AnalyzeSource([]byte(code))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	hasOobErr := false
+	for _, d := range diags {
+		if d.Rule == "type/index-out-of-bounds" {
+			hasOobErr = true
+			if !strings.Contains(d.Message, `index 6 is out of bounds for array pointer "ptr<[6]i32>" of size 6`) {
+				t.Errorf("unexpected message: %s", d.Message)
+			}
+			break
+		}
+	}
+	if !hasOobErr {
+		t.Fatalf("expected type/index-out-of-bounds diagnostic, got: %v", diags)
+	}
+}
+
+func TestUnsizedBufferPointerAllowed(t *testing.T) {
+	code := `
+fn test_unsized_ptr(buf: ptr<[]int>) int {
+    let v0 = buf[0]
+    buf[100] = 42
+    let deref = *buf
+    return v0 + deref
+}
+`
+	analyzer := NewAnalyzer()
+	_, diags, err := analyzer.AnalyzeSource([]byte(code))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(diags) > 0 {
+		t.Fatalf("expected 0 diagnostics for unsized buffer pointer, got: %v", diags)
+	}
+}
+
+func TestSizedPointerDecayToUnsized(t *testing.T) {
+	code := `
+fn process_buffer(b: ptr<[]int>) void {}
+
+fn test_decay(p: ptr<[6]int>) void {
+    process_buffer(p)
+}
+`
+	analyzer := NewAnalyzer()
+	_, diags, err := analyzer.AnalyzeSource([]byte(code))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(diags) > 0 {
+		t.Fatalf("expected 0 diagnostics for safe decay ptr<[6]int> -> ptr<[]int>, got: %v", diags)
+	}
+}
+
+func TestRefBufferIndexingAndSingleRefRejection(t *testing.T) {
+	code := `
+fn test_ref_buffer(r_sized: ref<[4]int>, r_slice: ref<[]int>, r_single: ref<int>) void {
+    let a = r_sized[0]
+    let b = r_slice[1]
+    let bad = r_single[0]
+}
+`
+	analyzer := NewAnalyzer()
+	_, diags, err := analyzer.AnalyzeSource([]byte(code))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	hasInvalidIndexErr := false
+	for _, d := range diags {
+		if d.Rule == "type/invalid-index" {
+			hasInvalidIndexErr = true
+			if !strings.Contains(d.Message, `cannot index managed reference of non-buffer type "ref<i32>"`) {
+				t.Errorf("unexpected message: %s", d.Message)
+			}
+			break
+		}
+	}
+	if !hasInvalidIndexErr {
+		t.Fatalf("expected type/invalid-index diagnostic for single ref, got: %v", diags)
+	}
+}
+
+func TestReadOnlyBufferWriteRejection(t *testing.T) {
+	code := `
+fn test_ro_buf(p_ro: ptr<ro []int>, r_ro: ref<ro []int>) void {
+    p_ro[0] = 10
+    r_ro[0] = 20
+}
+`
+	analyzer := NewAnalyzer()
+	_, diags, err := analyzer.AnalyzeSource([]byte(code))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	hasPtrWriteErr := false
+	hasRefWriteErr := false
+	for _, d := range diags {
+		if d.Rule == "type/immutable-pointer-write" {
+			hasPtrWriteErr = true
+		}
+		if d.Rule == "type/immutable-reference-write" {
+			hasRefWriteErr = true
+		}
+	}
+	if !hasPtrWriteErr {
+		t.Errorf("expected type/immutable-pointer-write diagnostic for p_ro[0], got: %v", diags)
+	}
+	if !hasRefWriteErr {
+		t.Errorf("expected type/immutable-reference-write diagnostic for r_ro[0], got: %v", diags)
+	}
+}
+
+func TestAsymmetricFieldVisibility(t *testing.T) {
+	// 1. Valid inherent mutation vs invalid external mutation
+	code := `
+type Counter = struct {
+    ro(pub) count: i32,
+    name: str,
+
+    pub fn increment(self: ref<Counter>) void {
+        self.count = self.count + 1
+    }
+}
+
+type IfcReader = interface {
+    ro count: i32,
+}
+
+type IfcWriter = interface {
+    count: i32,
+}
+
+fn test_valid_access(c: ref<Counter>) void {
+    let x = c.count -- OK: public read
+}
+
+fn test_invalid_external_mutation(c: ref<Counter>) void {
+    c.count = 99 -- Error: type/asymmetric-field-write
+}
+
+fn check_reader<T where { T satisfies IfcReader }>(r: ref<T>) void {}
+fn check_writer<T where { T satisfies IfcWriter }>(w: ref<T>) void {}
+
+fn test_interfaces(c: ref<Counter>) void {
+    check_reader(c) -- OK: IfcReader requires ro count
+    check_writer(c) -- Error: IfcWriter requires mutable count
+}
+`
+	analyzer := NewAnalyzer()
+	_, diags, err := analyzer.AnalyzeSource([]byte(code))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	hasAsymWriteErr := false
+	hasMutabilityMismatchErr := false
+	for _, d := range diags {
+		if d.Rule == "type/asymmetric-field-write" {
+			hasAsymWriteErr = true
+		}
+		if d.Rule == "type/field-mutability-mismatch" {
+			hasMutabilityMismatchErr = true
+		}
+	}
+
+	if !hasAsymWriteErr {
+		t.Errorf("expected type/asymmetric-field-write diagnostic, got: %v", diags)
+	}
+	if !hasMutabilityMismatchErr {
+		t.Errorf("expected type/field-mutability-mismatch diagnostic for IfcWriter, got: %v", diags)
+	}
+
+	// 2. Private field with ro(pub) rejection
+	privCode := `
+type BadStruct = struct {
+    ro(pub) _secret: i32,
+}
+`
+	_, privDiags, err := analyzer.AnalyzeSource([]byte(privCode))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	hasRedundantErr := false
+	for _, d := range privDiags {
+		if d.Rule == "syn/redundant-field-modifier" {
+			hasRedundantErr = true
+		}
+	}
+	if !hasRedundantErr {
+		t.Errorf("expected syn/redundant-field-modifier for ro(pub) on _secret, got: %v", privDiags)
+	}
+}
+
+
+
+

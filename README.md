@@ -2,9 +2,9 @@
 
 <img src="./assets/lone-banner.png" alt="Lone Logo">
 
-[![Build Status](https://img.shields.io/badge/version-v0.5.0--beta-blue.svg)](./dev/SPEC.md)
+[![Build Status](https://img.shields.io/badge/version-v0.6.0-blue.svg)](./dev/SPEC.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
-[![Tests](https://img.shields.io/badge/tests-22%20passing-brightgreen.svg)](./test2)
+[![Tests](https://img.shields.io/badge/tests-passing-brightgreen.svg)](./test)
 
 **Lone** is an explicit, systems- and UI-oriented programming language designed from the ground up to compile directly to **WebAssembly (Wasm)** with zero runtime overhead as its primary target. It takes inspiration from Go, TypeScript, Python, and Rust/Zig.
 
@@ -23,7 +23,7 @@
 
 ---
 
-## Language Highlights (v0.5.0-beta)
+## Language Highlights (v0.6.0)
 
 ```lone
 -- Import I/O utilities
@@ -55,7 +55,25 @@ fn safe_divide(numerator: int, denominator: int) Result<int, str> {
     return Result::Ok(numerator / denominator)
 }
 
+-- Formal interface data contract
+pub type IfcNamed = interface {
+    ro name: str
+}
+
+-- Struct with asymmetric visibility: internally mutable, externally read-only
+pub type User = struct {
+    ro(pub) name: str
+    pub age: int
+
+    pub fn __init__(name: str, age: int) User {
+        return User { name: name, age: age }
+    }
+}
+
 pub fn main() void {
+    let u = User::("Alice", 30)
+    println(f"User ${u.name} initialized")
+
     let op = MathOp::Add(20, 22)
     let total = evaluate(op)
     
@@ -65,14 +83,18 @@ pub fn main() void {
 }
 ```
 
+- **Asymmetric Field Visibility (`ro(pub)`)**: Expose fields as externally read-only while retaining internal mutability within the defining module.
+- **Formal Interface Contracts (`interface`)**: Structural duck-typing at compile time for decoupled contracts.
 - **Tagged Union Enums**: Full algebraic data types (`Option<T>`, `Result<V, U = Error where { U is Error }>`).
 - **Pattern Matching (`match`)**: Destructuring payload bindings with compiler-verified exhaustiveness.
 - **Error Handling with `must` & `try`**:
   - `must <expr>`: Unwraps `Result::Ok` or immediately panics via WebAssembly `unreachable`.
   - `try <expr>`: Propagates `Result::Err` up the call stack with early return.
+- **Reference & Pointer Semantics**: Safe typed references `ref<T>` with immutability by default, raw pointers `ptr<T>` for low-level memory operations, and fat slice references `ref<[]T>`.
 - **Parametric Polymorphism & Constraints**: Generics with `where` constraint blocks using `satisfies` (trait contract) and `is` (type match), plus `infer` escape hatches.
+- **Formatted String Interpolation**: Compile-time desugared `f"Hello ${name}!"` format strings.
 - **Explicit Trait Materialization**: `TrTrait::|T|` syntax with mandatory `Tr` prefix naming convention.
-- **Linear Memory & Free-List Allocator**: Two-tier memory model: Page 0 downward datastack frame allocation (zero-cost rewind) alongside Page 1+ dynamic heap managed by an inlined free-list allocator with bi-directional coalescing and `memory.grow`.
+- **Linear Memory & Free-List Allocator**: Two-tier memory model: Page 0 downward datastack frame allocation alongside Page 1+ dynamic heap managed by an inlined free-list allocator with bi-directional coalescing and `memory.grow`.
 - **Modern Control Flow**: Pre-condition `while`, infinite `loop`, post-condition `loop { ... } while: [cond]` with smart variable scoping, and multi-branch packed `if`.
 
 ---
@@ -81,7 +103,7 @@ pub fn main() void {
 
 ### Prerequisites
 - **Go 1.22+**
-- **Node.js 18+** or **Wasmtime** (for executing `.wat` / `.wasm`)
+- **Wasmtime** (for executing `.wat` / `.wasm`)
 
 ### Building the Toolchain
 ```bash
@@ -90,9 +112,6 @@ cd lone
 
 # Build the Lone compiler and CLI
 go build -o lone ./cmd/lone
-
-# Or build the Greenfield next-gen compiler driver
-go build -o lone2 ./cmd2/lone
 ```
 
 ### Checking, Compiling & Running
@@ -103,7 +122,7 @@ go build -o lone2 ./cmd2/lone
 # Compile to standalone WebAssembly Text (.wat)
 ./lone build program.lone -o program.wat
 
-# Immediate in-process execution with embedded Wasmtime
+# Immediate in-process execution with Wasmtime
 ./lone run program.lone
 ```
 
@@ -111,12 +130,13 @@ go build -o lone2 ./cmd2/lone
 
 ## Toolchain & CLI Commands
 
-- `lone build <file.lone> [-o out.wat] [-t wasi|web]`: Compile source to WebAssembly.
-- `lone run <file.lone>`: Compile and immediately execute via embedded Wasmtime.
-- `lone check <file.lone>`: Multi-pass static analysis and type validation.
-- `lone debug <scope> [symbol]`: Deep compile-time scope and symbol introspection.
-- `lone lsp`: Language Server Protocol daemon for editor integrations.
-- `lone2 parse <file.lone>`: Syntax validation and AST declaration statistics.
+- `lone build <file.lone> [-o out.wat]`: Compile source into WebAssembly WAT.
+- `lone run <file.lone>`: Compile and execute immediately in Wasmtime.
+- `lone check <file.lone>`: Analyze file for semantic and type correctness.
+- `lone parse <file.lone>`: Parse file using Pratt parser and verify syntax.
+- `lone debug <file.lone> [symbol] [--json]`: Inspect struct memory layout, interfaces, enums, and functions.
+- `lone lsp`: Launch Language Server Protocol daemon for editor integrations.
+- `lone version`: Display Lone compiler version.
 
 ---
 

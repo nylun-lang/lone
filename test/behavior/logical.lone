@@ -1,1 +1,0 @@
-var x = y < z and y > w or w + 1 == 2

@@ -43,7 +43,7 @@ func (m *WasmModule) FormatWat() string {
 		}
 	}
 
-	// 2.5. Globals
+	// 3. Globals
 	for _, g := range m.Globals {
 		typeSpec := string(g.Type)
 		if g.Mutable {
@@ -52,7 +52,7 @@ func (m *WasmModule) FormatWat() string {
 		sb.WriteString(fmt.Sprintf("  (global %s %s (%s))\n", g.Name, typeSpec, g.InitVal))
 	}
 
-	// 3. Data segments
+	// 4. Data segments
 	for _, data := range m.DataSegments {
 		escaped := escapeWatString(data.RawStr)
 		sb.WriteString(fmt.Sprintf("  (data (i32.const %d) \"%s\")\n", data.Offset, escaped))
@@ -62,7 +62,7 @@ func (m *WasmModule) FormatWat() string {
 		sb.WriteString("\n")
 	}
 
-	// 4. Inlined runtime functions
+	// 5. Inlined runtime functions
 	for _, inlined := range m.InlinedRuntime {
 		if strings.TrimSpace(inlined) != "" {
 			sb.WriteString(inlined)
@@ -70,7 +70,7 @@ func (m *WasmModule) FormatWat() string {
 		}
 	}
 
-	// 5. Functions
+	// 6. Functions
 	for _, fn := range m.Functions {
 		sb.WriteString(formatFunction(fn))
 		sb.WriteString("\n")
