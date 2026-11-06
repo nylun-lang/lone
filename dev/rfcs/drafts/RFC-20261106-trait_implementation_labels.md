@@ -140,16 +140,16 @@ impl TrMath for Calculator { ... }
 
 ---
 
-## 5. Materialization Mechanics
+## 5. Materialization Mechanics & Generic Interaction
 
 Callers select between the default implementation and labeled alternatives using explicit materialization syntax:
 
-### 5.1 Syntax
+### 5.1 Direct Concrete Materialization Syntax
 
 | Target | Syntax | Description |
 | :--- | :--- | :--- |
 | **Default Implementation** | `TrTrait::\|TargetType\|` | Resolves the primary, unlabeled `impl TrTrait for TargetType`. |
-| **Labeled Implementation** | `TrTrait::\|TargetType, "<label>"\|` | Resolves the alternative `impl` annotated with `@fa:impl_label "<label>"`. |
+| **Labeled Implementation** | `TrTrait::\|TargetType:label\|` (or `\|TargetType, "label"\|`) | Resolves the alternative `impl` annotated with `@fa:impl_label "label"`. |
 
 ```lone
 pub fn main() void {
@@ -160,12 +160,99 @@ pub fn main() void {
     default_writer.write(&logger, "Standard log entry\n")
 
     -- 2. Use direct synchronous implementation:
-    let sync_writer = TrWriter::|FileLogger, "direct_sync"|
+    let sync_writer = TrWriter::|FileLogger:direct_sync|
     sync_writer.write(&logger, "CRITICAL ERROR: flush immediately\n")
 }
 ```
 
 Both `default_writer` and `sync_writer` have the **exact same type signature** (`MaterializedTraitType` of `TrWriter`).
+
+---
+
+### 5.2 Generic Functions: Decoupling & The Anti-Coupling Invariant
+
+When developing generic libraries, the author defines contracts using generic constraints:
+```lone
+fn process_output<T where { T satisfies TrDisplay }>(item: T) void {
+    -- Invariant: Generic parameters CANNOT permit label materialization!
+    let d = TrDisplay::|T|
+    println(d.display(item))
+}
+```
+
+#### Rule 4: Generic Type Parameters CANNOT Permit Label Materialization
+Inside a generic function body, attempting to qualify a generic type parameter `T` with a label during materialization is a **strict compile-time error** (`type/generic-parameter-label-forbidden`):
+
+```lone
+fn bad_generic<T where { T satisfies TrDisplay }>(item: T) void {
+    let d = TrDisplay::|T:json| -- COMPILE ERROR!
+}
+```
+
+**Diagnostic**:
+```text
+error[type/generic-parameter-label-forbidden]: cannot materialize trait with label on generic type parameter 'T'
+  --> src/render.lone:12:13
+   |
+12 |     let d = TrDisplay::|T:json|
+   |             ^^^^^^^^^^^^^^^^^^^ generic parameter 'T' must use unlabeled materialization TrDisplay::|T|
+   = note: generic code cannot assume external types implement specific labels; callers select labels at the call site
+```
+
+**Rationale**:
+- Generic function authors cannot know what custom labels application developers define on their structs.
+- Hardcoding a label like `T:json` inside generic code would couple the function to arbitrary label names and break generic substitution whenever a type without that label is supplied.
+- Generic functions must stay 100% decoupled and write standard `TrTrait::|T|`.
+
+---
+
+### 5.3 Call-Site Witness Specialization (`func<TargetType:label>(arg)`)
+
+How does an application developer execute a generic function using a labeled implementation?
+
+Instead of forcing developers to write artificial wrapper structs ("Newtypes"), the caller **specializes the trait witness at the call site**:
+
+```lone
+let user = User::("Alice", 101)
+
+-- 1. Standard call: uses default TrDisplay implementation:
+process_output<User>(user)
+
+-- 2. Labeled call: specializes T to User using the "json" witness:
+process_output<User:json>(user)
+```
+
+#### Zero-Cost Value Representation
+- `User:json` has the **exact same memory layout, size, and alignment** as `User`.
+- The value passed is raw `user` (no wrapper allocations, no conversions).
+- The `:json` qualifier exists purely as a compile-time witness selector for trait resolution.
+
+#### Monomorphization & Code Generation
+When the compiler monomorphizes `process_output<T>`:
+- `process_output<User>(user)` generates `$process_output$User`:
+  - `TrDisplay::|T|` compiles to static call `call $TrDisplay::display$User`.
+- `process_output<User:json>(user)` generates `$process_output$User$json`:
+  - `TrDisplay::|T|` compiles to static call `call $TrDisplay::display$User$json`!
+
+Both compile to direct, static WebAssembly `call` instructions with zero vtables and zero dispatch penalty.
+
+---
+
+### 5.4 The Graceful Fallback Rule
+
+When a generic function requires multiple trait constraints:
+```lone
+fn persist_and_log<T where { T satisfies TrDisplay, T satisfies TrSerializable }>(item: T) void {
+    let d = TrDisplay::|T|
+    let s = TrSerializable::|T|
+    ...
+}
+```
+
+If the caller invokes `persist_and_log<User:json>(user)`:
+1. **Matching Trait**: For `TrDisplay`, `User` defines `@fa:impl_label "json"` $\rightarrow$ uses `"json"` implementation.
+2. **Non-Matching Trait**: For `TrSerializable`, `User` defines no `"json"` label $\rightarrow$ **gracefully falls back to default unlabeled implementation**.
+3. **Missing Trait**: If neither a labeled nor a default implementation exists $\rightarrow$ compile error (`type/trait-not-satisfied`).
 
 ---
 
